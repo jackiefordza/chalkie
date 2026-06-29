@@ -43,16 +43,29 @@ service cloud.firestore {
     match /teams/{teamId} {
       allow read: if isSignedIn() && me().leagueId == resource.data.leagueId;
       allow create: if isAdmin() && me().leagueId == request.resource.data.leagueId;
-      allow update, delete: if isAdmin() && me().leagueId == resource.data.leagueId;
+      allow update: if
+        (isAdmin() && me().leagueId == resource.data.leagueId)
+        || (isSignedIn()
+            && resource.data.captainUserId == null
+            && request.resource.data.captainUserId == request.auth.uid
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['captainUserId']))
+        || (isSignedIn()
+            && resource.data.viceCaptainUserId == null
+            && request.resource.data.viceCaptainUserId == request.auth.uid
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['viceCaptainUserId']));
+      allow delete: if isAdmin() && me().leagueId == resource.data.leagueId;
     }
 
     // ── players ───────────────────────────────────────────────────────────
     match /players/{playerId} {
       allow read: if isSignedIn() && me().leagueId == resource.data.leagueId;
 
-      allow create: if isCaptainOrVC()
-        && me().teamId == request.resource.data.teamId
-        && request.resource.data.claimedByUserId == null;
+      allow create: if
+        (isCaptainOrVC()
+          && me().teamId == request.resource.data.teamId
+          && request.resource.data.claimedByUserId == null)
+        || (isSignedIn()
+            && request.resource.data.claimedByUserId == request.auth.uid);
 
       allow update: if
         // Admin full access
@@ -86,7 +99,7 @@ service cloud.firestore {
         && request.resource.data.teamId == null
         && request.resource.data.playerId == null;
 
-      // User can update display name only; role/leagueId/teamId changed only by Cloud Functions
+      // User can update display name only; role/leagueId/teamId changed only by Cloud Functions or join-code flow
       allow update: if
         (request.auth.uid == userId
           && request.resource.data.role == resource.data.role
@@ -94,7 +107,12 @@ service cloud.firestore {
           && request.resource.data.teamId == resource.data.teamId
           && request.resource.data.divisionId == resource.data.divisionId
           && request.resource.data.playerId == resource.data.playerId)
-        || isAdmin();
+        || isAdmin()
+        || (request.auth.uid == userId
+            && resource.data.role == 'pending'
+            && request.resource.data.role in ['captain', 'viceCaptain', 'player']
+            && request.resource.data.diff(resource.data).affectedKeys()
+                .hasOnly(['role', 'leagueId', 'teamId', 'divisionId', 'playerId', 'joinedViaCode']));
     }
 
     // ── joinCodes ─────────────────────────────────────────────────────────

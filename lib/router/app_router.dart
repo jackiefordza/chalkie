@@ -11,7 +11,6 @@ import '../screens/admin/admin_division_screen.dart';
 import '../screens/admin/admin_team_screen.dart';
 import '../screens/captain/captain_home_screen.dart';
 import '../screens/player/player_home_screen.dart';
-import '../screens/captain/captain_home_screen.dart';
 
 
 final routerProvider = Provider<GoRouter>((ref) {

@@ -54,10 +54,22 @@ class _JoinCodeSection extends ConsumerWidget {
             child: code == null
                 ? Row(
                     children: [
-                      Expanded(child: Text('No active code', style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant))),
+                      Expanded(child: Text('No code generated', style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant))),
                       FilledButton.tonal(
                         onPressed: () => ref.read(adminServiceProvider).generateJoinCode(leagueId: leagueId, teamId: teamId, role: role),
                         child: const Text('Generate'),
+                      ),
+                    ],
+                  )
+                : code.isUsed
+                ? Row(
+                    children: [
+                      const Icon(Icons.check_circle, color: Colors.green),
+                      const SizedBox(width: 8),
+                      Expanded(child: Text('Registered (code: ${code.code})', style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant))),
+                      TextButton(
+                        onPressed: () => ref.read(adminServiceProvider).generateJoinCode(leagueId: leagueId, teamId: teamId, role: role),
+                        child: const Text('New code'),
                       ),
                     ],
                   )

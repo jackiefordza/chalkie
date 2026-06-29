@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../../providers/auth_providers.dart';
 import '../../providers/service_providers.dart';
+import '../../widgets/glass_button.dart';
+import '../../widgets/glass_card.dart';
+import '../../widgets/gradient_scaffold.dart';
 
 class JoinCodeScreen extends ConsumerStatefulWidget {
   const JoinCodeScreen({super.key});
@@ -27,10 +29,7 @@ class _JoinCodeScreenState extends ConsumerState<JoinCodeScreen> {
       setState(() => _error = 'Enter a join code');
       return;
     }
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
+    setState(() { _loading = true; _error = null; });
     try {
       await ref.read(joinCodeServiceProvider).processJoinCode(code);
     } catch (e) {
@@ -42,55 +41,72 @@ class _JoinCodeScreenState extends ConsumerState<JoinCodeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Join Your Team'),
-        actions: [
-          TextButton(
-            onPressed: () => ref.read(authServiceProvider).signOut(),
-            child: const Text('Sign out'),
+    final cs = Theme.of(context).colorScheme;
+
+    return GradientScaffold(
+      actions: [
+        TextButton(
+          onPressed: () => ref.read(authServiceProvider).signOut(),
+          child: Text('Sign out', style: TextStyle(color: cs.onSurface)),
+        ),
+      ],
+      child: SafeArea(
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 40),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 420),
+              child: GlassCard(
+                padding: const EdgeInsets.all(32),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const Text('🎯', textAlign: TextAlign.center,
+                        style: TextStyle(fontSize: 40)),
+                    const SizedBox(height: 12),
+                    Text('Join your team',
+                        textAlign: TextAlign.center,
+                        style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                              fontWeight: FontWeight.w700,
+                              color: cs.onSurface,
+                              letterSpacing: -0.5,
+                            )),
+                    const SizedBox(height: 6),
+                    Text(
+                      'Enter the code your captain or admin gave you',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: cs.onSurfaceVariant),
+                    ),
+                    const SizedBox(height: 32),
+                    TextField(
+                      controller: _ctrl,
+                      textCapitalization: TextCapitalization.characters,
+                      maxLength: 8,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 28,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 8,
+                        color: cs.primary,
+                      ),
+                      decoration: InputDecoration(
+                        labelText: 'Join code',
+                        counterText: '',
+                        errorText: _error,
+                      ),
+                      onSubmitted: (_) => _submit(),
+                    ),
+                    const SizedBox(height: 24),
+                    GlassButton(
+                      onPressed: _loading ? null : _submit,
+                      loading: _loading,
+                      child: const Text('Join team'),
+                    ),
+                  ],
+                ),
+              ),
+            ),
           ),
-        ],
-      ),
-      body: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Text('Enter your join code',
-                style: Theme.of(context).textTheme.headlineSmall),
-            const SizedBox(height: 8),
-            Text(
-              'Your captain or league admin will have given you this.',
-              style: Theme.of(context).textTheme.bodyMedium,
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 32),
-            TextField(
-              controller: _ctrl,
-              textCapitalization: TextCapitalization.characters,
-              maxLength: 8,
-              decoration: InputDecoration(
-                labelText: 'Join code',
-                border: const OutlineInputBorder(),
-                errorText: _error,
-              ),
-              onSubmitted: (_) => _submit(),
-            ),
-            const SizedBox(height: 16),
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton(
-                onPressed: _loading ? null : _submit,
-                child: _loading
-                    ? const SizedBox(
-                        height: 20,
-                        width: 20,
-                        child: CircularProgressIndicator(strokeWidth: 2))
-                    : const Text('Join'),
-              ),
-            ),
-          ],
         ),
       ),
     );

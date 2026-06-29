@@ -48,9 +48,12 @@ class AdminService {
   Stream<List<Season>> watchSeasons(String leagueId) => _db
       .collection(AppConstants.seasons)
       .where('leagueId', isEqualTo: leagueId)
-      .orderBy('createdAt', descending: true)
       .snapshots()
-      .map((s) => s.docs.map((d) => Season.fromJson(d.id, d.data())).toList());
+      .map((s) {
+        final list = s.docs.map((d) => Season.fromJson(d.id, d.data())).toList();
+        list.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+        return list;
+      });
 
   Future<void> createDivision({
     required String leagueId,
@@ -70,9 +73,12 @@ class AdminService {
   Stream<List<Division>> watchDivisions(String seasonId) => _db
       .collection(AppConstants.divisions)
       .where('seasonId', isEqualTo: seasonId)
-      .orderBy('order')
       .snapshots()
-      .map((s) => s.docs.map((d) => Division.fromJson(d.id, d.data())).toList());
+      .map((s) {
+        final list = s.docs.map((d) => Division.fromJson(d.id, d.data())).toList();
+        list.sort((a, b) => a.order.compareTo(b.order));
+        return list;
+      });
 
   Future<void> createTeam({
     required String leagueId,
@@ -94,9 +100,12 @@ class AdminService {
   Stream<List<Team>> watchTeams(String divisionId) => _db
       .collection(AppConstants.teams)
       .where('divisionId', isEqualTo: divisionId)
-      .orderBy('name')
       .snapshots()
-      .map((s) => s.docs.map((d) => Team.fromJson(d.id, d.data())).toList());
+      .map((s) {
+        final list = s.docs.map((d) => Team.fromJson(d.id, d.data())).toList();
+        list.sort((a, b) => a.name.compareTo(b.name));
+        return list;
+      });
 
   Stream<Team?> watchTeam(String teamId) => _db
       .collection(AppConstants.teams)
@@ -109,19 +118,26 @@ class AdminService {
     required String teamId,
     required String role,
   }) async {
-    final existing = await _db
+    final teamDoc = await _db.collection(AppConstants.teams).doc(teamId).get();
+    final teamData = teamDoc.data()!;
+
+    final existingSnap = await _db
         .collection(AppConstants.joinCodes)
         .where('teamId', isEqualTo: teamId)
         .where('role', isEqualTo: role)
-        .where('usedByUserId', isNull: true)
         .get();
+    final unusedDocs = existingSnap.docs
+        .where((d) => d.data()['usedByUserId'] == null)
+        .toList();
     final batch = _db.batch();
-    for (final doc in existing.docs) {
+    for (final doc in unusedDocs) {
       batch.delete(doc.reference);
     }
     final code = _generateCode();
     batch.set(_db.collection(AppConstants.joinCodes).doc(code), {
       'leagueId': leagueId,
+      'seasonId': teamData['seasonId'],
+      'divisionId': teamData['divisionId'],
       'teamId': teamId,
       'role': role,
       'createdByUserId': adminUid,
@@ -136,7 +152,6 @@ class AdminService {
   Stream<List<JoinCode>> watchActiveJoinCodes(String teamId) => _db
       .collection(AppConstants.joinCodes)
       .where('teamId', isEqualTo: teamId)
-      .where('usedByUserId', isNull: true)
       .snapshots()
       .map((s) => s.docs.map((d) => JoinCode.fromJson(d.id, d.data())).toList());
 

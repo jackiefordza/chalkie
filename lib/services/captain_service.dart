@@ -10,11 +10,12 @@ class CaptainService {
   Stream<List<Player>> watchPlayers(String teamId) => _db
       .collection(AppConstants.players)
       .where('teamId', isEqualTo: teamId)
-      .orderBy('name')
       .snapshots()
-      .map((snap) => snap.docs
-          .map((doc) => Player.fromJson(doc.data(), doc.id))
-          .toList());
+      .map((snap) {
+        final list = snap.docs.map((doc) => Player.fromJson(doc.data(), doc.id)).toList();
+        list.sort((a, b) => a.name.compareTo(b.name));
+        return list;
+      });
 
   Future<void> addPlayer({
     required String name,
