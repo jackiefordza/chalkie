@@ -10,7 +10,6 @@ service cloud.firestore {
     function me() {
       return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
     }
-
     function isAdmin() {
       return isSignedIn() && me().role == 'admin';
     }
@@ -21,8 +20,12 @@ service cloud.firestore {
 
     // ── leagues ───────────────────────────────────────────────────────────
     match /leagues/{leagueId} {
-      allow read: if isSignedIn() && me().leagueId == leagueId;
-      allow write: if isAdmin() && me().leagueId == leagueId;
+      // Any signed-in user can search leagues (needed for find-league screen)
+      allow read: if isSignedIn();
+      // Admin can create a league even before leagueId is set on their user doc
+      allow create: if isSignedIn() && me().role == 'admin';
+      allow update: if isAdmin() && me().leagueId == leagueId;
+      allow delete: if isAdmin() && me().leagueId == leagueId;
     }
 
     // ── seasons ───────────────────────────────────────────────────────────
@@ -34,17 +37,24 @@ service cloud.firestore {
 
     // ── divisions ─────────────────────────────────────────────────────────
     match /divisions/{divisionId} {
-      allow read: if isSignedIn() && me().leagueId == resource.data.leagueId;
+      allow read: if isSignedIn() && (me().leagueId == resource.data.leagueId || isAdmin());
       allow create: if isAdmin() && me().leagueId == request.resource.data.leagueId;
       allow update, delete: if isAdmin() && me().leagueId == resource.data.leagueId;
     }
 
     // ── teams ─────────────────────────────────────────────────────────────
     match /teams/{teamId} {
-      allow read: if isSignedIn() && me().leagueId == resource.data.leagueId;
+      // Pending users need to browse teams; admins query by seasonId so need explicit permission
+      allow read: if isSignedIn() && (
+        me().leagueId == resource.data.leagueId
+        || (me().leagueId == null && me().role == 'pending')
+        || isAdmin()
+      );
       allow create: if isAdmin() && me().leagueId == request.resource.data.leagueId;
       allow update: if
         (isAdmin() && me().leagueId == resource.data.leagueId)
+        // Captain can update their own team (e.g. playerInviteCode)
+        || (isCaptainOrVC() && me().teamId == teamId)
         || (isSignedIn()
             && resource.data.captainUserId == null
             && request.resource.data.captainUserId == request.auth.uid
@@ -56,25 +66,68 @@ service cloud.firestore {
       allow delete: if isAdmin() && me().leagueId == resource.data.leagueId;
     }
 
+    // ── teamRequests ──────────────────────────────────────────────────────
+    match /teamRequests/{requestId} {
+      allow read: if
+        isAdmin()
+        || (isSignedIn() && resource.data.captainUserId == request.auth.uid);
+      allow create: if isSignedIn() && request.resource.data.captainUserId == request.auth.uid;
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // ── joinRequests ──────────────────────────────────────────────────────
+    match /joinRequests/{requestId} {
+      allow read: if
+        (isCaptainOrVC() && me().teamId == resource.data.teamId)
+        || (isAdmin() && me().leagueId == resource.data.leagueId)
+        || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
+      allow update: if
+        (isCaptainOrVC() && me().teamId == resource.data.teamId)
+        || (isAdmin() && me().leagueId == resource.data.leagueId);
+      allow delete: if isAdmin() && me().leagueId == resource.data.leagueId;
+    }
+
+    // ── claimCodes ────────────────────────────────────────────────────────
+    match /claimCodes/{code} {
+      // Any signed-in user can look up a code by exact ID (the code is the credential)
+      allow get: if isSignedIn();
+      allow list: if isCaptainOrVC() && me().teamId == resource.data.teamId;
+      allow create: if
+        (isCaptainOrVC() && me().teamId == request.resource.data.teamId)
+        || (isAdmin() && me().leagueId == request.resource.data.leagueId);
+      allow delete: if
+        (isCaptainOrVC() && me().teamId == resource.data.teamId)
+        || (isAdmin() && me().leagueId == resource.data.leagueId);
+      // User marks code as used
+      allow update: if isSignedIn()
+        && resource.data.usedByUserId == null
+        && request.resource.data.usedByUserId == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['usedByUserId', 'usedAt']);
+    }
+
     // ── players ───────────────────────────────────────────────────────────
     match /players/{playerId} {
-      allow read: if isSignedIn() && me().leagueId == resource.data.leagueId;
+      // Also allow read by teamId so captain.tsx query (filtered by teamId) works without needing leagueId in filter
+      allow read: if isSignedIn() && (
+        me().leagueId == resource.data.leagueId
+        || me().teamId == resource.data.teamId
+        || isAdmin()
+      );
 
       allow create: if
-        (isCaptainOrVC()
-          && me().teamId == request.resource.data.teamId
-          && request.resource.data.claimedByUserId == null)
+        (isAdmin() && me().leagueId == request.resource.data.leagueId)
+        || (isCaptainOrVC()
+            && me().teamId == request.resource.data.teamId)
         || (isSignedIn()
             && request.resource.data.claimedByUserId == request.auth.uid);
 
       allow update: if
-        // Admin full access
         (isAdmin() && me().leagueId == resource.data.leagueId)
-        // Captain/VC edits player details but cannot touch claimedByUserId
-        || (isCaptainOrVC()
-            && me().teamId == resource.data.teamId
-            && resource.data.claimedByUserId == request.resource.data.claimedByUserId)
-        // Any signed-in user can claim an unclaimed record — sets claimedByUserId to own UID, once only
+        // Captain can update players on their team (including setting claimedByUserId when approving join)
+        || (isCaptainOrVC() && me().teamId == resource.data.teamId)
+        // Any signed-in user can claim an unclaimed record
         || (isSignedIn()
             && resource.data.claimedByUserId == null
             && request.resource.data.claimedByUserId == request.auth.uid
@@ -90,7 +143,12 @@ service cloud.firestore {
 
     // ── users ─────────────────────────────────────────────────────────────
     match /users/{userId} {
-      allow read: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+      allow read: if isSignedIn() && (
+        request.auth.uid == userId
+        || isAdmin()
+        || isCaptainOrVC()
+        || (me().teamId != null && me().teamId == resource.data.teamId)
+      );
 
       // First sign-up: user creates their own document with role=pending
       allow create: if request.auth.uid == userId
@@ -99,25 +157,38 @@ service cloud.firestore {
         && request.resource.data.teamId == null
         && request.resource.data.playerId == null;
 
-      // User can update display name only; role/leagueId/teamId changed only by Cloud Functions or join-code flow
       allow update: if
+        // User updates own safe fields (display name, etc) — role/league/team unchanged
         (request.auth.uid == userId
           && request.resource.data.role == resource.data.role
           && request.resource.data.leagueId == resource.data.leagueId
           && request.resource.data.teamId == resource.data.teamId
           && request.resource.data.divisionId == resource.data.divisionId
           && request.resource.data.playerId == resource.data.playerId)
+        // Admin can update any user
         || isAdmin()
+        // Captain can approve join requests (update role/teamId/playerId of pending users in their league)
+        || (isCaptainOrVC()
+            && resource.data.pendingRequestType == 'join'
+            && me().leagueId == resource.data.leagueId)
+        // Pending user sets pendingRequestType/pendingRequestId (submitting a request)
+        || (request.auth.uid == userId
+            && resource.data.role == 'pending'
+            && request.resource.data.role == resource.data.role
+            && request.resource.data.diff(resource.data).affectedKeys()
+                .hasOnly(['pendingRequestType', 'pendingRequestId', 'leagueId', 'phone', 'phoneVisibility']))
+        // Claim-code / invite-code flow: pending user transitions to active role
         || (request.auth.uid == userId
             && resource.data.role == 'pending'
             && request.resource.data.role in ['captain', 'viceCaptain', 'player']
             && request.resource.data.diff(resource.data).affectedKeys()
-                .hasOnly(['role', 'leagueId', 'teamId', 'divisionId', 'playerId', 'joinedViaCode']));
+                .hasOnly(['role', 'leagueId', 'teamId', 'divisionId', 'playerId',
+                          'pendingRequestType', 'pendingRequestId', 'joinedViaCode',
+                          'phone', 'phoneVisibility']));
     }
 
-    // ── joinCodes ─────────────────────────────────────────────────────────
+    // ── joinCodes (legacy Flutter) ────────────────────────────────────────
     match /joinCodes/{code} {
-      // get by exact ID only — the code string is the credential
       allow get: if isSignedIn();
       allow list: if isAdmin();
 
@@ -127,7 +198,6 @@ service cloud.firestore {
             && request.resource.data.role == 'viceCaptain'
             && me().teamId == request.resource.data.teamId);
 
-      // Claiming user marks code as used — only usedByUserId and usedAt may change
       allow update: if isSignedIn()
         && resource.data.usedByUserId == null
         && request.resource.data.usedByUserId == request.auth.uid
@@ -161,13 +231,13 @@ service cloud.firestore {
     // ── divisionTables ────────────────────────────────────────────────────
     match /divisionTables/{tableId} {
       allow read: if isSignedIn();
-      allow write: if false; // Cloud Functions only (admin SDK bypasses rules)
+      allow write: if false;
     }
 
     // ── playerSeasonStats ─────────────────────────────────────────────────
     match /playerSeasonStats/{statsId} {
       allow read: if isSignedIn();
-      allow write: if false; // Cloud Functions only
+      allow write: if false;
     }
 
     // ── fineDefinitions ───────────────────────────────────────────────────
