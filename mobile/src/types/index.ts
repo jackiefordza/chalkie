@@ -97,3 +97,56 @@ export interface ClaimCode {
   usedAt: Date | null;
   createdAt: Date;
 }
+
+// A league match: 7 games (5 singles then 2 pairs), all 501, 3 legs per game,
+// all 3 legs always played. Match winner = team that wins more games (odd
+// count, so no draws are possible at match level).
+export type MatchStatus = 'scheduled' | 'awaiting_confirmation' | 'disputed' | 'confirmed';
+export type GameType = 'singles' | 'pairs';
+export type MatchSide = 'home' | 'away';
+
+export interface Match {
+  id: string;
+  leagueId: string;
+  seasonId: string;
+  divisionId: string;
+  round: number;
+  homeTeamId: string;
+  awayTeamId: string;
+  scheduledDate: Date;
+  venue: string | null;
+  status: MatchStatus;
+  // Set once confirmed
+  homeGamesWon: number | null;
+  awayGamesWon: number | null;
+  homeLegsWon: number | null;
+  awayLegsWon: number | null;
+  createdAt: Date;
+}
+
+export interface MatchLeg {
+  winner: MatchSide;
+  // playerIds of anyone who threw a 180 in this leg
+  oneEighties: string[];
+  // Free text, captain's own call — no fixed threshold (e.g. "121", "S.Jones 100")
+  highCheckout: string | null;
+}
+
+export interface MatchGame {
+  order: number; // 1-5 singles, 6-7 pairs
+  type: GameType;
+  homePlayerIds: string[];
+  awayPlayerIds: string[];
+  legs: MatchLeg[]; // always length 3
+}
+
+// One captain/VC's version of a match result. Auto-confirmed when both
+// teams' submissions agree; otherwise the match is flagged disputed for
+// the admin to resolve.
+export interface MatchSubmission {
+  id: string; // = submittedByTeamId, one submission doc per team per match
+  submittedByTeamId: string;
+  submittedByUserId: string;
+  games: MatchGame[];
+  createdAt: Date;
+}

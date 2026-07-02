@@ -119,12 +119,29 @@ Functions. Flag this to Jake before starting Phase 1 build.
       v13, wired into `firebase.json` alongside firestore rules+indexes which weren't
       linked before). Builds clean, no functions written yet — that starts once the
       matches/games/submissions data model below is settled.
-- [ ] Fixtures: basic round-robin generator (every team plays every other team twice,
+- [x] Fixtures: basic round-robin generator (every team plays every other team twice,
       home + away) that an admin runs per division, producing `matches` docs with
       placeholder dates; admin then edits dates/venues as needed. Not the fancy paid
-      wizard — just enough to not hand-type 224 fixtures.
-- [ ] Fixtures list screens (captain/player: "my upcoming fixtures"; admin: full
-      division schedule).
+      wizard — just enough to not hand-type 224 fixtures. Done 2026-07-02:
+      `mobile/src/lib/fixtures.ts` (circle-method round robin, verified by script —
+      balanced home/away, every pair plays exactly twice, byes handled for odd counts),
+      `Match`/`MatchGame`/`MatchLeg`/`MatchSubmission` types added, new
+      `admin-fixtures.tsx` screen (generate + view-by-round + edit date/venue + delete)
+      wired in from `admin-season.tsx`, `matches` composite indexes added to
+      `firestore.indexes.json`.
+- [x] Fixtures list screens (captain/player: "my upcoming fixtures"; admin: full
+      division schedule). Done 2026-07-02: new `fixtures.tsx` screen linked from both
+      `captain.tsx` and `home.tsx`, queries `matches` by team via Firestore `or()`.
+      **Caught by [[feedback_firestore_query_rules]] before it shipped broken:** the
+      `matches` read rule only checks `resource.data.leagueId`, so every matches query
+      (admin-fixtures and this one) had to add an explicit `leagueId` filter or Firestore
+      would've silently rejected it.
+      **Verified:** typechecks clean, app boots on web with no console errors (checked
+      via Playwright), login screen renders correctly. **Not yet verified:** the actual
+      logged-in generate-fixtures flow — no admin test credentials or service-account
+      key are available in this environment, so the real Firestore round-trip (write
+      224 matches, read them back grouped by round) still needs a human pass. Jake:
+      worth running through this yourself before the August demo.
 - [ ] Results entry screen (captain/VC): full lineup + leg-by-leg + 180s + optional
       high-checkout text per game, for a scheduled match. This is the most complex
       screen in the app — treat it as its own sub-project, prototype the flow before

@@ -150,6 +150,13 @@ export default function AdminSeasonScreen() {
                       {division.name}
                     </Text>
                     <TouchableOpacity
+                      onPress={() => router.push(`/(protected)/admin-fixtures?divisionId=${division.id}`)}
+                      style={{ backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 4, marginRight: 8 }}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={{ color: S.WHITE_60, fontSize: 12, fontWeight: '600' }}>Fixtures</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
                       onPress={() => { setAddTeamTarget(division); setNewTeamName(''); setNewTeamAddress(''); }}
                       style={{ backgroundColor: 'rgba(0,122,255,0.2)', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 4 }}
                       activeOpacity={0.7}

@@ -80,6 +80,33 @@
         { "fieldPath": "leagueId", "order": "ASCENDING" },
         { "fieldPath": "status", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "matches",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "leagueId", "order": "ASCENDING" },
+        { "fieldPath": "divisionId", "order": "ASCENDING" },
+        { "fieldPath": "scheduledDate", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "matches",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "leagueId", "order": "ASCENDING" },
+        { "fieldPath": "homeTeamId", "order": "ASCENDING" },
+        { "fieldPath": "scheduledDate", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "matches",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "leagueId", "order": "ASCENDING" },
+        { "fieldPath": "awayTeamId", "order": "ASCENDING" },
+        { "fieldPath": "scheduledDate", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

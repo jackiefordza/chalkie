@@ -3,7 +3,7 @@ import {
   View, Text, TextInput, TouchableOpacity, ScrollView,
   ActivityIndicator, Modal, Share, Platform, Alert,
 } from 'react-native';
-import { Stack } from 'expo-router';
+import { router, Stack } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import {
@@ -317,6 +317,13 @@ export default function CaptainScreen() {
               {unclaimedCount > 0 ? ` · ${unclaimedCount} unclaimed` : ''}
             </Text>
           </View>
+          <TouchableOpacity
+            onPress={() => router.push('/(protected)/fixtures')}
+            style={{ backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 8 }}
+            activeOpacity={0.7}
+          >
+            <Text style={{ color: S.WHITE, fontSize: 13, fontWeight: '600' }}>🗓 Fixtures</Text>
+          </TouchableOpacity>
         </View>
 
         {/* Home venue */}
