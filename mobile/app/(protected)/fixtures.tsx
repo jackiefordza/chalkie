@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import { View, Text, ScrollView, ActivityIndicator } from 'react-native';
-import { Stack } from 'expo-router';
+import { View, Text, ScrollView, ActivityIndicator, TouchableOpacity } from 'react-native';
+import { router, Stack } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { collection, onSnapshot, query, where, orderBy, and, or } from 'firebase/firestore';
@@ -8,8 +8,6 @@ import { db } from '@/config/firebase';
 import { useAuthStore } from '@/stores/authStore';
 import type { Match } from '@/types';
 import * as S from '@/styles/common';
-
-interface TeamName { id: string; name: string }
 
 const STATUS_LABEL: Record<Match['status'], string> = {
   scheduled: 'Upcoming',
@@ -36,6 +34,7 @@ export default function FixturesScreen() {
   const [matches, setMatches] = useState<Match[]>([]);
   const [teamNames, setTeamNames] = useState<Record<string, string>>({});
   const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!teamId || !appUser?.leagueId) return;
@@ -59,6 +58,7 @@ export default function FixturesScreen() {
         );
         setIsLoading(false);
       },
+      (e) => { setLoadError(e.message); setIsLoading(false); },
     );
 
     const unsubTeams = onSnapshot(
@@ -68,6 +68,7 @@ export default function FixturesScreen() {
         snap.docs.forEach((d) => { map[d.id] = d.data().name; });
         setTeamNames(map);
       },
+      (e) => setLoadError(e.message),
     );
 
     return () => { unsubMatches(); unsubTeams(); };
@@ -112,9 +113,23 @@ export default function FixturesScreen() {
 
   return (
     <LinearGradient colors={S.GRADIENT} style={{ flex: 1 }}>
-      <Stack.Screen options={{ title: 'Fixtures' }} />
+      <Stack.Screen
+        options={{
+          title: 'Fixtures',
+          headerLeft: () => (
+            <TouchableOpacity onPress={() => router.back()} hitSlop={12} style={{ paddingRight: 12 }}>
+              <Text style={{ color: S.WHITE, fontSize: 16 }}>‹ Back</Text>
+            </TouchableOpacity>
+          ),
+        }}
+      />
       <ScrollView contentContainerStyle={{ padding: 20 }}>
-        {isLoading ? (
+        {loadError ? (
+          <View style={S.errorBox}>
+            <Text style={{ color: S.RED, fontWeight: '600', marginBottom: 4 }}>Couldn't load fixtures</Text>
+            <Text style={{ color: S.RED, fontSize: 13 }}>{loadError}</Text>
+          </View>
+        ) : isLoading ? (
           <ActivityIndicator color={S.BLUE} style={{ marginTop: 40 }} />
         ) : matches.length === 0 ? (
           <BlurView intensity={20} tint="dark" style={{ borderRadius: 16, overflow: 'hidden' }}>

@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, ActivityIndicator, Modal, TextInput, Alert } from 'react-native';
-import { Stack, useLocalSearchParams } from 'expo-router';
+import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import {
@@ -37,6 +37,7 @@ export default function AdminFixturesScreen() {
   const [teams, setTeams] = useState<TeamInfo[]>([]);
   const [matches, setMatches] = useState<Match[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const [startDateText, setStartDateText] = useState('');
   const [intervalDays, setIntervalDays] = useState('7');
@@ -52,12 +53,16 @@ export default function AdminFixturesScreen() {
   useEffect(() => {
     if (!divisionId || !appUser?.leagueId) return;
 
-    const unsubDivision = onSnapshot(doc(db, 'divisions', divisionId), (snap) => {
-      if (snap.exists()) {
-        setDivisionName(snap.data().name ?? '');
-        setSeasonId(snap.data().seasonId ?? null);
-      }
-    });
+    const unsubDivision = onSnapshot(
+      doc(db, 'divisions', divisionId),
+      (snap) => {
+        if (snap.exists()) {
+          setDivisionName(snap.data().name ?? '');
+          setSeasonId(snap.data().seasonId ?? null);
+        }
+      },
+      (e) => setLoadError(e.message),
+    );
 
     const unsubTeams = onSnapshot(
       query(collection(db, 'teams'), where('divisionId', '==', divisionId)),
@@ -68,6 +73,7 @@ export default function AdminFixturesScreen() {
             .sort((a, b) => a.name.localeCompare(b.name)),
         );
       },
+      (e) => setLoadError(e.message),
     );
 
     const unsubMatches = onSnapshot(
@@ -87,6 +93,7 @@ export default function AdminFixturesScreen() {
         );
         setIsLoading(false);
       },
+      (e) => { setLoadError(e.message); setIsLoading(false); },
     );
 
     return () => { unsubDivision(); unsubTeams(); unsubMatches(); };
@@ -205,9 +212,23 @@ export default function AdminFixturesScreen() {
 
   return (
     <LinearGradient colors={S.GRADIENT} style={{ flex: 1 }}>
-      <Stack.Screen options={{ title: divisionName ? `${divisionName} Fixtures` : 'Fixtures' }} />
+      <Stack.Screen
+        options={{
+          title: divisionName ? `${divisionName} Fixtures` : 'Fixtures',
+          headerLeft: () => (
+            <TouchableOpacity onPress={() => router.back()} hitSlop={12} style={{ paddingRight: 12 }}>
+              <Text style={{ color: S.WHITE, fontSize: 16 }}>‹ Back</Text>
+            </TouchableOpacity>
+          ),
+        }}
+      />
       <ScrollView contentContainerStyle={{ padding: 20 }}>
-        {isLoading ? (
+        {loadError ? (
+          <View style={S.errorBox}>
+            <Text style={{ color: S.RED, fontWeight: '600', marginBottom: 4 }}>Couldn't load fixtures</Text>
+            <Text style={{ color: S.RED, fontSize: 13 }}>{loadError}</Text>
+          </View>
+        ) : isLoading ? (
           <ActivityIndicator color={S.BLUE} style={{ marginTop: 40 }} />
         ) : showGenerator ? (
           <BlurView intensity={20} tint="dark" style={{ borderRadius: 20, overflow: 'hidden' }}>

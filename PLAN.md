@@ -181,6 +181,23 @@ Functions. Flag this to Jake before starting Phase 1 build.
 - [ ] Real app store builds: `eas.json`, Apple/Google dev accounts, TestFlight/Play
       internal testing.
 
+## Bugs found & fixed
+
+- **2026-07-02 — infinite spinner on admin-fixtures/fixtures screens.** Root cause: the
+  new `matches` composite indexes were added to `firestore.indexes.json` but never
+  deployed (no Firebase CLI auth in the sandbox), so the live query failed with a
+  "requires an index" error — and none of the `onSnapshot` listeners in the app
+  (pre-existing pattern, not unique to this code) have an error callback, so the
+  failure was silent and the UI just hung on the loading spinner forever. Fixed by
+  adding error handlers + an on-screen error message to the two new fixtures screens.
+  The underlying missing index still needs deploying — see immediate next step below.
+  **Worth doing eventually:** audit the other ~18 `onSnapshot` calls across the app
+  that also have no error handler — this exact failure mode (stuck spinner, no
+  diagnostic) will recur anywhere a query needs an index that doesn't exist yet or a
+  rule that doesn't match.
+- Also added an explicit header back button to both new screens rather than relying on
+  platform default back-button behavior, which wasn't reliably showing.
+
 ## Open risks / things to revisit
 
 - Including Phase 2 (cup + 4 individual competitions) is a lot of scope for the
