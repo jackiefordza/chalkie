@@ -86,6 +86,14 @@ competitions/{competitionId}   // Phase 2, new
   name, status, rounds: [ { roundNumber, matchIds[] or ties[] } ]
 ```
 
+**Note (found while scaffolding functions):** `firestore.rules` already has working
+`matches` + `matches/{id}/submissions/{id}` rules that match this plan almost exactly
+(admin creates/edits matches, captain/VC of the submitting team can create/update a
+submission while the match isn't confirmed yet, disputes just need admin to be able to
+read/act on both submissions — already covered by `isAdmin()`). Likely won't need rule
+changes for the match/submission model itself, just new composite indexes once the
+actual query patterns are written (fixtures-by-team, fixtures-by-division-and-date).
+
 **Why `divisionTables`/`playerSeasonStats` need a Cloud Function:** they're already
 `allow write: if false` in the current rules — someone (past Jake or past Claude)
 already decided these must be server-computed, not client-written, so results can't be
@@ -106,7 +114,11 @@ Functions. Flag this to Jake before starting Phase 1 build.
       Done 2026-07-02, typechecks clean.
 
 ### Phase 1 — Core league loop (target: working demo by August, solid by Sept/Oct trial)
-- [ ] Firebase project on Blaze plan; Cloud Functions project scaffolded.
+- [x] Firebase project on Blaze plan (done by Jake 2026-07-02); Cloud Functions project
+      scaffolded at `functions/` (TypeScript, firebase-functions v7 / firebase-admin
+      v13, wired into `firebase.json` alongside firestore rules+indexes which weren't
+      linked before). Builds clean, no functions written yet — that starts once the
+      matches/games/submissions data model below is settled.
 - [ ] Fixtures: basic round-robin generator (every team plays every other team twice,
       home + away) that an admin runs per division, producing `matches` docs with
       placeholder dates; admin then edits dates/venues as needed. Not the fancy paid
