@@ -183,14 +183,18 @@ Functions. Flag this to Jake before starting Phase 1 build.
 
 ## Bugs found & fixed
 
-- **2026-07-02 — infinite spinner on admin-fixtures/fixtures screens.** Root cause: the
-  new `matches` composite indexes were added to `firestore.indexes.json` but never
-  deployed (no Firebase CLI auth in the sandbox), so the live query failed with a
-  "requires an index" error — and none of the `onSnapshot` listeners in the app
+- **2026-07-02 — infinite spinner on admin-fixtures/fixtures screens. FIXED.** Root
+  cause: the new `matches` composite indexes were added to `firestore.indexes.json`
+  but never deployed (no Firebase CLI auth in the sandbox), so the live query failed
+  with a "requires an index" error — and none of the `onSnapshot` listeners in the app
   (pre-existing pattern, not unique to this code) have an error callback, so the
-  failure was silent and the UI just hung on the loading spinner forever. Fixed by
-  adding error handlers + an on-screen error message to the two new fixtures screens.
-  The underlying missing index still needs deploying — see immediate next step below.
+  failure was silent and the UI just hung on the loading spinner forever. Fixed in two
+  parts: (1) added error handlers + an on-screen error message to the two new fixtures
+  screens, (2) Jake deployed the indexes himself via
+  `firebase deploy --only firestore:indexes --token ... --project chalkie-app` from a
+  fresh CI token — the CI-token flow does still work for this project, despite the
+  `service-account.json`-based `scripts/deploy_rules.py` existing (that script's origin
+  is still unclear, don't assume CI tokens are broken here).
   **Worth doing eventually:** audit the other ~18 `onSnapshot` calls across the app
   that also have no error handler — this exact failure mode (stuck spinner, no
   diagnostic) will recur anywhere a query needs an index that doesn't exist yet or a
