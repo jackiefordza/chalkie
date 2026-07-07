@@ -13,11 +13,13 @@ import { router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { useAuthStore } from '@/stores/authStore';
+import { TEST_HOME_EMAIL, TEST_AWAY_EMAIL, TEST_PASSWORD } from '@/lib/testData';
 
 export default function LoginScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [quickSigningIn, setQuickSigningIn] = useState<'home' | 'away' | null>(null);
 
   const { signIn, error, clearError } = useAuthStore();
 
@@ -32,6 +34,19 @@ export default function LoginScreen() {
       // error is set in the store
     } finally {
       setIsSubmitting(false);
+    }
+  }
+
+  async function handleQuickSignIn(which: 'home' | 'away') {
+    clearError();
+    setQuickSigningIn(which);
+    try {
+      await signIn(which === 'home' ? TEST_HOME_EMAIL : TEST_AWAY_EMAIL, TEST_PASSWORD);
+      router.replace('/');
+    } catch {
+      // error is set in the store
+    } finally {
+      setQuickSigningIn(null);
     }
   }
 
@@ -191,6 +206,43 @@ export default function LoginScreen() {
               <Text style={{ color: '#007AFF', fontWeight: '600' }}>Create Account</Text>
             </Text>
           </TouchableOpacity>
+
+          {/* Dev-only: instant sign-in as the seeded test captains */}
+          {__DEV__ && (
+            <View style={{ marginTop: 28, alignItems: 'center' }}>
+              <Text style={{ color: 'rgba(255,255,255,0.35)', fontSize: 12, marginBottom: 10 }}>
+                🧪 DEV QUICK SIGN-IN
+              </Text>
+              <View style={{ flexDirection: 'row', gap: 10 }}>
+                <TouchableOpacity
+                  onPress={() => handleQuickSignIn('home')}
+                  disabled={quickSigningIn !== null}
+                  style={{
+                    paddingHorizontal: 16, paddingVertical: 10, borderRadius: 10,
+                    backgroundColor: 'rgba(255,255,255,0.08)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)',
+                  }}
+                >
+                  {quickSigningIn === 'home'
+                    ? <ActivityIndicator color="#FFFFFF" size="small" />
+                    : <Text style={{ color: 'rgba(255,255,255,0.75)', fontSize: 13, fontWeight: '600' }}>Test Home Captain</Text>
+                  }
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => handleQuickSignIn('away')}
+                  disabled={quickSigningIn !== null}
+                  style={{
+                    paddingHorizontal: 16, paddingVertical: 10, borderRadius: 10,
+                    backgroundColor: 'rgba(255,255,255,0.08)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)',
+                  }}
+                >
+                  {quickSigningIn === 'away'
+                    ? <ActivityIndicator color="#FFFFFF" size="small" />
+                    : <Text style={{ color: 'rgba(255,255,255,0.75)', fontSize: 13, fontWeight: '600' }}>Test Away Captain</Text>
+                  }
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
         </ScrollView>
       </KeyboardAvoidingView>
     </LinearGradient>

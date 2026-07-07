@@ -6,8 +6,10 @@ they're actually shipped and tested, not just started.
 
 ## Status snapshot
 
-- **Now:** Phase 1 not started. Interview with Jake completed 2026-07-02, this plan
-  written from it.
+- **Now:** Phase 1 core league loop (fixtures → results → auto-confirm/dispute →
+  standings/stats) is built end-to-end as of 2026-07-06. Not yet deployed/tested against
+  real Firestore — see "Not yet verified" note under Phase 1 below. Push notifications
+  is the one remaining Phase 1 item.
 - **Deadlines:** Showcase to league committee/captains in **August 2026**. Live trial
   with own league for the **2026/27 winter season (starts Sept/Oct 2026)**.
 - **What already exists and works:** account onboarding (admin/captain/VC/player roles,
@@ -71,7 +73,10 @@ matches/{matchId}
     submittedByTeamId, submittedByUserId
     games: [ { order, type: 'singles'|'pairs', homePlayerIds[], awayPlayerIds[],
                legs: [ { winner: 'home'|'away', oneEighties: [playerId],
-                         highCheckout?: { playerId, value } } ] } ]
+                         highCheckout: { playerId, value } | null } ] } ]
+  matches/{matchId}.games   // set on confirm — the agreed/resolved canonical copy,
+                            // same shape as a submission's games[], so standings/stats
+                            // functions don't need to re-read submissions
 
 divisionTables/{tableId}     // already in rules, write:false — Cloud Function only
   leagueId, seasonId, divisionId, teamId
@@ -142,22 +147,64 @@ Functions. Flag this to Jake before starting Phase 1 build.
       key are available in this environment, so the real Firestore round-trip (write
       224 matches, read them back grouped by round) still needs a human pass. Jake:
       worth running through this yourself before the August demo.
-- [ ] Results entry screen (captain/VC): full lineup + leg-by-leg + 180s + optional
-      high-checkout text per game, for a scheduled match. This is the most complex
-      screen in the app — treat it as its own sub-project, prototype the flow before
-      committing to a layout.
-- [ ] Submission comparison + auto-confirm logic (Cloud Function, triggered on
-      submission write).
-- [ ] Dispute view for admin (both submissions side by side, pick/edit, confirm).
-- [ ] Cloud Function: on match confirm, recompute `divisionTables` row for both teams
-      and `playerSeasonStats` for every player involved.
-- [ ] Standings screen (division table, all league members can view their division).
-- [ ] Stats screens: player's own stats (personal), division leaderboard (most 180s,
-      best win %, notable high checkouts).
+- [x] Results entry screen (captain/VC): full lineup + leg-by-leg + 180s + optional
+      high-checkout per game, for a scheduled match. Done 2026-07-06:
+      `results-entry.tsx` — single-game-at-a-time stepper (7 games: 5 singles, 2
+      pairs), player picker modal per side, per-leg winner toggle + 180 chips + high
+      checkout modal, pre-fills from an existing own submission for editing. Writes to
+      `matches/{id}/submissions/{ownTeamId}`. Entry point wired from `fixtures.tsx`
+      (captain/VC sees "Enter Result"/"View / Edit Result" on their own non-confirmed
+      fixtures). Changed `MatchLeg.highCheckout` from a bare free-text string to
+      `{ playerId, value }` — needed so `playerSeasonStats.highCheckouts` can attribute
+      a checkout to a player; `value` itself stays unvalidated free text as originally
+      intended.
+- [x] Submission comparison + auto-confirm logic (Cloud Function, triggered on
+      submission write). Done 2026-07-06: `functions/src/index.ts` `onSubmissionWrite`
+      — re-reads both submissions on every write, normalizes (sorted arrays) and deep-
+      compares; 1 submission → `awaiting_confirmation`, mismatch → `disputed`, match →
+      `confirmed` + canonical `games` written onto the match doc.
+- [x] Dispute view for admin (both submissions side by side, pick/edit, confirm). Done
+      2026-07-06: `admin-dispute.tsx`, linked from a new "Disputed Results" banner on
+      `admin.tsx`. Per game: auto-shows a single agreed summary if both teams already
+      match on that game, otherwise shows both teams' versions side by side for the
+      admin to pick, with a leg-winner override on top of whichever version is picked.
+      Confirms by writing `games` + `status: 'confirmed'` directly to the match doc
+      (admin already has write access) — same `onMatchConfirmed` function handles it
+      either way, so this path doesn't need its own aggregation logic.
+- [x] Cloud Function: on match confirm, recompute `divisionTables` row for both teams
+      and `playerSeasonStats` for every player involved. Done 2026-07-06:
+      `onMatchConfirmed` (triggers on any match update where status becomes
+      `confirmed`, regardless of whether that came from auto-confirm or admin dispute
+      resolution) — computes game/leg totals, upserts both teams' `divisionTables` rows
+      via `FieldValue.increment`, recomputes `position` for the whole division, and
+      upserts `playerSeasonStats` per player (played/won/lost count *individual games*,
+      not matches — a player can play more than one game per match).
+- [x] Standings screen (division table, all league members can view their division).
+      Done 2026-07-06: `standings.tsx`, division switcher, own-team row highlighted.
+      Linked from `home.tsx`, `captain.tsx`, `admin-season.tsx`.
+- [x] Stats screens: player's own stats (personal), division leaderboard (most 180s,
+      best win %, notable high checkouts). Done 2026-07-06: `stats.tsx`, two tabs ("My
+      Stats" / "Leaderboard"). Linked from `home.tsx`, `captain.tsx`.
 - [ ] Push notifications: register Expo push token on user doc; Cloud Functions (or
       scheduled function) for: fixture reminder day-before, "result needs your
       confirmation", "result confirmed", admin/captain approval alerts (team/join
       requests — reuses existing approval flows from the already-built onboarding).
+      **This is the only Phase 1 item left.**
+
+  **Not yet verified (2026-07-06 build):** typechecks clean (`mobile` + `functions`
+  both build with no errors) and the web bundle boots with no console errors (checked
+  via Playwright — login screen only, same limitation as before: no admin/captain test
+  credentials in this sandbox to drive the actual logged-in flows). Genuinely untested:
+  the real Firestore round-trip for results submission → Cloud Function auto-confirm/
+  dispute → standings/stats aggregation. Also new to this build and not yet deployed:
+  3 new composite indexes in `firestore.indexes.json` (`matches` by leagueId+status,
+  `divisionTables` by seasonId+divisionId+position, `playerSeasonStats` by
+  seasonId+divisionId) and the two new Cloud Functions themselves (`onSubmissionWrite`,
+  `onMatchConfirmed`) — none of this works until `firebase deploy` runs for both
+  functions and indexes. Given the pattern already seen once below (missing-index
+  queries fail silently with no error), deploy this before demoing, then walk through
+  one full match end to end (both captains submit → confirm or dispute → check
+  standings/stats update) before trusting it further.
 
 ### Phase 2 — Cup & individual competitions (build during the season, before they're needed mid-season — not required for the August demo or season kickoff)
 - [ ] Team knockout cup: single-elimination, one match per round, cross-division draw.

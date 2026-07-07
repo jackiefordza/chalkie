@@ -99,12 +99,40 @@ export default function PlayerHomeScreen() {
           activeOpacity={0.7}
           style={{
             backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 14, padding: 16,
-            marginBottom: 20, flexDirection: 'row', alignItems: 'center',
+            marginBottom: 12, flexDirection: 'row', alignItems: 'center',
             borderWidth: 1, borderColor: 'rgba(255,255,255,0.15)',
           }}
         >
           <Text style={{ fontSize: 20, marginRight: 10 }}>🗓</Text>
           <Text style={{ color: S.WHITE, fontSize: 15, fontWeight: '600', flex: 1 }}>Fixtures & Results</Text>
+          <Text style={{ color: S.WHITE_50 }}>›</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          onPress={() => router.push('/(protected)/standings')}
+          activeOpacity={0.7}
+          style={{
+            backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 14, padding: 16,
+            marginBottom: 12, flexDirection: 'row', alignItems: 'center',
+            borderWidth: 1, borderColor: 'rgba(255,255,255,0.15)',
+          }}
+        >
+          <Text style={{ fontSize: 20, marginRight: 10 }}>📊</Text>
+          <Text style={{ color: S.WHITE, fontSize: 15, fontWeight: '600', flex: 1 }}>Standings</Text>
+          <Text style={{ color: S.WHITE_50 }}>›</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          onPress={() => router.push('/(protected)/stats')}
+          activeOpacity={0.7}
+          style={{
+            backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 14, padding: 16,
+            marginBottom: 20, flexDirection: 'row', alignItems: 'center',
+            borderWidth: 1, borderColor: 'rgba(255,255,255,0.15)',
+          }}
+        >
+          <Text style={{ fontSize: 20, marginRight: 10 }}>🎯</Text>
+          <Text style={{ color: S.WHITE, fontSize: 15, fontWeight: '600', flex: 1 }}>Stats & Leaderboard</Text>
           <Text style={{ color: S.WHITE_50 }}>›</Text>
         </TouchableOpacity>
 

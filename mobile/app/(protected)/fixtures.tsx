@@ -78,11 +78,19 @@ export default function FixturesScreen() {
   const upcoming = matches.filter((m) => m.scheduledDate >= now || m.status !== 'confirmed');
   const past = matches.filter((m) => m.scheduledDate < now && m.status === 'confirmed');
 
+  const canSubmitResults = appUser?.role === 'captain' || appUser?.role === 'viceCaptain';
+
   function FixtureRow({ match }: { match: Match }) {
     const opponentId = match.homeTeamId === teamId ? match.awayTeamId : match.homeTeamId;
     const isHome = match.homeTeamId === teamId;
     return (
-      <View
+      <TouchableOpacity
+        activeOpacity={canSubmitResults && match.status !== 'confirmed' ? 0.7 : 1}
+        onPress={() => {
+          if (canSubmitResults && match.status !== 'confirmed') {
+            router.push(`/(protected)/results-entry?matchId=${match.id}`);
+          }
+        }}
         style={{
           padding: 14, borderRadius: 12, marginBottom: 8,
           backgroundColor: 'rgba(255,255,255,0.07)',
@@ -107,7 +115,12 @@ export default function FixturesScreen() {
               : `${match.awayGamesWon} - ${match.homeGamesWon}`}
           </Text>
         )}
-      </View>
+        {canSubmitResults && match.status !== 'confirmed' && (
+          <Text style={{ color: S.BLUE, fontSize: 12, fontWeight: '600', marginTop: 6 }}>
+            {match.status === 'scheduled' ? 'Enter Result ›' : 'View / Edit Result ›'}
+          </Text>
+        )}
+      </TouchableOpacity>
     );
   }
 

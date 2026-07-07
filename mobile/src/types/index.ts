@@ -116,20 +116,27 @@ export interface Match {
   scheduledDate: Date;
   venue: string | null;
   status: MatchStatus;
-  // Set once confirmed
+  // Set once confirmed (by the onSubmissionWrite/dispute-resolution Cloud Function path)
   homeGamesWon: number | null;
   awayGamesWon: number | null;
   homeLegsWon: number | null;
   awayLegsWon: number | null;
+  // The agreed-upon (or admin-resolved) game-by-game detail — only set once confirmed
+  games: MatchGame[] | null;
   createdAt: Date;
+}
+
+export interface HighCheckout {
+  playerId: string;
+  // Free text, captain's own call — no fixed threshold or numeric validation (e.g. "121")
+  value: string;
 }
 
 export interface MatchLeg {
   winner: MatchSide;
   // playerIds of anyone who threw a 180 in this leg
   oneEighties: string[];
-  // Free text, captain's own call — no fixed threshold (e.g. "121", "S.Jones 100")
-  highCheckout: string | null;
+  highCheckout: HighCheckout | null;
 }
 
 export interface MatchGame {
@@ -149,4 +156,44 @@ export interface MatchSubmission {
   submittedByUserId: string;
   games: MatchGame[];
   createdAt: Date;
+}
+
+// Server-computed only (Cloud Function) — see firestore.rules `allow write: if false`.
+export interface DivisionTable {
+  id: string; // = `${seasonId}_${divisionId}_${teamId}`
+  leagueId: string;
+  seasonId: string;
+  divisionId: string;
+  teamId: string;
+  played: number;
+  won: number;
+  lost: number;
+  points: number;
+  legsFor: number;
+  legsAgainst: number;
+  legDiff: number;
+  position: number;
+}
+
+export interface PlayerHighCheckout {
+  value: string;
+  matchId: string;
+  date: Date;
+}
+
+// Server-computed only (Cloud Function). played/won/lost count individual
+// games (singles + pairs), not matches — a player can play more than one
+// game per match.
+export interface PlayerSeasonStats {
+  id: string; // = `${seasonId}_${playerId}`
+  leagueId: string;
+  seasonId: string;
+  divisionId: string;
+  teamId: string;
+  playerId: string;
+  played: number;
+  won: number;
+  lost: number;
+  oneEighties: number;
+  highCheckouts: PlayerHighCheckout[];
 }

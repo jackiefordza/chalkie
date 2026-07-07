@@ -12,6 +12,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '@/config/firebase';
 import { useAuthStore } from '@/stores/authStore';
+import { seedTestLeague, TEST_HOME_EMAIL, TEST_AWAY_EMAIL, TEST_PASSWORD } from '@/lib/testData';
 import * as S from '@/styles/common';
 
 interface TeamRequest {
@@ -21,6 +22,7 @@ interface TeamRequest {
 }
 interface Season { id: string; name: string; status: string }
 interface Division { id: string; name: string; order: number }
+interface DisputedMatch { id: string; homeTeamId: string; awayTeamId: string }
 
 function generateCode() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no ambiguous chars
@@ -45,6 +47,8 @@ export default function AdminHomeScreen() {
   const [requests, setRequests] = useState<TeamRequest[]>([]);
   const [seasons, setSeasons] = useState<Season[]>([]);
   const [isGeneratingCode, setIsGeneratingCode] = useState(false);
+  const [disputes, setDisputes] = useState<DisputedMatch[]>([]);
+  const [teamNames, setTeamNames] = useState<Record<string, string>>({});
 
   // New season modal
   const [showSeasonModal, setShowSeasonModal] = useState(false);
@@ -65,6 +69,8 @@ export default function AdminHomeScreen() {
   const [isCreatingLeague, setIsCreatingLeague] = useState(false);
   const [setupError, setSetupError] = useState<string | null>(null);
 
+  const [isSeeding, setIsSeeding] = useState(false);
+
   async function handleCreateLeague() {
     if (!setupLeagueName.trim() || !appUser) return;
     setSetupError(null);
@@ -84,6 +90,22 @@ export default function AdminHomeScreen() {
     } catch (e: unknown) {
       setSetupError((e as Error).message ?? 'Something went wrong');
       setIsCreatingLeague(false);
+    }
+  }
+
+  async function handleSeedTestLeague() {
+    if (!leagueId) return;
+    setIsSeeding(true);
+    try {
+      await seedTestLeague(leagueId);
+      Alert.alert(
+        'Test league ready',
+        `A "Test Season / Test Division" with two full teams and one scheduled fixture is ready.\n\nSign in as either captain with:\n${TEST_HOME_EMAIL}\n${TEST_AWAY_EMAIL}\nPassword: ${TEST_PASSWORD}`,
+      );
+    } catch (e: unknown) {
+      Alert.alert('Error', (e as Error).message ?? 'Something went wrong');
+    } finally {
+      setIsSeeding(false);
     }
   }
 
@@ -121,7 +143,21 @@ export default function AdminHomeScreen() {
       },
     );
 
-    return () => { cancelled = true; unsubReqs(); unsubSeasons(); };
+    const unsubDisputes = onSnapshot(
+      query(collection(db, 'matches'), where('leagueId', '==', leagueId), where('status', '==', 'disputed')),
+      (snap) => setDisputes(snap.docs.map((d) => ({ id: d.id, ...d.data() } as DisputedMatch))),
+    );
+
+    const unsubTeams = onSnapshot(
+      query(collection(db, 'teams'), where('leagueId', '==', leagueId)),
+      (snap) => {
+        const map: Record<string, string> = {};
+        snap.docs.forEach((d) => { map[d.id] = d.data().name; });
+        setTeamNames(map);
+      },
+    );
+
+    return () => { cancelled = true; unsubReqs(); unsubSeasons(); unsubDisputes(); unsubTeams(); };
   }, [leagueId]); // appUser intentionally excluded — new object ref on every onSnapshot would restart subscriptions
 
   // Load divisions when a season is selected in the approve modal
@@ -384,6 +420,33 @@ export default function AdminHomeScreen() {
           </View>
         )}
 
+        {/* Disputed results */}
+        {disputes.length > 0 && (
+          <View style={{ marginBottom: 20 }}>
+            <Text style={{ color: S.WHITE, fontSize: 16, fontWeight: '700', marginBottom: 10 }}>
+              ⚠️  Disputed Results ({disputes.length})
+            </Text>
+            {disputes.map((match) => (
+              <TouchableOpacity
+                key={match.id}
+                onPress={() => router.push(`/(protected)/admin-dispute?matchId=${match.id}`)}
+                activeOpacity={0.7}
+                style={{
+                  backgroundColor: 'rgba(255,59,48,0.1)',
+                  borderWidth: 1, borderColor: 'rgba(255,59,48,0.35)',
+                  borderRadius: 14, padding: 16, marginBottom: 10,
+                  flexDirection: 'row', alignItems: 'center',
+                }}
+              >
+                <Text style={{ color: S.WHITE, fontWeight: '600', flex: 1 }}>
+                  {teamNames[match.homeTeamId] ?? '…'} vs {teamNames[match.awayTeamId] ?? '…'}
+                </Text>
+                <Text style={{ color: S.RED }}>Resolve ›</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
+
         {/* Captain invite code */}
         <BlurView intensity={20} tint="dark" style={{ borderRadius: 16, overflow: 'hidden', marginBottom: 20 }}>
           <View style={[S.glassCard, { padding: 16 }]}>
@@ -423,6 +486,36 @@ export default function AdminHomeScreen() {
             )}
           </View>
         </BlurView>
+
+        {/* Dev-only: seed a throwaway test league for QA */}
+        {__DEV__ && (
+          <BlurView intensity={20} tint="dark" style={{ borderRadius: 16, overflow: 'hidden', marginBottom: 20 }}>
+            <View style={[S.glassCard, { padding: 16 }]}>
+              <Text style={{ color: S.WHITE, fontSize: 15, fontWeight: '700', marginBottom: 4 }}>
+                🧪 Testing
+              </Text>
+              <Text style={{ color: S.WHITE_50, fontSize: 12, marginBottom: 12 }}>
+                Creates "Test Season / Test Division" with two full teams (7 players each), two captain
+                accounts, and one scheduled fixture — re-run anytime to reset the fixture to a clean state.
+              </Text>
+              <TouchableOpacity
+                onPress={handleSeedTestLeague}
+                disabled={isSeeding}
+                style={[isSeeding ? S.primaryButtonDisabled : S.primaryButton, { paddingVertical: 10, marginBottom: 12 }]}
+                activeOpacity={0.8}
+              >
+                {isSeeding
+                  ? <ActivityIndicator color={S.WHITE} />
+                  : <Text style={S.primaryButtonText}>Seed / Reset Test League</Text>
+                }
+              </TouchableOpacity>
+              <Text style={{ color: S.WHITE_50, fontSize: 12 }}>
+                Sign in as either captain (use the quick sign-in on the login screen, or manually):{'\n'}
+                {TEST_HOME_EMAIL}{'\n'}{TEST_AWAY_EMAIL}{'\n'}Password: {TEST_PASSWORD}
+              </Text>
+            </View>
+          </BlurView>
+        )}
 
         {/* Seasons */}
         <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>

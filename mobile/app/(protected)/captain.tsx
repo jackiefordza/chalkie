@@ -318,11 +318,25 @@ export default function CaptainScreen() {
             </Text>
           </View>
           <TouchableOpacity
+            onPress={() => router.push('/(protected)/standings')}
+            style={{ backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 8, marginRight: 8 }}
+            activeOpacity={0.7}
+          >
+            <Text style={{ color: S.WHITE, fontSize: 13, fontWeight: '600' }}>📊 Table</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
             onPress={() => router.push('/(protected)/fixtures')}
-            style={{ backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 8 }}
+            style={{ backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 8, marginRight: 8 }}
             activeOpacity={0.7}
           >
             <Text style={{ color: S.WHITE, fontSize: 13, fontWeight: '600' }}>🗓 Fixtures</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => router.push('/(protected)/stats')}
+            style={{ backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 8 }}
+            activeOpacity={0.7}
+          >
+            <Text style={{ color: S.WHITE, fontSize: 13, fontWeight: '600' }}>🎯 Stats</Text>
           </TouchableOpacity>
         </View>
 

@@ -225,6 +225,9 @@ service cloud.firestore {
         allow create, update: if isCaptainOrVC()
           && me().teamId == request.resource.data.submittedByTeamId
           && matchData().status != 'confirmed';
+
+        // Admin needs this to reset test-league submissions between QA runs
+        allow delete: if isAdmin() && me().leagueId == matchData().leagueId;
       }
     }
 
