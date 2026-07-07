@@ -13,7 +13,7 @@ export const glassCard: ViewStyle = {
 export const input: ViewStyle & TextStyle = {
   backgroundColor: 'rgba(255,255,255,0.1)',
   borderWidth: 1,
-  borderColor: 'rgba(255,255,255,0.2)',
+  borderColor: 'rgba(255,255,255,0.3)',
   borderRadius: 12,
   padding: 14,
   fontSize: 16,
@@ -56,9 +56,31 @@ export const errorBox: ViewStyle = {
   marginBottom: 16,
 };
 
+// A tappable "chip"/box for compact controls (score pickers, toggles, tags).
+// Meets the ~44pt minimum tap target and uses a stronger border/fill than
+// plain text so it reads as tappable at a glance, not just as a label.
+export const tapBox: ViewStyle = {
+  minHeight: 44,
+  minWidth: 44,
+  borderRadius: 10,
+  borderWidth: 1.5,
+  borderColor: 'rgba(255,255,255,0.3)',
+  backgroundColor: 'rgba(255,255,255,0.10)',
+  alignItems: 'center',
+  justifyContent: 'center',
+};
+
+export const tapBoxSelected: ViewStyle = {
+  borderColor: '#007AFF',
+  backgroundColor: 'rgba(0,122,255,0.25)',
+};
+
 export const WHITE = '#FFFFFF';
+export const WHITE_80 = 'rgba(255,255,255,0.8)';
 export const WHITE_60 = 'rgba(255,255,255,0.6)';
 export const WHITE_50 = 'rgba(255,255,255,0.5)';
 export const WHITE_30 = 'rgba(255,255,255,0.3)';
 export const BLUE = '#007AFF';
 export const RED = '#FF6B6B';
+export const GREEN = '#34C759';
+export const ORANGE = '#FF9500';

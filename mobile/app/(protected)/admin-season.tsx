@@ -14,8 +14,8 @@ interface Division { id: string; name: string; order: number }
 interface Team { id: string; name: string; divisionId: string; captainUserId: string | null }
 
 const STATUS_OPTIONS = [
-  { value: 'upcoming', label: 'Upcoming', color: '#FF9500' },
-  { value: 'active', label: 'Active', color: '#34C759' },
+  { value: 'upcoming', label: 'Upcoming', color: S.ORANGE },
+  { value: 'active', label: 'Active', color: S.GREEN },
   { value: 'completed', label: 'Completed', color: 'rgba(255,255,255,0.4)' },
 ];
 
@@ -116,10 +116,10 @@ export default function AdminSeasonScreen() {
                     key={opt.value}
                     onPress={() => setStatus(opt.value)}
                     style={{
-                      flex: 1, paddingVertical: 8, borderRadius: 8, alignItems: 'center',
-                      backgroundColor: isSelected ? `${opt.color}33` : 'rgba(255,255,255,0.05)',
-                      borderWidth: 1,
-                      borderColor: isSelected ? opt.color : 'rgba(255,255,255,0.1)',
+                      flex: 1, minHeight: 44, justifyContent: 'center', borderRadius: 8, alignItems: 'center',
+                      backgroundColor: isSelected ? `${opt.color}33` : 'rgba(255,255,255,0.08)',
+                      borderWidth: 1.5,
+                      borderColor: isSelected ? opt.color : 'rgba(255,255,255,0.25)',
                     }}
                     activeOpacity={0.7}
                   >
@@ -151,24 +151,24 @@ export default function AdminSeasonScreen() {
                     </Text>
                     <TouchableOpacity
                       onPress={() => router.push('/(protected)/standings')}
-                      style={{ backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 4, marginRight: 8 }}
+                      style={{ minHeight: 36, justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: 8, paddingHorizontal: 10, marginRight: 8, borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.22)' }}
                       activeOpacity={0.7}
                     >
-                      <Text style={{ color: S.WHITE_60, fontSize: 12, fontWeight: '600' }}>Table</Text>
+                      <Text style={{ color: S.WHITE_80, fontSize: 12, fontWeight: '600' }}>Table</Text>
                     </TouchableOpacity>
                     <TouchableOpacity
                       onPress={() => router.push(`/(protected)/admin-fixtures?divisionId=${division.id}`)}
-                      style={{ backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 4, marginRight: 8 }}
+                      style={{ minHeight: 36, justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: 8, paddingHorizontal: 10, marginRight: 8, borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.22)' }}
                       activeOpacity={0.7}
                     >
-                      <Text style={{ color: S.WHITE_60, fontSize: 12, fontWeight: '600' }}>Fixtures</Text>
+                      <Text style={{ color: S.WHITE_80, fontSize: 12, fontWeight: '600' }}>Fixtures</Text>
                     </TouchableOpacity>
                     <TouchableOpacity
                       onPress={() => { setAddTeamTarget(division); setNewTeamName(''); setNewTeamAddress(''); }}
-                      style={{ backgroundColor: 'rgba(0,122,255,0.2)', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 4 }}
+                      style={{ minHeight: 36, justifyContent: 'center', backgroundColor: 'rgba(0,122,255,0.2)', borderRadius: 8, paddingHorizontal: 10, borderWidth: 1.5, borderColor: 'rgba(0,122,255,0.5)' }}
                       activeOpacity={0.7}
                     >
-                      <Text style={{ color: S.BLUE, fontSize: 12, fontWeight: '600' }}>+ Add Team</Text>
+                      <Text style={{ color: S.WHITE, fontSize: 12, fontWeight: '600' }}>+ Add Team</Text>
                     </TouchableOpacity>
                   </View>
                   {divTeams.length === 0 ? (
@@ -182,7 +182,7 @@ export default function AdminSeasonScreen() {
                         style={{
                           padding: 14, borderRadius: 12, marginBottom: 8,
                           backgroundColor: 'rgba(255,255,255,0.07)',
-                          borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)',
+                          borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.22)',
                           flexDirection: 'row', alignItems: 'center',
                         }}
                       >
@@ -213,7 +213,7 @@ export default function AdminSeasonScreen() {
                     style={{
                       padding: 14, borderRadius: 12, marginBottom: 8,
                       backgroundColor: 'rgba(255,255,255,0.07)',
-                      borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)',
+                      borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.22)',
                       flexDirection: 'row', alignItems: 'center',
                     }}
                   >
@@ -263,9 +263,9 @@ export default function AdminSeasonScreen() {
               <View style={{ flexDirection: 'row', gap: 10 }}>
                 <TouchableOpacity
                   onPress={() => setAddTeamTarget(null)}
-                  style={{ flex: 1, padding: 14, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.08)', alignItems: 'center' }}
+                  style={{ flex: 1, padding: 14, borderRadius: 12, alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.08)', borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.25)' }}
                 >
-                  <Text style={{ color: S.WHITE_60 }}>Cancel</Text>
+                  <Text style={{ color: S.WHITE_80, fontWeight: '600' }}>Cancel</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   onPress={addTeam}

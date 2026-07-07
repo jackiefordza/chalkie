@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, ActivityIndicator, Modal, TextInput, Alert } from 'react-native';
-import { router, Stack, useLocalSearchParams } from 'expo-router';
+import { Stack, useLocalSearchParams } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import {
@@ -8,6 +8,7 @@ import {
   getDocs, writeBatch, updateDoc, deleteDoc, serverTimestamp,
 } from 'firebase/firestore';
 import { db } from '@/config/firebase';
+import { goBack } from '@/lib/navigation';
 import { useAuthStore } from '@/stores/authStore';
 import { generateRoundRobinFixtures } from '@/lib/fixtures';
 import type { Match } from '@/types';
@@ -216,7 +217,7 @@ export default function AdminFixturesScreen() {
         options={{
           title: divisionName ? `${divisionName} Fixtures` : 'Fixtures',
           headerLeft: () => (
-            <TouchableOpacity onPress={() => router.back()} hitSlop={12} style={{ paddingRight: 12 }}>
+            <TouchableOpacity onPress={() => goBack()} hitSlop={12} style={{ paddingRight: 12 }}>
               <Text style={{ color: S.WHITE, fontSize: 16 }}>‹ Back</Text>
             </TouchableOpacity>
           ),
@@ -281,8 +282,11 @@ export default function AdminFixturesScreen() {
               </TouchableOpacity>
 
               {isRegenerating && (
-                <TouchableOpacity onPress={() => setIsRegenerating(false)} style={{ marginTop: 14, alignItems: 'center' }}>
-                  <Text style={{ color: S.WHITE_50 }}>Cancel</Text>
+                <TouchableOpacity
+                  onPress={() => setIsRegenerating(false)}
+                  style={{ marginTop: 14, minHeight: 44, justifyContent: 'center', alignItems: 'center', borderRadius: 12, borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.25)' }}
+                >
+                  <Text style={{ color: S.WHITE_80, fontWeight: '600' }}>Cancel</Text>
                 </TouchableOpacity>
               )}
             </View>
@@ -291,10 +295,13 @@ export default function AdminFixturesScreen() {
           <>
             <TouchableOpacity
               onPress={deleteAllFixtures}
-              style={{ alignSelf: 'flex-end', marginBottom: 12 }}
+              style={{
+                alignSelf: 'flex-end', marginBottom: 12, minHeight: 40, justifyContent: 'center',
+                paddingHorizontal: 12, borderRadius: 8, borderWidth: 1.5, borderColor: 'rgba(255,107,107,0.4)', backgroundColor: 'rgba(255,59,48,0.1)',
+              }}
               activeOpacity={0.7}
             >
-              <Text style={{ color: S.RED, fontSize: 13 }}>Delete all & regenerate</Text>
+              <Text style={{ color: S.RED, fontSize: 13, fontWeight: '600' }}>Delete all & regenerate</Text>
             </TouchableOpacity>
 
             {rounds.map(([round, roundMatches]) => (
@@ -310,7 +317,7 @@ export default function AdminFixturesScreen() {
                     style={{
                       padding: 14, borderRadius: 12, marginBottom: 8,
                       backgroundColor: 'rgba(255,255,255,0.07)',
-                      borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)',
+                      borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.22)',
                     }}
                   >
                     <Text style={{ color: S.WHITE, fontWeight: '600' }}>
@@ -363,9 +370,9 @@ export default function AdminFixturesScreen() {
               <View style={{ flexDirection: 'row', gap: 10, marginBottom: 12 }}>
                 <TouchableOpacity
                   onPress={() => setEditTarget(null)}
-                  style={{ flex: 1, padding: 14, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.08)', alignItems: 'center' }}
+                  style={{ flex: 1, padding: 14, borderRadius: 12, alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.08)', borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.25)' }}
                 >
-                  <Text style={{ color: S.WHITE_60 }}>Cancel</Text>
+                  <Text style={{ color: S.WHITE_80, fontWeight: '600' }}>Cancel</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   onPress={saveEdit}
@@ -377,8 +384,11 @@ export default function AdminFixturesScreen() {
               </View>
 
               {editTarget?.status === 'scheduled' && (
-                <TouchableOpacity onPress={deleteFixture} style={{ alignItems: 'center', paddingVertical: 6 }}>
-                  <Text style={{ color: S.RED, fontSize: 13 }}>Delete this fixture</Text>
+                <TouchableOpacity
+                  onPress={deleteFixture}
+                  style={{ minHeight: 44, justifyContent: 'center', alignItems: 'center', borderRadius: 10, borderWidth: 1.5, borderColor: 'rgba(255,107,107,0.4)' }}
+                >
+                  <Text style={{ color: S.RED, fontSize: 13, fontWeight: '600' }}>Delete this fixture</Text>
                 </TouchableOpacity>
               )}
             </View>

@@ -1,11 +1,12 @@
 import { useState, useEffect, useMemo } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, ActivityIndicator, Alert } from 'react-native';
-import { router, Stack, useLocalSearchParams } from 'expo-router';
+import { Stack, useLocalSearchParams } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { collection, doc, getDoc, onSnapshot, query, where, updateDoc } from 'firebase/firestore';
 import { db } from '@/config/firebase';
 import { useAuthStore } from '@/stores/authStore';
+import { goBack } from '@/lib/navigation';
 import type { Match, MatchGame, MatchSide } from '@/types';
 import * as S from '@/styles/common';
 
@@ -119,7 +120,7 @@ export default function AdminDisputeScreen() {
       const finalGames = gameOrders.map((o) => resolved[o]).sort((a, b) => a.order - b.order);
       await updateDoc(doc(db, 'matches', matchId), { status: 'confirmed', games: finalGames });
       Alert.alert('Result confirmed', 'Standings and stats will update shortly.');
-      router.back();
+      goBack();
     } catch (e: unknown) {
       Alert.alert('Error', (e as Error).message ?? 'Something went wrong');
     } finally {
@@ -150,7 +151,7 @@ export default function AdminDisputeScreen() {
         options={{
           title: 'Resolve Dispute',
           headerLeft: () => (
-            <TouchableOpacity onPress={() => router.back()} hitSlop={12} style={{ paddingRight: 12 }}>
+            <TouchableOpacity onPress={() => goBack()} hitSlop={12} style={{ paddingRight: 12 }}>
               <Text style={{ color: S.WHITE, fontSize: 16 }}>‹ Back</Text>
             </TouchableOpacity>
           ),
@@ -199,12 +200,12 @@ export default function AdminDisputeScreen() {
                         <TouchableOpacity
                           onPress={() => pick(order, hg)}
                           style={{
-                            padding: 12, borderRadius: 12,
-                            backgroundColor: chosen === hg ? 'rgba(0,122,255,0.15)' : 'rgba(255,255,255,0.05)',
-                            borderWidth: 1, borderColor: chosen === hg ? S.BLUE : 'rgba(255,255,255,0.12)',
+                            padding: 14, borderRadius: 12,
+                            backgroundColor: chosen === hg ? 'rgba(0,122,255,0.18)' : 'rgba(255,255,255,0.08)',
+                            borderWidth: 1.5, borderColor: chosen === hg ? S.BLUE : 'rgba(255,255,255,0.25)',
                           }}
                         >
-                          <Text style={{ color: S.BLUE, fontSize: 11, fontWeight: '700', marginBottom: 6 }}>
+                          <Text style={{ color: chosen === hg ? S.WHITE : S.WHITE_80, fontSize: 11, fontWeight: '700', marginBottom: 6 }}>
                             {homeTeamName.toUpperCase()}'S VERSION
                           </Text>
                           <GameSummary game={hg} />
@@ -214,12 +215,12 @@ export default function AdminDisputeScreen() {
                         <TouchableOpacity
                           onPress={() => pick(order, ag)}
                           style={{
-                            padding: 12, borderRadius: 12,
-                            backgroundColor: chosen === ag ? 'rgba(0,122,255,0.15)' : 'rgba(255,255,255,0.05)',
-                            borderWidth: 1, borderColor: chosen === ag ? S.BLUE : 'rgba(255,255,255,0.12)',
+                            padding: 14, borderRadius: 12,
+                            backgroundColor: chosen === ag ? 'rgba(0,122,255,0.18)' : 'rgba(255,255,255,0.08)',
+                            borderWidth: 1.5, borderColor: chosen === ag ? S.BLUE : 'rgba(255,255,255,0.25)',
                           }}
                         >
-                          <Text style={{ color: S.BLUE, fontSize: 11, fontWeight: '700', marginBottom: 6 }}>
+                          <Text style={{ color: chosen === ag ? S.WHITE : S.WHITE_80, fontSize: 11, fontWeight: '700', marginBottom: 6 }}>
                             {awayTeamName.toUpperCase()}'S VERSION
                           </Text>
                           <GameSummary game={ag} />
@@ -240,12 +241,12 @@ export default function AdminDisputeScreen() {
                                 key={side}
                                 onPress={() => overrideLegWinner(order, legIdx, side)}
                                 style={{
-                                  flex: 1, paddingVertical: 6, borderRadius: 8, alignItems: 'center',
-                                  backgroundColor: selected ? 'rgba(52,199,89,0.2)' : 'rgba(255,255,255,0.06)',
-                                  borderWidth: 1, borderColor: selected ? '#34C759' : 'rgba(255,255,255,0.15)',
+                                  flex: 1, minHeight: 40, justifyContent: 'center', borderRadius: 8, alignItems: 'center',
+                                  backgroundColor: selected ? 'rgba(52,199,89,0.2)' : 'rgba(255,255,255,0.08)',
+                                  borderWidth: 1.5, borderColor: selected ? S.GREEN : 'rgba(255,255,255,0.25)',
                                 }}
                               >
-                                <Text style={{ color: selected ? '#34C759' : S.WHITE_50, fontSize: 10, fontWeight: '600' }}>
+                                <Text style={{ color: selected ? S.GREEN : S.WHITE_80, fontSize: 11, fontWeight: '600' }}>
                                   L{legIdx + 1}: {side === 'home' ? 'Home' : 'Away'}
                                 </Text>
                               </TouchableOpacity>

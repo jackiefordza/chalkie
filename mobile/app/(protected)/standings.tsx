@@ -1,10 +1,11 @@
 import { useState, useEffect, useMemo } from 'react';
 import { View, Text, ScrollView, ActivityIndicator, TouchableOpacity } from 'react-native';
-import { router, Stack } from 'expo-router';
+import { Stack } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { collection, onSnapshot, query, where, orderBy } from 'firebase/firestore';
 import { db } from '@/config/firebase';
 import { useAuthStore } from '@/stores/authStore';
+import { goBack } from '@/lib/navigation';
 import type { DivisionTable } from '@/types';
 import * as S from '@/styles/common';
 
@@ -84,7 +85,7 @@ export default function StandingsScreen() {
         options={{
           title: 'Standings',
           headerLeft: () => (
-            <TouchableOpacity onPress={() => router.back()} hitSlop={12} style={{ paddingRight: 12 }}>
+            <TouchableOpacity onPress={() => goBack()} hitSlop={12} style={{ paddingRight: 12 }}>
               <Text style={{ color: S.WHITE, fontSize: 16 }}>‹ Back</Text>
             </TouchableOpacity>
           ),
@@ -101,12 +102,12 @@ export default function StandingsScreen() {
                     key={d.id}
                     onPress={() => setSelectedDivisionId(d.id)}
                     style={{
-                      paddingHorizontal: 14, paddingVertical: 8, borderRadius: 10,
-                      backgroundColor: selected ? 'rgba(0,122,255,0.2)' : 'rgba(255,255,255,0.07)',
-                      borderWidth: 1, borderColor: selected ? S.BLUE : 'rgba(255,255,255,0.12)',
+                      minHeight: 40, justifyContent: 'center', paddingHorizontal: 14, borderRadius: 10,
+                      backgroundColor: selected ? 'rgba(0,122,255,0.22)' : 'rgba(255,255,255,0.08)',
+                      borderWidth: 1.5, borderColor: selected ? S.BLUE : 'rgba(255,255,255,0.25)',
                     }}
                   >
-                    <Text style={{ color: selected ? S.BLUE : S.WHITE_60, fontWeight: '600', fontSize: 13 }}>{d.name}</Text>
+                    <Text style={{ color: selected ? S.WHITE : S.WHITE_80, fontWeight: '600', fontSize: 13 }}>{d.name}</Text>
                   </TouchableOpacity>
                 );
               })}
@@ -125,7 +126,7 @@ export default function StandingsScreen() {
             </Text>
           </View>
         ) : (
-          <View style={{ borderRadius: 14, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)' }}>
+          <View style={{ borderRadius: 14, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(255,255,255,0.22)' }}>
             {/* Header row */}
             <View style={{ flexDirection: 'row', backgroundColor: 'rgba(255,255,255,0.1)', paddingVertical: 10, paddingHorizontal: 12 }}>
               <Text style={{ color: S.WHITE_50, fontSize: 11, fontWeight: '700', width: 22 }}>#</Text>

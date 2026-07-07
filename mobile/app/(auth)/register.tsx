@@ -14,6 +14,7 @@ import { router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { useAuthStore } from '@/stores/authStore';
+import { goBack } from '@/lib/navigation';
 
 export default function RegisterScreen() {
   const [name, setName] = useState('');
@@ -190,7 +191,7 @@ export default function RegisterScreen() {
 
           {/* Back to sign in */}
           <TouchableOpacity
-            onPress={() => router.back()}
+            onPress={() => goBack('/(auth)/login')}
             style={{ alignItems: 'center', marginTop: 24 }}
             activeOpacity={0.7}
           >
@@ -215,7 +216,7 @@ const labelStyle = {
 const inputStyle = {
   backgroundColor: 'rgba(255,255,255,0.1)',
   borderWidth: 1,
-  borderColor: 'rgba(255,255,255,0.2)',
+  borderColor: 'rgba(255,255,255,0.3)',
   borderRadius: 12,
   padding: 14,
   fontSize: 16,

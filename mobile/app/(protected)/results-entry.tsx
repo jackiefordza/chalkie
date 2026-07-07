@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, ActivityIndicator, Modal, TextInput, Alert } from 'react-native';
-import { router, Stack, useLocalSearchParams } from 'expo-router';
+import { Stack, useLocalSearchParams } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import {
@@ -8,6 +8,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '@/config/firebase';
 import { useAuthStore } from '@/stores/authStore';
+import { goBack } from '@/lib/navigation';
 import type { Match, MatchGame, GameType, MatchSide, HighCheckout } from '@/types';
 import * as S from '@/styles/common';
 
@@ -86,6 +87,18 @@ function isGameComplete(game: DraftGame): boolean {
   );
 }
 
+function normalizeGameForCompare(g: DraftGame): string {
+  return JSON.stringify({
+    homePlayerIds: [...g.homePlayerIds].sort(),
+    awayPlayerIds: [...g.awayPlayerIds].sort(),
+    score: g.score,
+    oneEighties: [...g.oneEighties].sort(),
+    highCheckouts: [...g.highCheckouts]
+      .map((hc) => `${hc.playerId}:${hc.value}`)
+      .sort(),
+  });
+}
+
 export default function ResultsEntryScreen() {
   const { matchId } = useLocalSearchParams<{ matchId: string }>();
   const { appUser } = useAuthStore();
@@ -94,13 +107,17 @@ export default function ResultsEntryScreen() {
   const [homeTeamName, setHomeTeamName] = useState('');
   const [awayTeamName, setAwayTeamName] = useState('');
   const [players, setPlayers] = useState<Player[]>([]);
-  const [otherSubmitted, setOtherSubmitted] = useState(false);
+  const [mySubmission, setMySubmission] = useState<MatchGame[] | null>(null);
+  const [otherSubmission, setOtherSubmission] = useState<MatchGame[] | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const [editing, setEditing] = useState(false);
   const [games, setGames] = useState<DraftGame[]>(blankGames());
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // Review mode: games flagged as "not right, let me fix this" — everything else
+  // is treated as agreed-with, copied straight from the other team's submission.
+  const [editedGameIndexes, setEditedGameIndexes] = useState<Set<number>>(new Set());
 
   // player-picker modal
   const [picker, setPicker] = useState<{ gameIndex: number; side: MatchSide } | null>(null);
@@ -155,18 +172,68 @@ export default function ResultsEntryScreen() {
     return () => { unsubMatch(); unsubPlayers(); };
   }, [matchId, appUser?.leagueId]);
 
-  // Load our own existing submission (for edit) + whether the other team has submitted
+  // Load our own existing submission (for edit) + the other team's (to review/reconcile)
   useEffect(() => {
     if (!matchId || !myTeamId || !match) return;
     const otherTeamId = isHome ? match.awayTeamId : match.homeTeamId;
 
-    getDoc(doc(db, 'matches', matchId, 'submissions', myTeamId)).then((snap) => {
-      if (snap.exists()) setGames(toDraft(snap.data().games as MatchGame[]));
-    });
-    getDoc(doc(db, 'matches', matchId, 'submissions', otherTeamId)).then((snap) => {
-      setOtherSubmitted(snap.exists());
+    getDoc(doc(db, 'matches', matchId, 'submissions', myTeamId)).then((mySnap) => {
+      const myGames = mySnap.exists() ? (mySnap.data().games as MatchGame[]) : null;
+      if (myGames) { setMySubmission(myGames); setGames(toDraft(myGames)); }
+
+      getDoc(doc(db, 'matches', matchId, 'submissions', otherTeamId)).then((otherSnap) => {
+        const otherGames = otherSnap.exists() ? (otherSnap.data().games as MatchGame[]) : null;
+        setOtherSubmission(otherGames);
+        // Nobody's submitted on our side yet, but the other team has — start
+        // from their entry (review mode) instead of a blank form.
+        if (!myGames && otherGames) setGames(toDraft(otherGames));
+      });
     });
   }, [matchId, myTeamId, match, isHome]);
+
+  type Mode = 'blank' | 'review' | 'waiting' | 'reconcile';
+  const mode: Mode = otherSubmission && !mySubmission
+    ? 'review'
+    : mySubmission && !otherSubmission
+      ? 'waiting'
+      : mySubmission && otherSubmission
+        ? 'reconcile'
+        : 'blank';
+
+  const diffGameIndexes = useMemo(() => {
+    if (!mySubmission || !otherSubmission) return [];
+    const mine = toDraft(mySubmission);
+    const theirs = toDraft(otherSubmission);
+    return mine
+      .map((g, i) => (normalizeGameForCompare(g) !== normalizeGameForCompare(theirs[i]) ? i : -1))
+      .filter((i) => i !== -1);
+  }, [mySubmission, otherSubmission]);
+
+  async function adoptTheirVersion(gameIndex: number) {
+    if (!matchId || !myTeamId || !appUser || !mySubmission || !otherSubmission) return;
+    const updated = mySubmission.map((g, i) => (i === gameIndex ? otherSubmission[i] : g));
+    try {
+      await setDoc(doc(db, 'matches', matchId, 'submissions', myTeamId), {
+        submittedByTeamId: myTeamId,
+        submittedByUserId: appUser.uid,
+        games: updated,
+        createdAt: serverTimestamp(),
+      });
+      setMySubmission(updated);
+    } catch (e: unknown) {
+      Alert.alert('Error', (e as Error).message ?? 'Something went wrong');
+    }
+  }
+
+  function revertGame(gameIndex: number) {
+    if (!otherSubmission) return;
+    updateGame(gameIndex, toDraft([otherSubmission[gameIndex]])[0]);
+    setEditedGameIndexes((prev) => {
+      const next = new Set(prev);
+      next.delete(gameIndex);
+      return next;
+    });
+  }
 
   const homePlayers = useMemo(
     () => (match ? players.filter((p) => p.teamId === match.homeTeamId) : []),
@@ -286,11 +353,11 @@ export default function ResultsEntryScreen() {
       setEditing(false);
       Alert.alert(
         'Result submitted',
-        otherSubmitted
+        otherSubmission
           ? "Both teams have now submitted — this will confirm automatically if they match, or go to the admin if they don't."
           : 'Waiting on the other team to submit their result too.',
       );
-      router.back();
+      goBack();
     } catch (e: unknown) {
       Alert.alert('Error', (e as Error).message ?? 'Something went wrong');
     } finally {
@@ -306,7 +373,7 @@ export default function ResultsEntryScreen() {
         options={{
           title: 'Enter Result',
           headerLeft: () => (
-            <TouchableOpacity onPress={() => router.back()} hitSlop={12} style={{ paddingRight: 12 }}>
+            <TouchableOpacity onPress={() => goBack()} hitSlop={12} style={{ paddingRight: 12 }}>
               <Text style={{ color: S.WHITE, fontSize: 16 }}>‹ Back</Text>
             </TouchableOpacity>
           ),
@@ -341,16 +408,27 @@ export default function ResultsEntryScreen() {
               <Text style={{ color: S.WHITE_50, fontSize: 13, marginBottom: 16 }}>
                 7 games · 5 singles, 2 pairs · enter the legs score for each
               </Text>
-              {match?.status === 'disputed' && (
+              {mode === 'reconcile' && diffGameIndexes.length > 0 && (
                 <View style={[S.errorBox, { marginBottom: 4 }]}>
                   <Text style={{ color: S.RED, fontSize: 13 }}>
-                    Disputed — the submissions from both teams don't match. The admin will review, or you can resubmit if you spot a mistake.
+                    {diffGameIndexes.length} game{diffGameIndexes.length > 1 ? 's' : ''} don't match the other team's submission.
+                    Check each one — adopt their version if they're right, or leave it for the admin to resolve.
                   </Text>
                 </View>
               )}
-              {games.some((g) => g.homePlayerIds.length > 0) && (
+              {mode === 'reconcile' && diffGameIndexes.length === 0 && (
                 <Text style={{ color: S.WHITE_60, fontSize: 13, marginBottom: 4 }}>
-                  {otherSubmitted ? 'The other team has already submitted their result.' : 'You have a saved draft/submission for this match.'}
+                  Both submissions match — this should confirm automatically any moment.
+                </Text>
+              )}
+              {mode === 'review' && (
+                <Text style={{ color: S.WHITE_60, fontSize: 13, marginBottom: 4 }}>
+                  The other team has submitted a result. Review it below — anything you don't flag is treated as agreed.
+                </Text>
+              )}
+              {mode === 'waiting' && (
+                <Text style={{ color: S.WHITE_60, fontSize: 13, marginBottom: 4 }}>
+                  You have a saved draft/submission for this match. Waiting on the other team to submit theirs.
                 </Text>
               )}
             </View>
@@ -361,9 +439,59 @@ export default function ResultsEntryScreen() {
             activeOpacity={0.8}
           >
             <Text style={S.primaryButtonText}>
-              {games.some((g) => g.homePlayerIds.length > 0) ? 'Edit Result' : 'Enter Result'}
+              {mode === 'review' ? 'Review Result' : mode === 'reconcile' ? 'Resolve Differences' : mode === 'waiting' ? 'Edit Result' : 'Enter Result'}
             </Text>
           </TouchableOpacity>
+        </ScrollView>
+      ) : mode === 'reconcile' ? (
+        <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 8 }}>
+          <TouchableOpacity onPress={() => setEditing(false)} style={{ marginBottom: 12 }}>
+            <Text style={{ color: S.WHITE_50, fontSize: 13 }}>‹ Back to summary</Text>
+          </TouchableOpacity>
+          <Text style={{ color: S.WHITE, fontSize: 15, marginBottom: 16 }}>
+            {homeTeamName} vs {awayTeamName}
+          </Text>
+          {diffGameIndexes.length === 0 ? (
+            <Text style={{ color: S.WHITE_60 }}>Everything matches — this should confirm automatically any moment.</Text>
+          ) : (
+            diffGameIndexes.map((gameIndex) => {
+              const mine = toDraft([mySubmission![gameIndex]])[0];
+              const theirs = toDraft([otherSubmission![gameIndex]])[0];
+              return (
+                <View
+                  key={gameIndex}
+                  style={{
+                    padding: 14, borderRadius: 12, marginBottom: 14,
+                    backgroundColor: 'rgba(255,59,48,0.06)',
+                    borderWidth: 1, borderColor: 'rgba(255,59,48,0.3)',
+                  }}
+                >
+                  <Text style={{ color: S.WHITE_50, fontSize: 11, fontWeight: '700', marginBottom: 10 }}>
+                    GAME {gameIndex + 1} · {mine.type === 'singles' ? 'SINGLES' : 'PAIRS'}
+                  </Text>
+                  {[{ label: 'YOUR VERSION', g: mine }, { label: 'THEIR VERSION', g: theirs }].map(({ label, g }) => (
+                    <View key={label} style={{ padding: 10, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.05)', marginBottom: 8 }}>
+                      <Text style={{ color: S.WHITE_50, fontSize: 10, fontWeight: '700', marginBottom: 4 }}>{label}</Text>
+                      <Text style={{ color: S.WHITE, fontSize: 13, marginBottom: 2 }}>
+                        {g.homePlayerIds.map(playerName).join(' & ') || '—'} vs {g.awayPlayerIds.map(playerName).join(' & ') || '—'}
+                      </Text>
+                      <Text style={{ color: S.WHITE_60, fontSize: 12 }}>
+                        Legs: {g.score ? `${g.score.home}-${g.score.away}` : '—'}
+                        {g.oneEighties.length ? ` · 180s: ${g.oneEighties.map(playerName).join(', ')}` : ''}
+                        {g.highCheckouts.length ? ` · Checkouts: ${g.highCheckouts.map((hc) => `${playerName(hc.playerId)} ${hc.value}`).join(', ')}` : ''}
+                      </Text>
+                    </View>
+                  ))}
+                  <TouchableOpacity
+                    onPress={() => adoptTheirVersion(gameIndex)}
+                    style={[S.primaryButton, { paddingVertical: 10 }]}
+                  >
+                    <Text style={S.primaryButtonText}>Adopt Their Version</Text>
+                  </TouchableOpacity>
+                </View>
+              );
+            })
+          )}
         </ScrollView>
       ) : (
         <>
@@ -374,6 +502,41 @@ export default function ResultsEntryScreen() {
 
             {games.map((game, gameIndex) => {
               const participants = [...game.homePlayerIds, ...game.awayPlayerIds];
+
+              if (mode === 'review' && !editedGameIndexes.has(gameIndex)) {
+                return (
+                  <View
+                    key={gameIndex}
+                    style={{
+                      padding: 14, borderRadius: 12, marginBottom: 14,
+                      backgroundColor: 'rgba(52,199,89,0.05)',
+                      borderWidth: 1, borderColor: 'rgba(52,199,89,0.3)',
+                    }}
+                  >
+                    <Text style={{ color: S.WHITE_50, fontSize: 11, fontWeight: '700', marginBottom: 8 }}>
+                      GAME {gameIndex + 1} · {game.type === 'singles' ? 'SINGLES' : 'PAIRS'}
+                    </Text>
+                    <Text style={{ color: S.WHITE, fontSize: 14, marginBottom: 2 }}>
+                      {game.homePlayerIds.map(playerName).join(' & ') || '—'} vs {game.awayPlayerIds.map(playerName).join(' & ') || '—'}
+                    </Text>
+                    <Text style={{ color: S.WHITE_80, fontSize: 13, marginBottom: 14 }}>
+                      Legs: {game.score ? `${game.score.home}-${game.score.away}` : '—'}
+                      {game.oneEighties.length ? ` · 180s: ${game.oneEighties.map(playerName).join(', ')}` : ''}
+                      {game.highCheckouts.length ? ` · Checkouts: ${game.highCheckouts.map((hc) => `${playerName(hc.playerId)} ${hc.value}`).join(', ')}` : ''}
+                    </Text>
+                    <TouchableOpacity
+                      onPress={() => setEditedGameIndexes((prev) => new Set(prev).add(gameIndex))}
+                      style={{
+                        alignSelf: 'flex-start', paddingHorizontal: 14, minHeight: 44, justifyContent: 'center',
+                        borderRadius: 10, borderWidth: 1.5, borderColor: S.RED, backgroundColor: 'rgba(255,107,107,0.12)',
+                      }}
+                    >
+                      <Text style={{ color: S.RED, fontSize: 13, fontWeight: '700' }}>This isn't right — edit this game</Text>
+                    </TouchableOpacity>
+                  </View>
+                );
+              }
+
               return (
                 <View
                   key={gameIndex}
@@ -383,91 +546,95 @@ export default function ResultsEntryScreen() {
                     borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)',
                   }}
                 >
-                  <Text style={{ color: S.WHITE_50, fontSize: 11, fontWeight: '700', marginBottom: 10 }}>
-                    GAME {gameIndex + 1} · {game.type === 'singles' ? 'SINGLES' : 'PAIRS'}
-                  </Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
+                    <Text style={{ color: S.WHITE_50, fontSize: 11, fontWeight: '700', flex: 1 }}>
+                      GAME {gameIndex + 1} · {game.type === 'singles' ? 'SINGLES' : 'PAIRS'}
+                    </Text>
+                    {mode === 'review' && editedGameIndexes.has(gameIndex) && (
+                      <TouchableOpacity
+                        onPress={() => revertGame(gameIndex)}
+                        style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.08)' }}
+                      >
+                        <Text style={{ color: S.WHITE_80, fontSize: 12, fontWeight: '600' }}>Undo</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
 
-                  {/* Lineup + score, in one row: Home Name — 1  2 — Away Name */}
-                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
+                  {/* Lineup: boxed, clearly tappable name pickers */}
+                  <View style={{ flexDirection: 'row', gap: 10, marginBottom: 12 }}>
                     <TouchableOpacity
                       onPress={() => setPicker({ gameIndex, side: 'home' })}
-                      style={{ flex: 1 }}
+                      style={[S.tapBox, { flex: 1, alignItems: 'flex-start', paddingHorizontal: 12, paddingVertical: 10 }]}
                     >
-                      <Text style={{ color: S.WHITE_50, fontSize: 11, fontWeight: '700', marginBottom: 4 }}>HOME</Text>
+                      <Text style={{ color: S.WHITE_60, fontSize: 11, fontWeight: '700', marginBottom: 4 }}>HOME</Text>
                       {game.homePlayerIds.length === 0 ? (
-                        <Text style={{ color: S.WHITE_30, fontSize: 13 }}>Tap to pick</Text>
+                        <Text style={{ color: S.WHITE_80, fontSize: 14 }}>Tap to pick</Text>
                       ) : (
                         game.homePlayerIds.map((id) => (
-                          <Text key={id} style={{ color: S.WHITE, fontSize: 13, fontWeight: '600' }}>{playerName(id)}</Text>
+                          <Text key={id} style={{ color: S.WHITE, fontSize: 14, fontWeight: '600' }}>{playerName(id)}</Text>
                         ))
                       )}
                     </TouchableOpacity>
 
-                    <View style={{ flexDirection: 'row', alignItems: 'center', marginHorizontal: 10 }}>
-                      <TouchableOpacity
-                        onPress={() => cycleScore(gameIndex, 'home')}
-                        style={{
-                          width: 36, height: 36, borderRadius: 8, alignItems: 'center', justifyContent: 'center',
-                          backgroundColor: game.score ? 'rgba(52,199,89,0.15)' : 'rgba(255,255,255,0.06)',
-                          borderWidth: 1, borderColor: game.score ? '#34C759' : 'rgba(255,255,255,0.2)',
-                        }}
-                      >
-                        <Text style={{ color: game.score ? '#34C759' : S.WHITE_50, fontWeight: '700', fontSize: 16 }}>
-                          {game.score ? game.score.home : '–'}
-                        </Text>
-                      </TouchableOpacity>
-                      <Text style={{ color: S.WHITE_30, marginHorizontal: 6 }}>–</Text>
-                      <TouchableOpacity
-                        onPress={() => cycleScore(gameIndex, 'away')}
-                        style={{
-                          width: 36, height: 36, borderRadius: 8, alignItems: 'center', justifyContent: 'center',
-                          backgroundColor: game.score ? 'rgba(52,199,89,0.15)' : 'rgba(255,255,255,0.06)',
-                          borderWidth: 1, borderColor: game.score ? '#34C759' : 'rgba(255,255,255,0.2)',
-                        }}
-                      >
-                        <Text style={{ color: game.score ? '#34C759' : S.WHITE_50, fontWeight: '700', fontSize: 16 }}>
-                          {game.score ? game.score.away : '–'}
-                        </Text>
-                      </TouchableOpacity>
-                    </View>
-
                     <TouchableOpacity
                       onPress={() => setPicker({ gameIndex, side: 'away' })}
-                      style={{ flex: 1, alignItems: 'flex-end' }}
+                      style={[S.tapBox, { flex: 1, alignItems: 'flex-start', paddingHorizontal: 12, paddingVertical: 10 }]}
                     >
-                      <Text style={{ color: S.WHITE_50, fontSize: 11, fontWeight: '700', marginBottom: 4 }}>AWAY</Text>
+                      <Text style={{ color: S.WHITE_60, fontSize: 11, fontWeight: '700', marginBottom: 4 }}>AWAY</Text>
                       {game.awayPlayerIds.length === 0 ? (
-                        <Text style={{ color: S.WHITE_30, fontSize: 13 }}>Tap to pick</Text>
+                        <Text style={{ color: S.WHITE_80, fontSize: 14 }}>Tap to pick</Text>
                       ) : (
                         game.awayPlayerIds.map((id) => (
-                          <Text key={id} style={{ color: S.WHITE, fontSize: 13, fontWeight: '600', textAlign: 'right' }}>{playerName(id)}</Text>
+                          <Text key={id} style={{ color: S.WHITE, fontSize: 14, fontWeight: '600' }}>{playerName(id)}</Text>
                         ))
                       )}
+                    </TouchableOpacity>
+                  </View>
+
+                  {/* Score: big, high-contrast tap boxes */}
+                  <Text style={{ color: S.WHITE_60, fontSize: 11, fontWeight: '700', marginBottom: 6 }}>LEGS (TAP TO CHANGE)</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 14 }}>
+                    <TouchableOpacity
+                      onPress={() => cycleScore(gameIndex, 'home')}
+                      style={[S.tapBox, { width: 56, height: 48 }, !!game.score && { borderColor: S.GREEN, backgroundColor: 'rgba(52,199,89,0.18)' }]}
+                    >
+                      <Text style={{ color: game.score ? S.GREEN : S.WHITE_80, fontWeight: '700', fontSize: 20 }}>
+                        {game.score ? game.score.home : '–'}
+                      </Text>
+                    </TouchableOpacity>
+                    <Text style={{ color: S.WHITE_50, marginHorizontal: 10, fontSize: 16 }}>–</Text>
+                    <TouchableOpacity
+                      onPress={() => cycleScore(gameIndex, 'away')}
+                      style={[S.tapBox, { width: 56, height: 48 }, !!game.score && { borderColor: S.GREEN, backgroundColor: 'rgba(52,199,89,0.18)' }]}
+                    >
+                      <Text style={{ color: game.score ? S.GREEN : S.WHITE_80, fontWeight: '700', fontSize: 20 }}>
+                        {game.score ? game.score.away : '–'}
+                      </Text>
                     </TouchableOpacity>
                   </View>
 
                   {/* 180s */}
                   {participants.length > 0 && (
                     <>
-                      <Text style={{ color: S.WHITE_50, fontSize: 11, marginBottom: 6 }}>180s (tap to add, tap − to remove)</Text>
-                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
+                      <Text style={{ color: S.WHITE_60, fontSize: 11, fontWeight: '700', marginBottom: 6 }}>180s (tap to add, tap − to remove)</Text>
+                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 14 }}>
                         {participants.map((id) => {
                           const count = game.oneEighties.filter((x) => x === id).length;
                           const active = count > 0;
                           return (
                             <View
                               key={id}
-                              style={{
-                                flexDirection: 'row', alignItems: 'center', borderRadius: 8,
-                                backgroundColor: active ? 'rgba(0,122,255,0.2)' : 'rgba(255,255,255,0.06)',
-                                borderWidth: 1, borderColor: active ? S.BLUE : 'rgba(255,255,255,0.15)',
-                              }}
+                              style={[
+                                S.tapBox,
+                                { flexDirection: 'row', minHeight: 44, paddingLeft: 4 },
+                                active && S.tapBoxSelected,
+                              ]}
                             >
                               <TouchableOpacity
                                 onPress={() => addOneEighty(gameIndex, id)}
-                                style={{ paddingHorizontal: 10, paddingVertical: 6 }}
+                                style={{ paddingHorizontal: 10, paddingVertical: 10 }}
                               >
-                                <Text style={{ color: active ? S.BLUE : S.WHITE_60, fontSize: 12, fontWeight: '600' }}>
+                                <Text style={{ color: active ? S.WHITE : S.WHITE_80, fontSize: 13, fontWeight: '600' }}>
                                   {playerName(id)}{active ? ` × ${count}` : ''}
                                 </Text>
                               </TouchableOpacity>
@@ -475,9 +642,9 @@ export default function ResultsEntryScreen() {
                                 <TouchableOpacity
                                   onPress={() => removeOneEighty(gameIndex, id)}
                                   hitSlop={8}
-                                  style={{ paddingHorizontal: 8, paddingVertical: 6, borderLeftWidth: 1, borderLeftColor: 'rgba(255,255,255,0.15)' }}
+                                  style={{ paddingHorizontal: 12, paddingVertical: 10, borderLeftWidth: 1, borderLeftColor: 'rgba(255,255,255,0.2)' }}
                                 >
-                                  <Text style={{ color: S.BLUE, fontSize: 12, fontWeight: '700' }}>−</Text>
+                                  <Text style={{ color: S.WHITE, fontSize: 14, fontWeight: '700' }}>−</Text>
                                 </TouchableOpacity>
                               )}
                             </View>
@@ -488,18 +655,15 @@ export default function ResultsEntryScreen() {
                   )}
 
                   {/* High checkouts */}
-                  <Text style={{ color: S.WHITE_50, fontSize: 11, marginBottom: 6 }}>HIGH CHECKOUTS</Text>
-                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                  <Text style={{ color: S.WHITE_60, fontSize: 11, fontWeight: '700', marginBottom: 6 }}>HIGH CHECKOUTS</Text>
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
                     {game.highCheckouts.map((hc, i) => (
                       <TouchableOpacity
                         key={i}
                         onPress={() => openEditCheckout(gameIndex, i)}
-                        style={{
-                          paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8,
-                          backgroundColor: 'rgba(255,165,0,0.12)', borderWidth: 1, borderColor: 'rgba(255,165,0,0.35)',
-                        }}
+                        style={[S.tapBox, { paddingHorizontal: 12, borderColor: S.ORANGE, backgroundColor: 'rgba(255,149,0,0.16)' }]}
                       >
-                        <Text style={{ color: '#FF9500', fontSize: 12, fontWeight: '600' }}>
+                        <Text style={{ color: S.ORANGE, fontSize: 13, fontWeight: '600' }}>
                           {playerName(hc.playerId)} — {hc.value}
                         </Text>
                       </TouchableOpacity>
@@ -507,9 +671,9 @@ export default function ResultsEntryScreen() {
                     {participants.length > 0 && game.highCheckouts.length < 3 && (
                       <TouchableOpacity
                         onPress={() => openAddCheckout(gameIndex)}
-                        style={{ paddingHorizontal: 10, paddingVertical: 6, justifyContent: 'center' }}
+                        style={[S.tapBox, { paddingHorizontal: 12 }]}
                       >
-                        <Text style={{ color: S.WHITE_50, fontSize: 12 }}>+ Add high checkout</Text>
+                        <Text style={{ color: S.WHITE_80, fontSize: 13, fontWeight: '600' }}>+ Add high checkout</Text>
                       </TouchableOpacity>
                     )}
                   </View>
@@ -522,9 +686,12 @@ export default function ResultsEntryScreen() {
           <View style={{ flexDirection: 'row', gap: 10, padding: 20, paddingTop: 8 }}>
             <TouchableOpacity
               onPress={() => setEditing(false)}
-              style={{ flex: 1, padding: 14, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.08)', alignItems: 'center' }}
+              style={{
+                flex: 1, padding: 14, borderRadius: 12, alignItems: 'center',
+                backgroundColor: 'rgba(255,255,255,0.08)', borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.25)',
+              }}
             >
-              <Text style={{ color: S.WHITE_60 }}>Cancel</Text>
+              <Text style={{ color: S.WHITE_80, fontWeight: '600' }}>Cancel</Text>
             </TouchableOpacity>
             <TouchableOpacity
               onPress={submit}
@@ -562,15 +729,15 @@ export default function ResultsEntryScreen() {
                       onPress={() => togglePlayer(picker.gameIndex, picker.side, p.id)}
                       disabled={disabled}
                       style={{
-                        flexDirection: 'row', alignItems: 'center', padding: 12, borderRadius: 10, marginBottom: 6,
-                        backgroundColor: selected ? 'rgba(0,122,255,0.15)' : 'rgba(255,255,255,0.05)',
-                        borderWidth: 1, borderColor: selected ? S.BLUE : 'rgba(255,255,255,0.1)',
+                        flexDirection: 'row', alignItems: 'center', minHeight: 48, padding: 14, borderRadius: 10, marginBottom: 8,
+                        backgroundColor: selected ? 'rgba(0,122,255,0.2)' : 'rgba(255,255,255,0.08)',
+                        borderWidth: 1.5, borderColor: selected ? S.BLUE : 'rgba(255,255,255,0.22)',
                         opacity: disabled ? 0.4 : 1,
                       }}
                     >
-                      <Text style={{ color: selected ? S.BLUE : S.WHITE, fontWeight: '600', flex: 1 }}>{p.name}</Text>
+                      <Text style={{ color: S.WHITE, fontWeight: '600', fontSize: 15, flex: 1 }}>{p.name}</Text>
                       {disabled && (
-                        <Text style={{ color: S.WHITE_30, fontSize: 11 }}>Playing Game {lockedInGame + 1}</Text>
+                        <Text style={{ color: S.WHITE_50, fontSize: 11 }}>Playing Game {lockedInGame + 1}</Text>
                       )}
                     </TouchableOpacity>
                   );
@@ -601,13 +768,9 @@ export default function ResultsEntryScreen() {
                     <TouchableOpacity
                       key={id}
                       onPress={() => setCheckoutPlayerId(id)}
-                      style={{
-                        paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10,
-                        backgroundColor: selected ? 'rgba(0,122,255,0.2)' : 'rgba(255,255,255,0.06)',
-                        borderWidth: 1, borderColor: selected ? S.BLUE : 'rgba(255,255,255,0.15)',
-                      }}
+                      style={[S.tapBox, { paddingHorizontal: 14 }, selected && S.tapBoxSelected]}
                     >
-                      <Text style={{ color: selected ? S.BLUE : S.WHITE_60, fontWeight: '600', fontSize: 13 }}>
+                      <Text style={{ color: selected ? S.WHITE : S.WHITE_80, fontWeight: '600', fontSize: 14 }}>
                         {playerName(id)}
                       </Text>
                     </TouchableOpacity>
@@ -626,9 +789,12 @@ export default function ResultsEntryScreen() {
               <View style={{ flexDirection: 'row', gap: 10 }}>
                 <TouchableOpacity
                   onPress={() => setCheckoutModal(null)}
-                  style={{ flex: 1, padding: 14, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.08)', alignItems: 'center' }}
+                  style={{
+                    flex: 1, padding: 14, borderRadius: 12, alignItems: 'center',
+                    backgroundColor: 'rgba(255,255,255,0.08)', borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.25)',
+                  }}
                 >
-                  <Text style={{ color: S.WHITE_60 }}>Cancel</Text>
+                  <Text style={{ color: S.WHITE_80, fontWeight: '600' }}>Cancel</Text>
                 </TouchableOpacity>
                 {checkoutModal?.editIndex !== null && (
                   <TouchableOpacity

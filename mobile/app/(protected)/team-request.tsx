@@ -122,10 +122,10 @@ export default function TeamRequestScreen() {
                     onPress={() => setPhoneVisibility(opt.value)}
                     activeOpacity={0.7}
                     style={{
-                      flexDirection: 'row', alignItems: 'center', padding: 12,
+                      flexDirection: 'row', alignItems: 'center', minHeight: 44, padding: 12,
                       borderRadius: 12, marginBottom: 8,
-                      backgroundColor: selected ? 'rgba(0,122,255,0.15)' : 'rgba(255,255,255,0.05)',
-                      borderWidth: 1, borderColor: selected ? S.BLUE : 'rgba(255,255,255,0.1)',
+                      backgroundColor: selected ? 'rgba(0,122,255,0.18)' : 'rgba(255,255,255,0.08)',
+                      borderWidth: 1.5, borderColor: selected ? S.BLUE : 'rgba(255,255,255,0.25)',
                     }}
                   >
                     <View style={{

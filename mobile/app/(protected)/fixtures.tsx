@@ -6,6 +6,7 @@ import { BlurView } from 'expo-blur';
 import { collection, onSnapshot, query, where, orderBy, and, or } from 'firebase/firestore';
 import { db } from '@/config/firebase';
 import { useAuthStore } from '@/stores/authStore';
+import { goBack } from '@/lib/navigation';
 import type { Match } from '@/types';
 import * as S from '@/styles/common';
 
@@ -18,9 +19,9 @@ const STATUS_LABEL: Record<Match['status'], string> = {
 
 const STATUS_COLOR: Record<Match['status'], string> = {
   scheduled: S.WHITE_50,
-  awaiting_confirmation: '#FF9500',
+  awaiting_confirmation: S.ORANGE,
   disputed: S.RED,
-  confirmed: '#34C759',
+  confirmed: S.GREEN,
 };
 
 function formatDate(date: Date): string {
@@ -94,7 +95,7 @@ export default function FixturesScreen() {
         style={{
           padding: 14, borderRadius: 12, marginBottom: 8,
           backgroundColor: 'rgba(255,255,255,0.07)',
-          borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)',
+          borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.22)',
         }}
       >
         <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
@@ -130,7 +131,7 @@ export default function FixturesScreen() {
         options={{
           title: 'Fixtures',
           headerLeft: () => (
-            <TouchableOpacity onPress={() => router.back()} hitSlop={12} style={{ paddingRight: 12 }}>
+            <TouchableOpacity onPress={() => goBack()} hitSlop={12} style={{ paddingRight: 12 }}>
               <Text style={{ color: S.WHITE, fontSize: 16 }}>‹ Back</Text>
             </TouchableOpacity>
           ),

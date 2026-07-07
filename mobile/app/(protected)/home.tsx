@@ -100,7 +100,7 @@ export default function PlayerHomeScreen() {
           style={{
             backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 14, padding: 16,
             marginBottom: 12, flexDirection: 'row', alignItems: 'center',
-            borderWidth: 1, borderColor: 'rgba(255,255,255,0.15)',
+            borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.25)',
           }}
         >
           <Text style={{ fontSize: 20, marginRight: 10 }}>🗓</Text>
@@ -114,7 +114,7 @@ export default function PlayerHomeScreen() {
           style={{
             backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 14, padding: 16,
             marginBottom: 12, flexDirection: 'row', alignItems: 'center',
-            borderWidth: 1, borderColor: 'rgba(255,255,255,0.15)',
+            borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.25)',
           }}
         >
           <Text style={{ fontSize: 20, marginRight: 10 }}>📊</Text>
@@ -128,7 +128,7 @@ export default function PlayerHomeScreen() {
           style={{
             backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 14, padding: 16,
             marginBottom: 20, flexDirection: 'row', alignItems: 'center',
-            borderWidth: 1, borderColor: 'rgba(255,255,255,0.15)',
+            borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.25)',
           }}
         >
           <Text style={{ fontSize: 20, marginRight: 10 }}>🎯</Text>
@@ -185,7 +185,7 @@ export default function PlayerHomeScreen() {
                   <Text style={{ color: S.WHITE, fontWeight: isMe ? '700' : '500' }}>
                     {player.name}{isMe ? '  (you)' : ''}
                   </Text>
-                  <Text style={{ color: player.claimedByUserId ? '#34C759' : S.WHITE_50, fontSize: 12, marginTop: 1 }}>
+                  <Text style={{ color: player.claimedByUserId ? S.GREEN : S.WHITE_50, fontSize: 12, marginTop: 1 }}>
                     {player.claimedByUserId ? 'Registered' : 'No account yet'}
                   </Text>
                 </View>

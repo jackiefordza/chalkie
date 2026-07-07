@@ -63,7 +63,7 @@ export default function ChoosePathScreen() {
                 borderRadius: 14,
                 padding: 20,
                 borderWidth: 1,
-                borderColor: 'rgba(255,255,255,0.2)',
+                borderColor: 'rgba(255,255,255,0.3)',
                 marginBottom: 20,
               }}
             >

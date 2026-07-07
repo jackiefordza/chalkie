@@ -402,14 +402,14 @@ export default function AdminHomeScreen() {
                 <View style={{ flexDirection: 'row', gap: 10 }}>
                   <TouchableOpacity
                     onPress={() => openApprove(req)}
-                    style={{ flex: 1, backgroundColor: '#007AFF', borderRadius: 10, paddingVertical: 10, alignItems: 'center' }}
+                    style={{ flex: 1, minHeight: 44, backgroundColor: S.BLUE, borderRadius: 10, paddingVertical: 10, alignItems: 'center', justifyContent: 'center' }}
                     activeOpacity={0.8}
                   >
                     <Text style={{ color: S.WHITE, fontWeight: '600' }}>Approve</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
                     onPress={() => rejectRequest(req)}
-                    style={{ flex: 1, backgroundColor: 'rgba(255,59,48,0.2)', borderRadius: 10, paddingVertical: 10, alignItems: 'center', borderWidth: 1, borderColor: 'rgba(255,59,48,0.4)' }}
+                    style={{ flex: 1, minHeight: 44, backgroundColor: 'rgba(255,59,48,0.2)', borderRadius: 10, paddingVertical: 10, alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, borderColor: 'rgba(255,59,48,0.5)' }}
                     activeOpacity={0.8}
                   >
                     <Text style={{ color: S.RED, fontWeight: '600' }}>Reject</Text>
@@ -463,12 +463,15 @@ export default function AdminHomeScreen() {
                 </Text>
                 <TouchableOpacity
                   onPress={() => shareText(captainCode)}
-                  style={{ backgroundColor: 'rgba(0,122,255,0.2)', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 6 }}
+                  style={{ minHeight: 40, justifyContent: 'center', backgroundColor: 'rgba(0,122,255,0.2)', borderRadius: 8, paddingHorizontal: 14, borderWidth: 1.5, borderColor: 'rgba(0,122,255,0.5)' }}
                 >
-                  <Text style={{ color: S.BLUE, fontWeight: '600', fontSize: 13 }}>Share</Text>
+                  <Text style={{ color: S.WHITE, fontWeight: '600', fontSize: 13 }}>Share</Text>
                 </TouchableOpacity>
-                <TouchableOpacity onPress={generateCaptainCode}>
-                  <Text style={{ color: S.WHITE_50, fontSize: 13 }}>Regen</Text>
+                <TouchableOpacity
+                  onPress={generateCaptainCode}
+                  style={{ minHeight: 40, justifyContent: 'center', paddingHorizontal: 10, borderRadius: 8, borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.25)' }}
+                >
+                  <Text style={{ color: S.WHITE_80, fontSize: 13, fontWeight: '600' }}>Regen</Text>
                 </TouchableOpacity>
               </View>
             ) : (
@@ -522,7 +525,7 @@ export default function AdminHomeScreen() {
           <Text style={{ color: S.WHITE, fontSize: 16, fontWeight: '700', flex: 1 }}>Seasons</Text>
           <TouchableOpacity
             onPress={() => setShowSeasonModal(true)}
-            style={{ backgroundColor: S.BLUE, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 6 }}
+            style={{ minHeight: 40, justifyContent: 'center', backgroundColor: S.BLUE, borderRadius: 8, paddingHorizontal: 14 }}
           >
             <Text style={{ color: S.WHITE, fontWeight: '600', fontSize: 13 }}>+ New Season</Text>
           </TouchableOpacity>
@@ -539,12 +542,12 @@ export default function AdminHomeScreen() {
               onPress={() => router.push(`/(protected)/admin-season?seasonId=${season.id}`)}
               activeOpacity={0.7}
               style={{
-                backgroundColor: 'rgba(255,255,255,0.07)',
+                backgroundColor: 'rgba(255,255,255,0.08)',
                 borderRadius: 14,
                 padding: 16,
                 marginBottom: 10,
-                borderWidth: 1,
-                borderColor: 'rgba(255,255,255,0.12)',
+                borderWidth: 1.5,
+                borderColor: 'rgba(255,255,255,0.22)',
                 flexDirection: 'row',
                 alignItems: 'center',
               }}
@@ -562,7 +565,7 @@ export default function AdminHomeScreen() {
               }}>
                 <Text style={{
                   fontSize: 12, fontWeight: '600',
-                  color: season.status === 'active' ? '#34C759' : season.status === 'upcoming' ? '#FF9500' : S.WHITE_50,
+                  color: season.status === 'active' ? S.GREEN : season.status === 'upcoming' ? S.ORANGE : S.WHITE_50,
                 }}>
                   {season.status}
                 </Text>
@@ -573,8 +576,14 @@ export default function AdminHomeScreen() {
         )}
 
         {/* Sign out */}
-        <TouchableOpacity onPress={logOut} style={{ alignItems: 'center', marginTop: 24, paddingVertical: 8 }}>
-          <Text style={{ color: S.RED, fontSize: 15 }}>Sign Out</Text>
+        <TouchableOpacity
+          onPress={logOut}
+          style={{
+            alignItems: 'center', justifyContent: 'center', marginTop: 24, minHeight: 44,
+            borderRadius: 12, borderWidth: 1.5, borderColor: 'rgba(255,107,107,0.4)',
+          }}
+        >
+          <Text style={{ color: S.RED, fontSize: 15, fontWeight: '600' }}>Sign Out</Text>
         </TouchableOpacity>
       </ScrollView>
 
@@ -596,9 +605,9 @@ export default function AdminHomeScreen() {
               <View style={{ flexDirection: 'row', gap: 10 }}>
                 <TouchableOpacity
                   onPress={() => { setShowSeasonModal(false); setNewSeasonName(''); }}
-                  style={{ flex: 1, padding: 14, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.08)', alignItems: 'center' }}
+                  style={{ flex: 1, padding: 14, borderRadius: 12, alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.08)', borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.25)' }}
                 >
-                  <Text style={{ color: S.WHITE_60 }}>Cancel</Text>
+                  <Text style={{ color: S.WHITE_80, fontWeight: '600' }}>Cancel</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   onPress={createSeason}
@@ -641,13 +650,13 @@ export default function AdminHomeScreen() {
                       key={s.id}
                       onPress={() => { setSelectedSeason(s); setSelectedDivision(null); }}
                       style={{
-                        padding: 12, borderRadius: 10, marginBottom: 6,
-                        backgroundColor: selectedSeason?.id === s.id ? 'rgba(0,122,255,0.25)' : 'rgba(255,255,255,0.07)',
-                        borderWidth: 1,
-                        borderColor: selectedSeason?.id === s.id ? S.BLUE : 'rgba(255,255,255,0.12)',
+                        minHeight: 44, justifyContent: 'center', padding: 12, borderRadius: 10, marginBottom: 8,
+                        backgroundColor: selectedSeason?.id === s.id ? 'rgba(0,122,255,0.25)' : 'rgba(255,255,255,0.08)',
+                        borderWidth: 1.5,
+                        borderColor: selectedSeason?.id === s.id ? S.BLUE : 'rgba(255,255,255,0.22)',
                       }}
                     >
-                      <Text style={{ color: S.WHITE, fontWeight: '500' }}>{s.name}</Text>
+                      <Text style={{ color: S.WHITE, fontWeight: '600' }}>{s.name}</Text>
                     </TouchableOpacity>
                   ))
                 )}
@@ -661,22 +670,22 @@ export default function AdminHomeScreen() {
                         key={d.id}
                         onPress={() => { setSelectedDivision(d); setShowNewDivision(false); }}
                         style={{
-                          padding: 12, borderRadius: 10, marginBottom: 6,
-                          backgroundColor: selectedDivision?.id === d.id ? 'rgba(0,122,255,0.25)' : 'rgba(255,255,255,0.07)',
-                          borderWidth: 1,
-                          borderColor: selectedDivision?.id === d.id ? S.BLUE : 'rgba(255,255,255,0.12)',
+                          minHeight: 44, justifyContent: 'center', padding: 12, borderRadius: 10, marginBottom: 8,
+                          backgroundColor: selectedDivision?.id === d.id ? 'rgba(0,122,255,0.25)' : 'rgba(255,255,255,0.08)',
+                          borderWidth: 1.5,
+                          borderColor: selectedDivision?.id === d.id ? S.BLUE : 'rgba(255,255,255,0.22)',
                         }}
                       >
-                        <Text style={{ color: S.WHITE, fontWeight: '500' }}>{d.name}</Text>
+                        <Text style={{ color: S.WHITE, fontWeight: '600' }}>{d.name}</Text>
                       </TouchableOpacity>
                     ))}
 
                     {!showNewDivision ? (
                       <TouchableOpacity
                         onPress={() => { setShowNewDivision(true); setSelectedDivision(null); }}
-                        style={{ padding: 12, borderRadius: 10, marginBottom: 6, borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)', borderStyle: 'dashed' }}
+                        style={{ minHeight: 44, justifyContent: 'center', padding: 12, borderRadius: 10, marginBottom: 6, borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.3)', borderStyle: 'dashed' }}
                       >
-                        <Text style={{ color: S.BLUE, textAlign: 'center' }}>+ New Division</Text>
+                        <Text style={{ color: S.BLUE, textAlign: 'center', fontWeight: '600' }}>+ New Division</Text>
                       </TouchableOpacity>
                     ) : (
                       <TextInput
@@ -694,9 +703,9 @@ export default function AdminHomeScreen() {
                 <View style={{ flexDirection: 'row', gap: 10, marginTop: 20 }}>
                   <TouchableOpacity
                     onPress={() => setApprovalTarget(null)}
-                    style={{ flex: 1, padding: 14, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.08)', alignItems: 'center' }}
+                    style={{ flex: 1, padding: 14, borderRadius: 12, alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.08)', borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.25)' }}
                   >
-                    <Text style={{ color: S.WHITE_60 }}>Cancel</Text>
+                    <Text style={{ color: S.WHITE_80, fontWeight: '600' }}>Cancel</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
                     onPress={approveRequest}

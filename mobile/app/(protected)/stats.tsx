@@ -1,11 +1,12 @@
 import { useState, useEffect, useMemo } from 'react';
 import { View, Text, ScrollView, ActivityIndicator, TouchableOpacity } from 'react-native';
-import { router, Stack } from 'expo-router';
+import { Stack } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import { collection, doc, onSnapshot, query, where, type DocumentData } from 'firebase/firestore';
 import { db } from '@/config/firebase';
 import { useAuthStore } from '@/stores/authStore';
+import { goBack } from '@/lib/navigation';
 import type { PlayerSeasonStats } from '@/types';
 import * as S from '@/styles/common';
 
@@ -96,7 +97,7 @@ export default function StatsScreen() {
         options={{
           title: 'Stats',
           headerLeft: () => (
-            <TouchableOpacity onPress={() => router.back()} hitSlop={12} style={{ paddingRight: 12 }}>
+            <TouchableOpacity onPress={() => goBack()} hitSlop={12} style={{ paddingRight: 12 }}>
               <Text style={{ color: S.WHITE, fontSize: 16 }}>‹ Back</Text>
             </TouchableOpacity>
           ),
@@ -110,12 +111,12 @@ export default function StatsScreen() {
               key={t}
               onPress={() => setTab(t)}
               style={{
-                flex: 1, paddingVertical: 10, borderRadius: 10, alignItems: 'center',
-                backgroundColor: selected ? 'rgba(0,122,255,0.2)' : 'rgba(255,255,255,0.07)',
-                borderWidth: 1, borderColor: selected ? S.BLUE : 'rgba(255,255,255,0.12)',
+                flex: 1, minHeight: 44, justifyContent: 'center', borderRadius: 10, alignItems: 'center',
+                backgroundColor: selected ? 'rgba(0,122,255,0.22)' : 'rgba(255,255,255,0.08)',
+                borderWidth: 1.5, borderColor: selected ? S.BLUE : 'rgba(255,255,255,0.25)',
               }}
             >
-              <Text style={{ color: selected ? S.BLUE : S.WHITE_60, fontWeight: '600', fontSize: 13 }}>
+              <Text style={{ color: selected ? S.WHITE : S.WHITE_80, fontWeight: '600', fontSize: 13 }}>
                 {t === 'mine' ? 'My Stats' : 'Leaderboard'}
               </Text>
             </TouchableOpacity>
@@ -161,9 +162,9 @@ export default function StatsScreen() {
                 [...myStats.highCheckouts].sort((a, b) => b.date.getTime() - a.date.getTime()).map((c, i) => (
                   <View key={i} style={{
                     flexDirection: 'row', padding: 12, borderRadius: 10, marginBottom: 6,
-                    backgroundColor: 'rgba(255,255,255,0.06)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)',
+                    backgroundColor: 'rgba(255,255,255,0.06)', borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.22)',
                   }}>
-                    <Text style={{ color: '#FF9500', fontWeight: '700', flex: 1 }}>{c.value}</Text>
+                    <Text style={{ color: S.ORANGE, fontWeight: '700', flex: 1 }}>{c.value}</Text>
                     <Text style={{ color: S.WHITE_50, fontSize: 12 }}>{formatDate(c.date)}</Text>
                   </View>
                 ))
@@ -212,7 +213,7 @@ export default function StatsScreen() {
             ) : (
               notableCheckouts.map((c, i) => (
                 <View key={i} style={{ flexDirection: 'row', paddingVertical: 8 }}>
-                  <Text style={{ color: '#FF9500', fontWeight: '700', width: 50 }}>{c.value}</Text>
+                  <Text style={{ color: S.ORANGE, fontWeight: '700', width: 50 }}>{c.value}</Text>
                   <Text style={{ color: S.WHITE, flex: 1 }}>{playerName(c.playerId)}</Text>
                   <Text style={{ color: S.WHITE_50, fontSize: 12 }}>{formatDate(c.date)}</Text>
                 </View>

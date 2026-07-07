@@ -319,21 +319,21 @@ export default function CaptainScreen() {
           </View>
           <TouchableOpacity
             onPress={() => router.push('/(protected)/standings')}
-            style={{ backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 8, marginRight: 8 }}
+            style={{ minHeight: 40, justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: 10, paddingHorizontal: 14, marginRight: 8, borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.22)' }}
             activeOpacity={0.7}
           >
             <Text style={{ color: S.WHITE, fontSize: 13, fontWeight: '600' }}>📊 Table</Text>
           </TouchableOpacity>
           <TouchableOpacity
             onPress={() => router.push('/(protected)/fixtures')}
-            style={{ backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 8, marginRight: 8 }}
+            style={{ minHeight: 40, justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: 10, paddingHorizontal: 14, marginRight: 8, borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.22)' }}
             activeOpacity={0.7}
           >
             <Text style={{ color: S.WHITE, fontSize: 13, fontWeight: '600' }}>🗓 Fixtures</Text>
           </TouchableOpacity>
           <TouchableOpacity
             onPress={() => router.push('/(protected)/stats')}
-            style={{ backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 8 }}
+            style={{ minHeight: 40, justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: 10, paddingHorizontal: 14, borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.22)' }}
             activeOpacity={0.7}
           >
             <Text style={{ color: S.WHITE, fontSize: 13, fontWeight: '600' }}>🎯 Stats</Text>
@@ -348,9 +348,9 @@ export default function CaptainScreen() {
               {!editingAddress && (
                 <TouchableOpacity
                   onPress={() => { setAddressDraft(teamAddress ?? ''); setEditingAddress(true); }}
-                  style={{ backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 4 }}
+                  style={{ minHeight: 36, justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: 8, paddingHorizontal: 12, borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.25)' }}
                 >
-                  <Text style={{ color: S.WHITE_60, fontSize: 12 }}>{teamAddress ? 'Edit' : 'Add'}</Text>
+                  <Text style={{ color: S.WHITE_80, fontSize: 12, fontWeight: '600' }}>{teamAddress ? 'Edit' : 'Add'}</Text>
                 </TouchableOpacity>
               )}
             </View>
@@ -368,9 +368,9 @@ export default function CaptainScreen() {
                 <View style={{ flexDirection: 'row', gap: 8 }}>
                   <TouchableOpacity
                     onPress={() => setEditingAddress(false)}
-                    style={{ flex: 1, padding: 10, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.08)', alignItems: 'center' }}
+                    style={{ flex: 1, padding: 10, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.08)', alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.25)' }}
                   >
-                    <Text style={{ color: S.WHITE_60 }}>Cancel</Text>
+                    <Text style={{ color: S.WHITE_80, fontWeight: '600' }}>Cancel</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
                     onPress={saveAddress}
@@ -402,9 +402,9 @@ export default function CaptainScreen() {
                     setPhoneEditError(null);
                     setEditingPhone(true);
                   }}
-                  style={{ backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 4 }}
+                  style={{ minHeight: 36, justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: 8, paddingHorizontal: 12, borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.25)' }}
                 >
-                  <Text style={{ color: S.WHITE_60, fontSize: 12 }}>{appUser?.phone ? 'Edit' : 'Add'}</Text>
+                  <Text style={{ color: S.WHITE_80, fontSize: 12, fontWeight: '600' }}>{appUser?.phone ? 'Edit' : 'Add'}</Text>
                 </TouchableOpacity>
               )}
             </View>
@@ -433,10 +433,10 @@ export default function CaptainScreen() {
                       onPress={() => setVisibilityDraft(opt.value)}
                       activeOpacity={0.7}
                       style={{
-                        flexDirection: 'row', alignItems: 'center', padding: 10,
-                        borderRadius: 10, marginBottom: 6,
-                        backgroundColor: selected ? 'rgba(0,122,255,0.15)' : 'rgba(255,255,255,0.05)',
-                        borderWidth: 1, borderColor: selected ? S.BLUE : 'rgba(255,255,255,0.1)',
+                        flexDirection: 'row', alignItems: 'center', minHeight: 44, padding: 10,
+                        borderRadius: 10, marginBottom: 8,
+                        backgroundColor: selected ? 'rgba(0,122,255,0.18)' : 'rgba(255,255,255,0.08)',
+                        borderWidth: 1.5, borderColor: selected ? S.BLUE : 'rgba(255,255,255,0.25)',
                       }}
                     >
                       <View style={{
@@ -456,9 +456,9 @@ export default function CaptainScreen() {
                 <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
                   <TouchableOpacity
                     onPress={() => setEditingPhone(false)}
-                    style={{ flex: 1, padding: 10, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.08)', alignItems: 'center' }}
+                    style={{ flex: 1, padding: 10, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.08)', alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.25)' }}
                   >
-                    <Text style={{ color: S.WHITE_60 }}>Cancel</Text>
+                    <Text style={{ color: S.WHITE_80, fontWeight: '600' }}>Cancel</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
                     onPress={savePhone}
@@ -512,14 +512,14 @@ export default function CaptainScreen() {
                 <View style={{ flexDirection: 'row', gap: 10 }}>
                   <TouchableOpacity
                     onPress={() => approveJoinRequest(req)}
-                    style={{ flex: 1, backgroundColor: '#007AFF', borderRadius: 10, paddingVertical: 10, alignItems: 'center' }}
+                    style={{ flex: 1, minHeight: 44, justifyContent: 'center', backgroundColor: S.BLUE, borderRadius: 10, paddingVertical: 10, alignItems: 'center' }}
                     activeOpacity={0.8}
                   >
                     <Text style={{ color: S.WHITE, fontWeight: '600' }}>Approve</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
                     onPress={() => rejectJoinRequest(req)}
-                    style={{ flex: 1, backgroundColor: 'rgba(255,59,48,0.15)', borderRadius: 10, paddingVertical: 10, alignItems: 'center', borderWidth: 1, borderColor: 'rgba(255,59,48,0.4)' }}
+                    style={{ flex: 1, minHeight: 44, justifyContent: 'center', backgroundColor: 'rgba(255,59,48,0.2)', borderRadius: 10, paddingVertical: 10, alignItems: 'center', borderWidth: 1.5, borderColor: 'rgba(255,59,48,0.5)' }}
                     activeOpacity={0.8}
                   >
                     <Text style={{ color: S.RED, fontWeight: '600' }}>Reject</Text>
@@ -566,21 +566,28 @@ export default function CaptainScreen() {
                     backgroundColor: isClaimed ? 'rgba(52,199,89,0.2)' : 'rgba(255,255,255,0.1)',
                     alignItems: 'center', justifyContent: 'center',
                   }}>
-                    <Text style={{ color: isClaimed ? '#34C759' : S.WHITE_60, fontWeight: '700' }}>
+                    <Text style={{ color: isClaimed ? S.GREEN : S.WHITE_60, fontWeight: '700' }}>
                       {player.name.charAt(0).toUpperCase()}
                     </Text>
                   </View>
                   <View style={{ flex: 1 }}>
                     <Text style={{ color: S.WHITE, fontWeight: '600' }}>{player.name}</Text>
                     {isClaimed ? (
-                      <Text style={{ color: '#34C759', fontSize: 12, marginTop: 1 }}>✓ Registered</Text>
+                      <Text style={{ color: S.GREEN, fontSize: 12, marginTop: 1 }}>✓ Registered</Text>
                     ) : (
                       <Text style={{ color: S.WHITE_50, fontSize: 12, marginTop: 1 }}>No account yet</Text>
                     )}
                   </View>
                   {!isClaimed && (
-                    <TouchableOpacity onPress={() => removePlayer(player.id, player.name)} hitSlop={8}>
-                      <Text style={{ color: 'rgba(255,59,48,0.7)', fontSize: 18 }}>✕</Text>
+                    <TouchableOpacity
+                      onPress={() => removePlayer(player.id, player.name)}
+                      hitSlop={8}
+                      style={{
+                        width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center',
+                        backgroundColor: 'rgba(255,59,48,0.12)', borderWidth: 1.5, borderColor: 'rgba(255,59,48,0.4)',
+                      }}
+                    >
+                      <Text style={{ color: S.RED, fontSize: 16, fontWeight: '700' }}>✕</Text>
                     </TouchableOpacity>
                   )}
                 </View>
@@ -590,26 +597,26 @@ export default function CaptainScreen() {
                   code ? (
                     <View style={{
                       flexDirection: 'row', alignItems: 'center',
-                      backgroundColor: 'rgba(0,122,255,0.1)', borderRadius: 10,
-                      padding: 10, borderWidth: 1, borderColor: 'rgba(0,122,255,0.25)',
+                      backgroundColor: 'rgba(0,122,255,0.12)', borderRadius: 10,
+                      padding: 10, borderWidth: 1.5, borderColor: 'rgba(0,122,255,0.35)',
                     }}>
                       <Text style={{ color: S.BLUE, fontSize: 16, fontWeight: '700', letterSpacing: 3, flex: 1 }}>
                         {code}
                       </Text>
                       <TouchableOpacity
                         onPress={() => shareText(`${player.name}'s claim code`, code)}
-                        style={{ backgroundColor: 'rgba(0,122,255,0.2)', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 5 }}
+                        style={{ minHeight: 36, justifyContent: 'center', backgroundColor: 'rgba(0,122,255,0.25)', borderRadius: 8, paddingHorizontal: 12, borderWidth: 1.5, borderColor: 'rgba(0,122,255,0.5)' }}
                       >
-                        <Text style={{ color: S.BLUE, fontSize: 12, fontWeight: '600' }}>Share</Text>
+                        <Text style={{ color: S.WHITE, fontSize: 12, fontWeight: '600' }}>Share</Text>
                       </TouchableOpacity>
                       <TouchableOpacity
                         onPress={() => generateCodeForPlayer(player.id)}
-                        style={{ marginLeft: 8 }}
+                        style={{ marginLeft: 8, minHeight: 36, justifyContent: 'center', paddingHorizontal: 8, borderRadius: 8, borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.25)' }}
                         disabled={generatingCodeFor === player.id}
                       >
                         {generatingCodeFor === player.id
                           ? <ActivityIndicator color={S.WHITE_50} size="small" />
-                          : <Text style={{ color: S.WHITE_50, fontSize: 12 }}>Regen</Text>
+                          : <Text style={{ color: S.WHITE_80, fontSize: 12, fontWeight: '600' }}>Regen</Text>
                         }
                       </TouchableOpacity>
                     </View>
@@ -618,14 +625,14 @@ export default function CaptainScreen() {
                       onPress={() => generateCodeForPlayer(player.id)}
                       disabled={generatingCodeFor === player.id}
                       style={{
-                        borderRadius: 10, padding: 10, borderWidth: 1,
-                        borderColor: 'rgba(255,255,255,0.15)', borderStyle: 'dashed',
-                        alignItems: 'center',
+                        minHeight: 44, borderRadius: 10, padding: 10, borderWidth: 1.5,
+                        borderColor: 'rgba(255,255,255,0.35)', borderStyle: 'dashed',
+                        alignItems: 'center', justifyContent: 'center',
                       }}
                     >
                       {generatingCodeFor === player.id
                         ? <ActivityIndicator color={S.WHITE_50} size="small" />
-                        : <Text style={{ color: S.WHITE_50, fontSize: 13 }}>Generate claim code</Text>
+                        : <Text style={{ color: S.WHITE_80, fontSize: 13, fontWeight: '600' }}>Generate claim code</Text>
                       }
                     </TouchableOpacity>
                   )
@@ -670,9 +677,9 @@ export default function CaptainScreen() {
                   <View style={{ flexDirection: 'row', gap: 10 }}>
                     <TouchableOpacity
                       onPress={() => setModalPhase('closed')}
-                      style={{ flex: 1, padding: 14, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.08)', alignItems: 'center' }}
+                      style={{ flex: 1, padding: 14, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.08)', alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.25)' }}
                     >
-                      <Text style={{ color: S.WHITE_60 }}>Cancel</Text>
+                      <Text style={{ color: S.WHITE_80, fontWeight: '600' }}>Cancel</Text>
                     </TouchableOpacity>
                     <TouchableOpacity
                       onPress={addPlayer}
@@ -688,7 +695,7 @@ export default function CaptainScreen() {
                 </>
               ) : (
                 <>
-                  <Text style={{ color: '#34C759', fontSize: 16, fontWeight: '700', marginBottom: 4 }}>
+                  <Text style={{ color: S.GREEN, fontSize: 16, fontWeight: '700', marginBottom: 4 }}>
                     ✓ {generatedPlayerName} added
                   </Text>
                   <Text style={{ color: S.WHITE_50, fontSize: 13, marginBottom: 20 }}>
@@ -712,9 +719,9 @@ export default function CaptainScreen() {
                     </TouchableOpacity>
                     <TouchableOpacity
                       onPress={() => { setModalPhase('closed'); setGeneratedCode(''); }}
-                      style={{ flex: 1, padding: 14, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.08)', alignItems: 'center' }}
+                      style={{ flex: 1, padding: 14, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.08)', alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.25)' }}
                     >
-                      <Text style={{ color: S.WHITE_60 }}>Done</Text>
+                      <Text style={{ color: S.WHITE_80, fontWeight: '600' }}>Done</Text>
                     </TouchableOpacity>
                   </View>
                 </>

@@ -158,14 +158,18 @@ export default function AdminTeamScreen() {
             <Text style={{ color: S.BLUE, fontSize: 18, fontWeight: '700', letterSpacing: 3, flex: 1 }}>{code}</Text>
             <TouchableOpacity
               onPress={() => shareText(code)}
-              style={{ backgroundColor: 'rgba(0,122,255,0.2)', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 5 }}
+              style={{ minHeight: 36, justifyContent: 'center', backgroundColor: 'rgba(0,122,255,0.2)', borderRadius: 8, paddingHorizontal: 12, borderWidth: 1.5, borderColor: 'rgba(0,122,255,0.5)' }}
             >
-              <Text style={{ color: S.BLUE, fontWeight: '600', fontSize: 12 }}>Share</Text>
+              <Text style={{ color: S.WHITE, fontWeight: '600', fontSize: 12 }}>Share</Text>
             </TouchableOpacity>
-            <TouchableOpacity onPress={() => generateJoinCode(role)} disabled={isGenerating}>
+            <TouchableOpacity
+              onPress={() => generateJoinCode(role)}
+              disabled={isGenerating}
+              style={{ minHeight: 36, justifyContent: 'center', paddingHorizontal: 10, borderRadius: 8, borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.25)' }}
+            >
               {isGenerating
                 ? <ActivityIndicator color={S.WHITE_50} size="small" />
-                : <Text style={{ color: S.WHITE_50, fontSize: 12 }}>Regen</Text>
+                : <Text style={{ color: S.WHITE_80, fontSize: 12, fontWeight: '600' }}>Regen</Text>
               }
             </TouchableOpacity>
           </View>
@@ -174,13 +178,13 @@ export default function AdminTeamScreen() {
             onPress={() => generateJoinCode(role)}
             disabled={isGenerating}
             style={{
-              borderRadius: 10, padding: 10, borderWidth: 1,
-              borderColor: 'rgba(255,255,255,0.15)', borderStyle: 'dashed', alignItems: 'center',
+              minHeight: 44, justifyContent: 'center', borderRadius: 10, padding: 10, borderWidth: 1.5,
+              borderColor: 'rgba(255,255,255,0.35)', borderStyle: 'dashed', alignItems: 'center',
             }}
           >
             {isGenerating
               ? <ActivityIndicator color={S.WHITE_50} size="small" />
-              : <Text style={{ color: S.BLUE, fontSize: 13 }}>Generate {label} Code</Text>
+              : <Text style={{ color: S.BLUE, fontSize: 13, fontWeight: '600' }}>Generate {label} Code</Text>
             }
           </TouchableOpacity>
         )}
@@ -219,9 +223,9 @@ export default function AdminTeamScreen() {
               {!editingAddress && (
                 <TouchableOpacity
                   onPress={() => { setAddressDraft(teamAddress ?? ''); setEditingAddress(true); }}
-                  style={{ backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 4 }}
+                  style={{ minHeight: 36, justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: 8, paddingHorizontal: 12, borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.25)' }}
                 >
-                  <Text style={{ color: S.WHITE_60, fontSize: 12 }}>{teamAddress ? 'Edit' : 'Add'}</Text>
+                  <Text style={{ color: S.WHITE_80, fontSize: 12, fontWeight: '600' }}>{teamAddress ? 'Edit' : 'Add'}</Text>
                 </TouchableOpacity>
               )}
             </View>
@@ -239,9 +243,9 @@ export default function AdminTeamScreen() {
                 <View style={{ flexDirection: 'row', gap: 8 }}>
                   <TouchableOpacity
                     onPress={() => setEditingAddress(false)}
-                    style={{ flex: 1, padding: 10, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.08)', alignItems: 'center' }}
+                    style={{ flex: 1, minHeight: 44, justifyContent: 'center', padding: 10, borderRadius: 10, alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.08)', borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.25)' }}
                   >
-                    <Text style={{ color: S.WHITE_60 }}>Cancel</Text>
+                    <Text style={{ color: S.WHITE_80, fontWeight: '600' }}>Cancel</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
                     onPress={saveAddress}
@@ -289,12 +293,15 @@ export default function AdminTeamScreen() {
                 </Text>
                 <TouchableOpacity
                   onPress={() => shareText(playerCode)}
-                  style={{ backgroundColor: 'rgba(0,122,255,0.2)', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 6 }}
+                  style={{ minHeight: 40, justifyContent: 'center', backgroundColor: 'rgba(0,122,255,0.2)', borderRadius: 8, paddingHorizontal: 14, borderWidth: 1.5, borderColor: 'rgba(0,122,255,0.5)' }}
                 >
-                  <Text style={{ color: S.BLUE, fontWeight: '600', fontSize: 13 }}>Share</Text>
+                  <Text style={{ color: S.WHITE, fontWeight: '600', fontSize: 13 }}>Share</Text>
                 </TouchableOpacity>
-                <TouchableOpacity onPress={generatePlayerCode}>
-                  <Text style={{ color: S.WHITE_50, fontSize: 13 }}>Regen</Text>
+                <TouchableOpacity
+                  onPress={generatePlayerCode}
+                  style={{ minHeight: 40, justifyContent: 'center', paddingHorizontal: 10, borderRadius: 8, borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.25)' }}
+                >
+                  <Text style={{ color: S.WHITE_80, fontSize: 13, fontWeight: '600' }}>Regen</Text>
                 </TouchableOpacity>
               </View>
             ) : (
@@ -326,7 +333,7 @@ export default function AdminTeamScreen() {
               style={{
                 padding: 14, borderRadius: 12, marginBottom: 8,
                 backgroundColor: 'rgba(255,255,255,0.07)',
-                borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)',
+                borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.22)',
                 flexDirection: 'row', alignItems: 'center',
               }}
             >

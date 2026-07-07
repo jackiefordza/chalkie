@@ -136,7 +136,7 @@ export default function LoginScreen() {
                   style={{
                     backgroundColor: 'rgba(255,255,255,0.1)',
                     borderWidth: 1,
-                    borderColor: 'rgba(255,255,255,0.2)',
+                    borderColor: 'rgba(255,255,255,0.3)',
                     borderRadius: 12,
                     padding: 14,
                     fontSize: 16,
@@ -161,7 +161,7 @@ export default function LoginScreen() {
                   style={{
                     backgroundColor: 'rgba(255,255,255,0.1)',
                     borderWidth: 1,
-                    borderColor: 'rgba(255,255,255,0.2)',
+                    borderColor: 'rgba(255,255,255,0.3)',
                     borderRadius: 12,
                     padding: 14,
                     fontSize: 16,
@@ -218,26 +218,26 @@ export default function LoginScreen() {
                   onPress={() => handleQuickSignIn('home')}
                   disabled={quickSigningIn !== null}
                   style={{
-                    paddingHorizontal: 16, paddingVertical: 10, borderRadius: 10,
-                    backgroundColor: 'rgba(255,255,255,0.08)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)',
+                    paddingHorizontal: 16, minHeight: 44, justifyContent: 'center', borderRadius: 10,
+                    backgroundColor: 'rgba(255,255,255,0.12)', borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.3)',
                   }}
                 >
                   {quickSigningIn === 'home'
                     ? <ActivityIndicator color="#FFFFFF" size="small" />
-                    : <Text style={{ color: 'rgba(255,255,255,0.75)', fontSize: 13, fontWeight: '600' }}>Test Home Captain</Text>
+                    : <Text style={{ color: 'rgba(255,255,255,0.9)', fontSize: 13, fontWeight: '600' }}>Test Home Captain</Text>
                   }
                 </TouchableOpacity>
                 <TouchableOpacity
                   onPress={() => handleQuickSignIn('away')}
                   disabled={quickSigningIn !== null}
                   style={{
-                    paddingHorizontal: 16, paddingVertical: 10, borderRadius: 10,
-                    backgroundColor: 'rgba(255,255,255,0.08)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)',
+                    paddingHorizontal: 16, minHeight: 44, justifyContent: 'center', borderRadius: 10,
+                    backgroundColor: 'rgba(255,255,255,0.12)', borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.3)',
                   }}
                 >
                   {quickSigningIn === 'away'
                     ? <ActivityIndicator color="#FFFFFF" size="small" />
-                    : <Text style={{ color: 'rgba(255,255,255,0.75)', fontSize: 13, fontWeight: '600' }}>Test Away Captain</Text>
+                    : <Text style={{ color: 'rgba(255,255,255,0.9)', fontSize: 13, fontWeight: '600' }}>Test Away Captain</Text>
                   }
                 </TouchableOpacity>
               </View>
