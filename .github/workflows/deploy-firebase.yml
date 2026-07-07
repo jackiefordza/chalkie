@@ -33,6 +33,6 @@ jobs:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
 
       - name: Deploy to Firebase
-        run: npx firebase-tools deploy --only functions,firestore:rules,firestore:indexes --project chalkie-app --non-interactive
+        run: npx firebase-tools deploy --only functions,firestore:rules,firestore:indexes --project chalkie-app --non-interactive --force
         env:
           GOOGLE_APPLICATION_CREDENTIALS: /tmp/service-account.json
