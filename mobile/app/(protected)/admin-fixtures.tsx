@@ -1,18 +1,23 @@
 import { useState, useEffect, useMemo } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, ActivityIndicator, Modal, TextInput, Alert } from 'react-native';
-import { Stack, useLocalSearchParams } from 'expo-router';
-import { LinearGradient } from 'expo-linear-gradient';
-import { BlurView } from 'expo-blur';
+import { View, TouchableOpacity, ActivityIndicator, Alert, useWindowDimensions } from 'react-native';
+import { router, Stack, useLocalSearchParams } from 'expo-router';
 import {
   collection, doc, onSnapshot, query, where, orderBy,
   getDocs, writeBatch, updateDoc, deleteDoc, serverTimestamp,
 } from 'firebase/firestore';
 import { db } from '@/config/firebase';
-import { goBack } from '@/lib/navigation';
 import { useAuthStore } from '@/stores/authStore';
 import { generateRoundRobinFixtures } from '@/lib/fixtures';
+import { RAW, type SemanticTone } from '@/lib/theme';
+import { Screen, Heading, Body, Caption, Badge, Button, Card, ListRow, Input, Label, Sheet, AppBar } from '@/components/ui';
+import { AdminShell } from '@/components/admin/AdminShell';
 import type { Match } from '@/types';
-import * as S from '@/styles/common';
+
+// Desktop-vs-mobile is a viewport-width call, not Platform.OS — a wide
+// browser window gets the table/wide-panel treatment, a narrow one (phone,
+// or a browser window sized down) keeps the existing card-list layout. All
+// state/handlers above are shared; only the JSX below this point branches.
+const DESKTOP_BREAKPOINT = 768;
 
 interface TeamInfo { id: string; name: string; address: string | null }
 
@@ -29,10 +34,141 @@ function formatDate(date: Date): string {
   return date.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
 }
 
-export default function AdminFixturesScreen() {
-  const { divisionId } = useLocalSearchParams<{ divisionId: string }>();
-  const { appUser } = useAuthStore();
+const STATUS_TONE: Record<Match['status'], SemanticTone | null> = {
+  scheduled: null,
+  awaiting_confirmation: 'butter',
+  disputed: 'coral',
+  confirmed: 'sage',
+};
 
+function groupByRound(matches: Match[]): [number, Match[]][] {
+  const byRound = new Map<number, Match[]>();
+  matches.forEach((m) => {
+    if (!byRound.has(m.round)) byRound.set(m.round, []);
+    byRound.get(m.round)!.push(m);
+  });
+  return [...byRound.entries()].sort((a, b) => a[0] - b[0]);
+}
+
+// Confirmed matches go to the full result editor; disputed ones go to the
+// admin resolution screen — used by the Results tab, distinct from
+// `openEdit` below (which is for the date/venue sheet on not-yet-played
+// fixtures, though it also redirects a confirmed row the same way).
+function openResult(match: Match) {
+  if (match.status === 'disputed') {
+    router.push(`/(protected)/admin-dispute?matchId=${match.id}`);
+    return;
+  }
+  router.push(`/(protected)/results-entry?matchId=${match.id}`);
+}
+
+// A distinct, review-oriented table for played matches — no generator/
+// delete-all header (those are Fixtures-tab concerns), sorted most-recent
+// first, disputed rows flagged so they read as needing attention.
+function ResultsTable({
+  matches, teamName, onOpen,
+}: {
+  matches: Match[];
+  teamName: (id: string) => string;
+  onOpen: (match: Match) => void;
+}) {
+  return (
+    <Card padded={false}>
+      <View className="flex-row items-center justify-between p-4 border-b border-border dark:border-border-dark">
+        <Heading size="sm">{matches.length} result{matches.length === 1 ? '' : 's'}</Heading>
+      </View>
+      <View className="flex-row px-4 py-2.5 bg-surface-2 dark:bg-surface-2-dark">
+        <Caption className="w-14">Round</Caption>
+        <Caption className="flex-1">Home</Caption>
+        <Caption className="flex-1">Away</Caption>
+        <Caption className="w-24">Score</Caption>
+        <Caption className="w-36">Date</Caption>
+        <Caption className="w-32">Status</Caption>
+      </View>
+      {matches.map((match, i) => {
+        const tone = STATUS_TONE[match.status];
+        return (
+          <TouchableOpacity
+            key={match.id}
+            activeOpacity={0.6}
+            onPress={() => onOpen(match)}
+            className={[
+              'flex-row items-center px-4 py-3',
+              i < matches.length - 1 ? 'border-b border-border dark:border-border-dark' : '',
+            ].join(' ')}
+          >
+            <Body size="sm" className="w-14">{match.round}</Body>
+            <Body size="sm" tone="strong" weight="semibold" className="flex-1" numberOfLines={1}>{teamName(match.homeTeamId)}</Body>
+            <Body size="sm" tone="strong" weight="semibold" className="flex-1" numberOfLines={1}>{teamName(match.awayTeamId)}</Body>
+            <Body size="sm" className="w-24">{match.homeLegsWon ?? '–'}-{match.awayLegsWon ?? '–'}</Body>
+            <Body size="sm" className="w-36">{formatDate(match.scheduledDate)}</Body>
+            <View className="w-32">
+              {tone ? <Badge tone={tone}>{match.status}</Badge> : <Body size="sm">{match.status}</Body>}
+            </View>
+          </TouchableOpacity>
+        );
+      })}
+    </Card>
+  );
+}
+
+// One continuous table (not grouped per-round like the mobile card list) —
+// at desktop width a full season reads better as a single scannable grid
+// than as repeated per-round sections.
+function DesktopFixtureTable({
+  matches, teamName, onEdit, onDeleteAll,
+}: {
+  matches: Match[];
+  teamName: (id: string) => string;
+  onEdit: (match: Match) => void;
+  onDeleteAll: () => void;
+}) {
+  return (
+    <Card padded={false}>
+      <View className="flex-row items-center justify-between p-4 border-b border-border dark:border-border-dark">
+        <Heading size="sm">{matches.length} fixtures</Heading>
+        <Button variant="danger" size="sm" onPress={onDeleteAll}>Delete all &amp; regenerate</Button>
+      </View>
+      <View className="flex-row px-4 py-2.5 bg-surface-2 dark:bg-surface-2-dark">
+        <Caption className="w-14">Round</Caption>
+        <Caption className="flex-1">Home</Caption>
+        <Caption className="flex-1">Away</Caption>
+        <Caption className="w-36">Date</Caption>
+        <Caption className="flex-1">Venue</Caption>
+        <Caption className="w-32">Status</Caption>
+      </View>
+      {matches.map((match, i) => {
+        const tone = STATUS_TONE[match.status];
+        return (
+          <TouchableOpacity
+            key={match.id}
+            activeOpacity={0.6}
+            onPress={() => onEdit(match)}
+            className={[
+              'flex-row items-center px-4 py-3',
+              i < matches.length - 1 ? 'border-b border-border dark:border-border-dark' : '',
+            ].join(' ')}
+          >
+            <Body size="sm" className="w-14">{match.round}</Body>
+            <Body size="sm" tone="strong" weight="semibold" className="flex-1" numberOfLines={1}>{teamName(match.homeTeamId)}</Body>
+            <Body size="sm" tone="strong" weight="semibold" className="flex-1" numberOfLines={1}>{teamName(match.awayTeamId)}</Body>
+            <Body size="sm" className="w-36">{formatDate(match.scheduledDate)}</Body>
+            <Body size="sm" className="flex-1" numberOfLines={1}>{match.venue ?? '—'}</Body>
+            <View className="w-32">
+              {tone ? <Badge tone={tone}>{match.status}</Badge> : <Body size="sm">{match.status}</Body>}
+            </View>
+          </TouchableOpacity>
+        );
+      })}
+    </Card>
+  );
+}
+
+// Everything a fixtures workspace needs, independent of where it's rendered
+// (its own standalone route, or as a tab inside admin-season.tsx's division
+// workspace) — extracted so both call sites share one implementation rather
+// than maintaining two copies of the generate/edit/delete logic.
+function useFixturesController(divisionId: string | undefined, leagueId: string | undefined) {
   const [divisionName, setDivisionName] = useState('');
   const [seasonId, setSeasonId] = useState<string | null>(null);
   const [teams, setTeams] = useState<TeamInfo[]>([]);
@@ -52,7 +188,7 @@ export default function AdminFixturesScreen() {
   const [isSavingEdit, setIsSavingEdit] = useState(false);
 
   useEffect(() => {
-    if (!divisionId || !appUser?.leagueId) return;
+    if (!divisionId || !leagueId) return;
 
     const unsubDivision = onSnapshot(
       doc(db, 'divisions', divisionId),
@@ -66,7 +202,11 @@ export default function AdminFixturesScreen() {
     );
 
     const unsubTeams = onSnapshot(
-      query(collection(db, 'teams'), where('divisionId', '==', divisionId)),
+      query(
+        collection(db, 'teams'),
+        where('leagueId', '==', leagueId),
+        where('divisionId', '==', divisionId),
+      ),
       (snap) => {
         setTeams(
           snap.docs
@@ -80,7 +220,7 @@ export default function AdminFixturesScreen() {
     const unsubMatches = onSnapshot(
       query(
         collection(db, 'matches'),
-        where('leagueId', '==', appUser.leagueId),
+        where('leagueId', '==', leagueId),
         where('divisionId', '==', divisionId),
         orderBy('scheduledDate', 'asc'),
       ),
@@ -98,18 +238,11 @@ export default function AdminFixturesScreen() {
     );
 
     return () => { unsubDivision(); unsubTeams(); unsubMatches(); };
-  }, [divisionId, appUser?.leagueId]);
+  }, [divisionId, leagueId]);
 
   const teamName = (id: string) => teams.find((t) => t.id === id)?.name ?? 'Unknown';
 
-  const rounds = useMemo(() => {
-    const byRound = new Map<number, Match[]>();
-    matches.forEach((m) => {
-      if (!byRound.has(m.round)) byRound.set(m.round, []);
-      byRound.get(m.round)!.push(m);
-    });
-    return [...byRound.entries()].sort((a, b) => a[0] - b[0]);
-  }, [matches]);
+  const rounds = useMemo(() => groupByRound(matches), [matches]);
 
   async function generateFixtures() {
     setGenError(null);
@@ -118,7 +251,7 @@ export default function AdminFixturesScreen() {
     const interval = Number(intervalDays);
     if (!Number.isFinite(interval) || interval <= 0) { setGenError('Enter a valid number of days between rounds'); return; }
     if (teams.length < 2) { setGenError('This division needs at least 2 teams first'); return; }
-    if (!appUser?.leagueId || !seasonId || !divisionId) { setGenError('Season not loaded yet — try again in a moment'); return; }
+    if (!leagueId || !seasonId || !divisionId) { setGenError('Season not loaded yet — try again in a moment'); return; }
 
     setIsGenerating(true);
     try {
@@ -131,7 +264,7 @@ export default function AdminFixturesScreen() {
       fixtures.forEach((fixture) => {
         const matchRef = doc(collection(db, 'matches'));
         batch.set(matchRef, {
-          leagueId: appUser.leagueId,
+          leagueId,
           seasonId,
           divisionId,
           round: fixture.round,
@@ -177,6 +310,13 @@ export default function AdminFixturesScreen() {
   }
 
   function openEdit(match: Match) {
+    // Confirmed matches go to the full result editor (score/players/180s/
+    // checkouts, with stats recomputed on save) rather than this date/venue
+    // sheet, which only ever made sense pre-result.
+    if (match.status === 'confirmed') {
+      router.push(`/(protected)/results-entry?matchId=${match.id}`);
+      return;
+    }
     setEditTarget(match);
     const d = match.scheduledDate;
     setEditDateText(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`);
@@ -211,190 +351,194 @@ export default function AdminFixturesScreen() {
 
   const showGenerator = !isLoading && (matches.length === 0 || isRegenerating);
 
+  return {
+    divisionName, teams, matches, isLoading, loadError,
+    startDateText, setStartDateText, intervalDays, setIntervalDays, isGenerating, genError, isRegenerating, setIsRegenerating,
+    editTarget, setEditTarget, editDateText, setEditDateText, editVenue, setEditVenue, isSavingEdit,
+    teamName, rounds, generateFixtures, deleteAllFixtures, openEdit, saveEdit, deleteFixture, showGenerator,
+  };
+}
+
+type FixturesController = ReturnType<typeof useFixturesController>;
+
+// statusFilter narrows what's displayed without changing showGenerator's
+// "has anything ever been created" check (still based on the full list) —
+// omitted entirely by the standalone route/mobile card list (unchanged
+// behavior there), passed by admin-season.tsx's Fixtures tab to show only
+// what's still to be played, now that Results has its own place for the rest.
+function FixturesBody({ c, isDesktop, statusFilter }: { c: FixturesController; isDesktop: boolean; statusFilter?: Match['status'][] }) {
+  const displayMatches = statusFilter ? c.matches.filter((m) => statusFilter.includes(m.status)) : c.matches;
+  const displayRounds = statusFilter ? groupByRound(displayMatches) : c.rounds;
+
   return (
-    <LinearGradient colors={S.GRADIENT} style={{ flex: 1 }}>
-      <Stack.Screen
-        options={{
-          title: divisionName ? `${divisionName} Fixtures` : 'Fixtures',
-          headerLeft: () => (
-            <TouchableOpacity onPress={() => goBack()} hitSlop={12} style={{ paddingRight: 12 }}>
-              <Text style={{ color: S.WHITE, fontSize: 16 }}>‹ Back</Text>
-            </TouchableOpacity>
-          ),
-        }}
-      />
-      <ScrollView contentContainerStyle={{ padding: 20 }}>
-        {loadError ? (
-          <View style={S.errorBox}>
-            <Text style={{ color: S.RED, fontWeight: '600', marginBottom: 4 }}>Couldn't load fixtures</Text>
-            <Text style={{ color: S.RED, fontSize: 13 }}>{loadError}</Text>
-          </View>
-        ) : isLoading ? (
-          <ActivityIndicator color={S.BLUE} style={{ marginTop: 40 }} />
-        ) : showGenerator ? (
-          <BlurView intensity={20} tint="dark" style={{ borderRadius: 20, overflow: 'hidden' }}>
-            <View style={S.glassCard}>
-              <Text style={{ color: S.WHITE, fontSize: 20, fontWeight: '700', marginBottom: 6 }}>
-                Generate Fixtures
-              </Text>
-              <Text style={{ color: S.WHITE_50, fontSize: 13, marginBottom: 20 }}>
-                {teams.length} teams — every team plays every other team twice (home & away).
-                {teams.length > 0 ? ` That's ${teams.length * (teams.length - 1)} matches.` : ''}
-              </Text>
+    <>
+      {c.loadError ? (
+        <Card tone="coral">
+          <Body tone="coral" weight="semibold" className="mb-1">Couldn't load fixtures</Body>
+          <Body tone="coral" size="sm">{c.loadError}</Body>
+        </Card>
+      ) : c.isLoading ? (
+        <ActivityIndicator color={RAW.brand} style={{ marginTop: 40 }} />
+      ) : c.showGenerator ? (
+        <Card>
+          <Heading size="lg" className="mb-1.5">Generate Fixtures</Heading>
+          <Body size="sm" className="mb-5">
+            {c.teams.length} teams — every team plays every other team twice (home & away).
+            {c.teams.length > 0 ? ` That's ${c.teams.length * (c.teams.length - 1)} matches.` : ''}
+          </Body>
 
-              {genError ? (
-                <View style={S.errorBox}>
-                  <Text style={{ color: S.RED }}>{genError}</Text>
-                </View>
-              ) : null}
+          {c.genError ? (
+            <Card tone="coral" className="mb-4" padded={false}>
+              <Body tone="coral" className="p-3">{c.genError}</Body>
+            </Card>
+          ) : null}
 
-              <Text style={S.label}>FIRST ROUND DATE (YYYY-MM-DD)</Text>
-              <TextInput
-                value={startDateText}
-                onChangeText={setStartDateText}
-                placeholder="e.g. 2026-09-10"
-                placeholderTextColor={S.WHITE_30}
-                autoCapitalize="none"
-                autoCorrect={false}
-                style={[S.input, { marginBottom: 16 }]}
-              />
-
-              <Text style={S.label}>DAYS BETWEEN ROUNDS</Text>
-              <TextInput
-                value={intervalDays}
-                onChangeText={setIntervalDays}
-                placeholder="7"
-                placeholderTextColor={S.WHITE_30}
-                keyboardType="number-pad"
-                style={[S.input, { marginBottom: 24 }]}
-              />
-
-              <TouchableOpacity
-                onPress={generateFixtures}
-                disabled={isGenerating || teams.length < 2}
-                style={isGenerating || teams.length < 2 ? S.primaryButtonDisabled : S.primaryButton}
-                activeOpacity={0.8}
-              >
-                {isGenerating
-                  ? <ActivityIndicator color={S.WHITE} />
-                  : <Text style={S.primaryButtonText}>Generate Fixtures</Text>
-                }
-              </TouchableOpacity>
-
-              {isRegenerating && (
-                <TouchableOpacity
-                  onPress={() => setIsRegenerating(false)}
-                  style={{ marginTop: 14, minHeight: 44, justifyContent: 'center', alignItems: 'center', borderRadius: 12, borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.25)' }}
-                >
-                  <Text style={{ color: S.WHITE_80, fontWeight: '600' }}>Cancel</Text>
-                </TouchableOpacity>
-              )}
+          {isDesktop ? (
+            <View className="flex-row gap-4 mb-6">
+              <View className="flex-1">
+                <Label>First round date (YYYY-MM-DD)</Label>
+                <Input value={c.startDateText} onChangeText={c.setStartDateText} placeholder="e.g. 2026-09-10" autoCapitalize="none" autoCorrect={false} />
+              </View>
+              <View className="flex-1">
+                <Label>Days between rounds</Label>
+                <Input value={c.intervalDays} onChangeText={c.setIntervalDays} placeholder="7" keyboardType="number-pad" />
+              </View>
             </View>
-          </BlurView>
-        ) : (
-          <>
-            <TouchableOpacity
-              onPress={deleteAllFixtures}
-              style={{
-                alignSelf: 'flex-end', marginBottom: 12, minHeight: 40, justifyContent: 'center',
-                paddingHorizontal: 12, borderRadius: 8, borderWidth: 1.5, borderColor: 'rgba(255,107,107,0.4)', backgroundColor: 'rgba(255,59,48,0.1)',
-              }}
-              activeOpacity={0.7}
-            >
-              <Text style={{ color: S.RED, fontSize: 13, fontWeight: '600' }}>Delete all & regenerate</Text>
-            </TouchableOpacity>
+          ) : (
+            <>
+              <Label>First round date (YYYY-MM-DD)</Label>
+              <Input value={c.startDateText} onChangeText={c.setStartDateText} placeholder="e.g. 2026-09-10" autoCapitalize="none" autoCorrect={false} className="mb-4" />
 
-            {rounds.map(([round, roundMatches]) => (
-              <View key={round} style={{ marginBottom: 20 }}>
-                <Text style={{ color: S.WHITE_50, fontSize: 12, fontWeight: '700', marginBottom: 8 }}>
-                  ROUND {round} · {formatDate(roundMatches[0].scheduledDate)}
-                </Text>
+              <Label>Days between rounds</Label>
+              <Input value={c.intervalDays} onChangeText={c.setIntervalDays} placeholder="7" keyboardType="number-pad" className="mb-6" />
+            </>
+          )}
+
+          <Button onPress={c.generateFixtures} disabled={c.isGenerating || c.teams.length < 2} loading={c.isGenerating}>
+            Generate Fixtures
+          </Button>
+
+          {c.isRegenerating && (
+            <Button variant="ghost" className="mt-3.5" onPress={() => c.setIsRegenerating(false)}>Cancel</Button>
+          )}
+        </Card>
+      ) : isDesktop ? (
+        <DesktopFixtureTable matches={displayMatches} teamName={c.teamName} onEdit={c.openEdit} onDeleteAll={c.deleteAllFixtures} />
+      ) : (
+        <>
+          <Button variant="danger" size="sm" className="self-end mb-3" onPress={c.deleteAllFixtures}>
+            Delete all & regenerate
+          </Button>
+
+          {displayRounds.map(([round, roundMatches]) => (
+            <View key={round} className="mb-5">
+              <Caption className="mb-2">Round {round} · {formatDate(roundMatches[0].scheduledDate)}</Caption>
+              <View className="gap-2">
                 {roundMatches.map((match) => (
-                  <TouchableOpacity
+                  <ListRow
                     key={match.id}
-                    onPress={() => openEdit(match)}
-                    activeOpacity={0.7}
-                    style={{
-                      padding: 14, borderRadius: 12, marginBottom: 8,
-                      backgroundColor: 'rgba(255,255,255,0.07)',
-                      borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.22)',
-                    }}
-                  >
-                    <Text style={{ color: S.WHITE, fontWeight: '600' }}>
-                      {teamName(match.homeTeamId)} <Text style={{ color: S.WHITE_50 }}>vs</Text> {teamName(match.awayTeamId)}
-                    </Text>
-                    <Text style={{ color: S.WHITE_50, fontSize: 12, marginTop: 2 }}>
-                      {match.venue ?? 'No venue set'}
-                      {match.status !== 'scheduled' ? ` · ${match.status}` : ''}
-                    </Text>
-                  </TouchableOpacity>
+                    title={`${c.teamName(match.homeTeamId)} vs ${c.teamName(match.awayTeamId)}`}
+                    subtitle={`${match.venue ?? 'No venue set'}${match.status !== 'scheduled' ? ` · ${match.status}` : ''}`}
+                    onPress={() => c.openEdit(match)}
+                  />
                 ))}
               </View>
-            ))}
-          </>
-        )}
-      </ScrollView>
-
-      {/* Edit fixture modal */}
-      <Modal visible={!!editTarget} transparent animationType="fade">
-        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.75)', justifyContent: 'center', padding: 24 }}>
-          <BlurView intensity={30} tint="dark" style={{ borderRadius: 20, overflow: 'hidden' }}>
-            <View style={S.glassCard}>
-              <Text style={{ color: S.WHITE, fontSize: 20, fontWeight: '700', marginBottom: 4 }}>
-                Edit Fixture
-              </Text>
-              <Text style={{ color: S.WHITE_50, fontSize: 13, marginBottom: 20 }}>
-                {editTarget ? `${teamName(editTarget.homeTeamId)} vs ${teamName(editTarget.awayTeamId)}` : ''}
-              </Text>
-
-              <Text style={S.label}>DATE (YYYY-MM-DD)</Text>
-              <TextInput
-                value={editDateText}
-                onChangeText={setEditDateText}
-                placeholderTextColor={S.WHITE_30}
-                autoCapitalize="none"
-                autoCorrect={false}
-                style={[S.input, { marginBottom: 16 }]}
-              />
-
-              <Text style={S.label}>VENUE</Text>
-              <TextInput
-                value={editVenue}
-                onChangeText={setEditVenue}
-                placeholder="e.g. The Red Lion, 12 High St"
-                placeholderTextColor={S.WHITE_30}
-                autoCapitalize="words"
-                style={[S.input, { marginBottom: 24 }]}
-              />
-
-              <View style={{ flexDirection: 'row', gap: 10, marginBottom: 12 }}>
-                <TouchableOpacity
-                  onPress={() => setEditTarget(null)}
-                  style={{ flex: 1, padding: 14, borderRadius: 12, alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.08)', borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.25)' }}
-                >
-                  <Text style={{ color: S.WHITE_80, fontWeight: '600' }}>Cancel</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  onPress={saveEdit}
-                  disabled={isSavingEdit}
-                  style={[isSavingEdit ? S.primaryButtonDisabled : S.primaryButton, { flex: 1 }]}
-                >
-                  {isSavingEdit ? <ActivityIndicator color={S.WHITE} /> : <Text style={S.primaryButtonText}>Save</Text>}
-                </TouchableOpacity>
-              </View>
-
-              {editTarget?.status === 'scheduled' && (
-                <TouchableOpacity
-                  onPress={deleteFixture}
-                  style={{ minHeight: 44, justifyContent: 'center', alignItems: 'center', borderRadius: 10, borderWidth: 1.5, borderColor: 'rgba(255,107,107,0.4)' }}
-                >
-                  <Text style={{ color: S.RED, fontSize: 13, fontWeight: '600' }}>Delete this fixture</Text>
-                </TouchableOpacity>
-              )}
             </View>
-          </BlurView>
+          ))}
+        </>
+      )}
+
+      <Sheet visible={!!c.editTarget} onClose={() => c.setEditTarget(null)}>
+        <Heading size="lg" className="mb-1">Edit Fixture</Heading>
+        <Body size="sm" className="mb-5">
+          {c.editTarget ? `${c.teamName(c.editTarget.homeTeamId)} vs ${c.teamName(c.editTarget.awayTeamId)}` : ''}
+        </Body>
+
+        <Label>Date (YYYY-MM-DD)</Label>
+        <Input value={c.editDateText} onChangeText={c.setEditDateText} autoCapitalize="none" autoCorrect={false} className="mb-4" />
+
+        <Label>Venue</Label>
+        <Input value={c.editVenue} onChangeText={c.setEditVenue} placeholder="e.g. The Red Lion, 12 High St" autoCapitalize="words" className="mb-6" />
+
+        <View className="flex-row gap-2.5 mb-3">
+          <Button variant="ghost" className="flex-1" onPress={() => c.setEditTarget(null)}>Cancel</Button>
+          <Button className="flex-1" disabled={c.isSavingEdit} loading={c.isSavingEdit} onPress={c.saveEdit}>Save</Button>
         </View>
-      </Modal>
-    </LinearGradient>
+
+        {c.editTarget?.status === 'scheduled' && (
+          <Button variant="danger" onPress={c.deleteFixture}>Delete this fixture</Button>
+        )}
+      </Sheet>
+    </>
+  );
+}
+
+// Consumed by admin-season.tsx's Fixtures tab — calls the hook itself so the
+// caller doesn't need to know about FixturesController's shape.
+export function FixturesTab({ divisionId, leagueId, isDesktop, statusFilter }: {
+  divisionId: string | undefined; leagueId: string | undefined; isDesktop: boolean; statusFilter?: Match['status'][];
+}) {
+  const c = useFixturesController(divisionId, leagueId);
+  return <FixturesBody c={c} isDesktop={isDesktop} statusFilter={statusFilter} />;
+}
+
+function ResultsBody({ c }: { c: FixturesController }) {
+  const results = useMemo(
+    () => c.matches
+      .filter((m) => m.status === 'confirmed' || m.status === 'disputed')
+      .sort((a, b) => b.scheduledDate.getTime() - a.scheduledDate.getTime()),
+    [c.matches],
+  );
+
+  if (c.loadError) {
+    return (
+      <Card tone="coral">
+        <Body tone="coral" weight="semibold" className="mb-1">Couldn't load results</Body>
+        <Body tone="coral" size="sm">{c.loadError}</Body>
+      </Card>
+    );
+  }
+  if (c.isLoading) return <ActivityIndicator color={RAW.brand} style={{ marginTop: 40 }} />;
+  if (results.length === 0) {
+    return (
+      <Card className="items-center py-8">
+        <Body tone="strong" weight="semibold">No results yet</Body>
+        <Body size="sm" className="text-center mt-1">Confirmed and disputed matches will show up here once games have been played.</Body>
+      </Card>
+    );
+  }
+  return <ResultsTable matches={results} teamName={c.teamName} onOpen={openResult} />;
+}
+
+// Consumed by admin-season.tsx's Results tab.
+export function ResultsTab({ divisionId, leagueId }: { divisionId: string | undefined; leagueId: string | undefined }) {
+  const c = useFixturesController(divisionId, leagueId);
+  return <ResultsBody c={c} />;
+}
+
+export default function AdminFixturesScreen() {
+  const { divisionId } = useLocalSearchParams<{ divisionId: string }>();
+  const { appUser } = useAuthStore();
+  const { width } = useWindowDimensions();
+  const isDesktop = width >= DESKTOP_BREAKPOINT;
+  const c = useFixturesController(divisionId, appUser?.leagueId ?? undefined);
+  const title = c.divisionName ? `${c.divisionName} Fixtures` : 'Fixtures';
+
+  if (isDesktop) {
+    return (
+      <>
+        <Stack.Screen options={{ headerShown: false }} />
+        <AdminShell title={title} breadcrumb={[{ label: 'Dashboard', path: '/(protected)/(tabs)/admin' }, { label: 'Fixtures' }]}>
+          <FixturesBody c={c} isDesktop />
+        </AdminShell>
+      </>
+    );
+  }
+
+  return (
+    <Screen header={<AppBar title={title} />}>
+      <Stack.Screen options={{ headerShown: false }} />
+      <FixturesBody c={c} isDesktop={false} />
+    </Screen>
   );
 }

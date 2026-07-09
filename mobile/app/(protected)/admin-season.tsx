@@ -1,27 +1,57 @@
 import { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, ActivityIndicator, Modal, TextInput, Alert } from 'react-native';
+import { View, TouchableOpacity, ActivityIndicator, Alert, useWindowDimensions } from 'react-native';
 import { router, Stack, useLocalSearchParams } from 'expo-router';
-import { LinearGradient } from 'expo-linear-gradient';
-import { BlurView } from 'expo-blur';
 import {
   collection, doc, onSnapshot, query, where, updateDoc, addDoc, serverTimestamp,
 } from 'firebase/firestore';
-import { db } from '@/config/firebase';
+import { httpsCallable } from 'firebase/functions';
+import { db, functions } from '@/config/firebase';
 import { useAuthStore } from '@/stores/authStore';
-import * as S from '@/styles/common';
+import { useAdminContextStore } from '@/stores/adminContextStore';
+import { goBack } from '@/lib/navigation';
+import { RAW, type SemanticTone } from '@/lib/theme';
+import { Screen, Heading, Body, Caption, Button, Card, Chip, ListRow, Input, Label, Sheet } from '@/components/ui';
+import { AdminShell } from '@/components/admin/AdminShell';
+import { FixturesTab, ResultsTab } from './admin-fixtures';
+import { StandingsTab } from './admin-standings-override';
+
+const DESKTOP_BREAKPOINT = 768;
 
 interface Division { id: string; name: string; order: number }
 interface Team { id: string; name: string; divisionId: string; captainUserId: string | null }
 
-const STATUS_OPTIONS = [
-  { value: 'upcoming', label: 'Upcoming', color: S.ORANGE },
-  { value: 'active', label: 'Active', color: S.GREEN },
-  { value: 'completed', label: 'Completed', color: 'rgba(255,255,255,0.4)' },
+const STATUS_OPTIONS: { value: string; label: string; tone: SemanticTone }[] = [
+  { value: 'upcoming', label: 'Upcoming', tone: 'butter' },
+  { value: 'active', label: 'Active', tone: 'sage' },
+  { value: 'completed', label: 'Completed', tone: 'brand' },
 ];
 
+const WORKSPACE_TABS = [
+  { value: 'teams', label: 'Teams' },
+  { value: 'fixtures', label: 'Fixtures' },
+  { value: 'results', label: 'Results' },
+  { value: 'standings', label: 'Standings' },
+] as const;
+type WorkspaceTab = typeof WORKSPACE_TABS[number]['value'];
+
 export default function AdminSeasonScreen() {
-  const { seasonId } = useLocalSearchParams<{ seasonId: string }>();
+  const { seasonId, divisionId, tab } = useLocalSearchParams<{ seasonId: string; divisionId?: string; tab?: WorkspaceTab }>();
   const { appUser } = useAuthStore();
+  const adminContext = useAdminContextStore();
+  const { width } = useWindowDimensions();
+  const isDesktop = width >= DESKTOP_BREAKPOINT;
+
+  // Whichever division workspace is actually being viewed becomes the
+  // persisted "current" one — so the sidebar's Teams/Fixtures/Results/
+  // Standings shortcuts, and the context switcher, stay in sync no matter
+  // how the admin got here (switcher, Dashboard's "Open", or a direct link).
+  useEffect(() => {
+    if (seasonId && divisionId) adminContext.setContext(seasonId, divisionId);
+    // adminContext itself intentionally excluded — it's a new object identity
+    // on every store update, which would otherwise refire this effect forever.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [seasonId, divisionId]);
+  const activeTab: WorkspaceTab = tab ?? 'teams';
 
   const [seasonName, setSeasonName] = useState('');
   const [seasonStatus, setSeasonStatus] = useState('upcoming');
@@ -33,6 +63,10 @@ export default function AdminSeasonScreen() {
   const [newTeamName, setNewTeamName] = useState('');
   const [newTeamAddress, setNewTeamAddress] = useState('');
   const [isAddingTeam, setIsAddingTeam] = useState(false);
+
+  const [showAddDivision, setShowAddDivision] = useState(false);
+  const [newDivisionName, setNewDivisionName] = useState('');
+  const [isAddingDivision, setIsAddingDivision] = useState(false);
 
   useEffect(() => {
     if (!seasonId) return;
@@ -71,6 +105,25 @@ export default function AdminSeasonScreen() {
     await updateDoc(doc(db, 'seasons', seasonId), { status });
   }
 
+  async function addDivision() {
+    if (!newDivisionName.trim() || !seasonId || !appUser?.leagueId) return;
+    setIsAddingDivision(true);
+    try {
+      await addDoc(collection(db, 'divisions'), {
+        leagueId: appUser.leagueId,
+        seasonId,
+        name: newDivisionName.trim(),
+        order: divisions.length,
+      });
+      setNewDivisionName('');
+      setShowAddDivision(false);
+    } catch (e: unknown) {
+      Alert.alert('Error', (e as Error).message ?? 'Something went wrong');
+    } finally {
+      setIsAddingDivision(false);
+    }
+  }
+
   async function addTeam() {
     if (!newTeamName.trim() || !addTeamTarget || !appUser?.leagueId) return;
     setIsAddingTeam(true);
@@ -83,7 +136,6 @@ export default function AdminSeasonScreen() {
         address: newTeamAddress.trim() || null,
         captainUserId: null,
         viceCaptainUserId: null,
-        playerInviteCode: null,
         createdAt: serverTimestamp(),
       });
       setAddTeamTarget(null);
@@ -98,190 +150,319 @@ export default function AdminSeasonScreen() {
 
   const teamsForDivision = (divId: string) => teams.filter((t) => t.divisionId === divId);
   const unassignedTeams = teams.filter((t) => !divisions.find((d) => d.id === t.divisionId));
+  const currentDivision = divisions.find((d) => d.id === divisionId) ?? null;
 
-  return (
-    <LinearGradient colors={S.GRADIENT} style={{ flex: 1 }}>
-      <Stack.Screen options={{ title: seasonName || 'Season' }} />
-      <ScrollView contentContainerStyle={{ padding: 20 }}>
+  const [deletingDivisionId, setDeletingDivisionId] = useState<string | null>(null);
+  const [isDeletingSeason, setIsDeletingSeason] = useState(false);
 
-        {/* Status toggle */}
-        <BlurView intensity={20} tint="dark" style={{ borderRadius: 16, overflow: 'hidden', marginBottom: 20 }}>
-          <View style={[S.glassCard, { padding: 16 }]}>
-            <Text style={{ color: S.WHITE_50, fontSize: 12, marginBottom: 10 }}>SEASON STATUS</Text>
-            <View style={{ flexDirection: 'row', gap: 8 }}>
-              {STATUS_OPTIONS.map((opt) => {
-                const isSelected = seasonStatus === opt.value;
-                return (
-                  <TouchableOpacity
-                    key={opt.value}
-                    onPress={() => setStatus(opt.value)}
-                    style={{
-                      flex: 1, minHeight: 44, justifyContent: 'center', borderRadius: 8, alignItems: 'center',
-                      backgroundColor: isSelected ? `${opt.color}33` : 'rgba(255,255,255,0.08)',
-                      borderWidth: 1.5,
-                      borderColor: isSelected ? opt.color : 'rgba(255,255,255,0.25)',
-                    }}
-                    activeOpacity={0.7}
-                  >
-                    <Text style={{ color: isSelected ? opt.color : S.WHITE_50, fontSize: 13, fontWeight: '600' }}>
-                      {opt.label}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
+  function confirmDeleteDivision(division: Division) {
+    Alert.alert(
+      'Delete division',
+      `Delete ${division.name}? This removes all its teams, players and any unplayed fixtures. Blocked if any team here has confirmed match results.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Delete', style: 'destructive', onPress: () => deleteDivision(division.id) },
+      ],
+    );
+  }
+
+  async function deleteDivision(targetDivisionId: string) {
+    setDeletingDivisionId(targetDivisionId);
+    try {
+      await httpsCallable(functions, 'adminDeleteDivision')({ divisionId: targetDivisionId });
+    } catch (e: unknown) {
+      Alert.alert("Can't delete division", (e as Error).message ?? 'Something went wrong');
+    } finally {
+      setDeletingDivisionId(null);
+    }
+  }
+
+  function confirmDeleteSeason() {
+    Alert.alert(
+      'Delete season',
+      `Delete ${seasonName}? This removes every division, team, player and unplayed fixture in it. Blocked if any team here has confirmed match results.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Delete', style: 'destructive', onPress: deleteSeason },
+      ],
+    );
+  }
+
+  async function deleteSeason() {
+    if (!seasonId) return;
+    setIsDeletingSeason(true);
+    try {
+      await httpsCallable(functions, 'adminDeleteSeason')({ seasonId });
+      goBack();
+    } catch (e: unknown) {
+      Alert.alert("Can't delete season", (e as Error).message ?? 'Something went wrong');
+    } finally {
+      setIsDeletingSeason(false);
+    }
+  }
+
+  const addTeamSheet = (
+    <Sheet visible={!!addTeamTarget} onClose={() => setAddTeamTarget(null)}>
+      <Heading size="lg" className="mb-1">Add Team</Heading>
+      <Body size="sm" className="mb-5">{addTeamTarget?.name}</Body>
+
+      <Label>Team name</Label>
+      <Input value={newTeamName} onChangeText={setNewTeamName} placeholder="e.g. The Arrows" autoCapitalize="words" autoFocus className="mb-4" />
+
+      <Label>Home venue / address (optional)</Label>
+      <Input value={newTeamAddress} onChangeText={setNewTeamAddress} placeholder="e.g. The Red Lion, 12 High St" autoCapitalize="words" className="mb-6" />
+
+      <View className="flex-row gap-2.5">
+        <Button variant="ghost" className="flex-1" onPress={() => setAddTeamTarget(null)}>Cancel</Button>
+        <Button className="flex-1" disabled={isAddingTeam || !newTeamName.trim()} loading={isAddingTeam} onPress={addTeam}>
+          Add Team
+        </Button>
+      </View>
+    </Sheet>
+  );
+
+  const addDivisionSheet = (
+    <Sheet visible={showAddDivision} onClose={() => setShowAddDivision(false)}>
+      <Heading size="lg" className="mb-4">Add Division</Heading>
+      <Label>Division name</Label>
+      <Input value={newDivisionName} onChangeText={setNewDivisionName} placeholder="e.g. Division 2" autoCapitalize="words" autoFocus className="mb-6" />
+      <View className="flex-row gap-2.5">
+        <Button variant="ghost" className="flex-1" onPress={() => setShowAddDivision(false)}>Cancel</Button>
+        <Button className="flex-1" disabled={isAddingDivision || !newDivisionName.trim()} loading={isAddingDivision} onPress={addDivision}>
+          Add
+        </Button>
+      </View>
+    </Sheet>
+  );
+
+  // ── Mobile: unchanged drill-down UX (own screens for Table/Fixtures/Adjust) ──
+  if (!isDesktop) {
+    return (
+      <Screen>
+        <Stack.Screen options={{ title: seasonName || 'Season' }} />
+
+        <Card className="mb-5">
+          <Caption className="mb-2.5">Season Status</Caption>
+          <View className="flex-row gap-2 mb-3">
+            {STATUS_OPTIONS.map((opt) => (
+              <Chip key={opt.value} label={opt.label} tone={opt.tone} selected={seasonStatus === opt.value} onPress={() => setStatus(opt.value)} className="flex-1" />
+            ))}
           </View>
-        </BlurView>
+          <Button variant="danger" size="sm" disabled={isDeletingSeason} loading={isDeletingSeason} onPress={confirmDeleteSeason}>
+            Delete Season
+          </Button>
+        </Card>
 
         {isLoading ? (
-          <ActivityIndicator color={S.BLUE} />
+          <ActivityIndicator color={RAW.brand} />
         ) : divisions.length === 0 ? (
-          <Text style={{ color: S.WHITE_50, textAlign: 'center', paddingVertical: 20 }}>
+          <Body className="text-center py-5">
             No divisions yet. Approve team requests from the home screen to populate this season.
-          </Text>
+          </Body>
         ) : (
           <>
             {divisions.map((division) => {
               const divTeams = teamsForDivision(division.id);
               return (
-                <View key={division.id} style={{ marginBottom: 24 }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
-                    <Text style={{ color: S.WHITE, fontSize: 15, fontWeight: '700', flex: 1 }}>
-                      {division.name}
-                    </Text>
-                    <TouchableOpacity
-                      onPress={() => router.push('/(protected)/standings')}
-                      style={{ minHeight: 36, justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: 8, paddingHorizontal: 10, marginRight: 8, borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.22)' }}
-                      activeOpacity={0.7}
-                    >
-                      <Text style={{ color: S.WHITE_80, fontSize: 12, fontWeight: '600' }}>Table</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      onPress={() => router.push(`/(protected)/admin-fixtures?divisionId=${division.id}`)}
-                      style={{ minHeight: 36, justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: 8, paddingHorizontal: 10, marginRight: 8, borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.22)' }}
-                      activeOpacity={0.7}
-                    >
-                      <Text style={{ color: S.WHITE_80, fontSize: 12, fontWeight: '600' }}>Fixtures</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      onPress={() => { setAddTeamTarget(division); setNewTeamName(''); setNewTeamAddress(''); }}
-                      style={{ minHeight: 36, justifyContent: 'center', backgroundColor: 'rgba(0,122,255,0.2)', borderRadius: 8, paddingHorizontal: 10, borderWidth: 1.5, borderColor: 'rgba(0,122,255,0.5)' }}
-                      activeOpacity={0.7}
-                    >
-                      <Text style={{ color: S.WHITE, fontSize: 12, fontWeight: '600' }}>+ Add Team</Text>
-                    </TouchableOpacity>
+                <View key={division.id} className="mb-6">
+                  <View className="flex-row items-center mb-1">
+                    <Heading size="sm" className="flex-1">{division.name}</Heading>
+                    <Button variant="secondary" size="sm" className="mr-2" onPress={() => router.push('/(protected)/(tabs)/standings')}>
+                      Table
+                    </Button>
+                    <Button variant="secondary" size="sm" className="mr-2" onPress={() => router.push(`/(protected)/admin-fixtures?divisionId=${division.id}`)}>
+                      Fixtures
+                    </Button>
+                    <Button variant="secondary" size="sm" className="mr-2" onPress={() => router.push(`/(protected)/admin-standings-override?divisionId=${division.id}`)}>
+                      Adjust
+                    </Button>
+                    <Button size="sm" onPress={() => { setAddTeamTarget(division); setNewTeamName(''); setNewTeamAddress(''); }}>
+                      + Add Team
+                    </Button>
                   </View>
+                  <TouchableOpacity onPress={() => confirmDeleteDivision(division)} disabled={deletingDivisionId === division.id} className="self-end mb-2">
+                    <Body size="xs" tone="coral" weight="semibold">
+                      {deletingDivisionId === division.id ? 'Deleting…' : 'Delete Division'}
+                    </Body>
+                  </TouchableOpacity>
                   {divTeams.length === 0 ? (
-                    <Text style={{ color: S.WHITE_50, fontSize: 13, paddingLeft: 4 }}>No teams yet</Text>
+                    <Body size="sm" className="pl-1">No teams yet</Body>
                   ) : (
-                    divTeams.map((team) => (
-                      <TouchableOpacity
-                        key={team.id}
-                        onPress={() => router.push(`/(protected)/admin-team?teamId=${team.id}`)}
-                        activeOpacity={0.7}
-                        style={{
-                          padding: 14, borderRadius: 12, marginBottom: 8,
-                          backgroundColor: 'rgba(255,255,255,0.07)',
-                          borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.22)',
-                          flexDirection: 'row', alignItems: 'center',
-                        }}
-                      >
-                        <View style={{ flex: 1 }}>
-                          <Text style={{ color: S.WHITE, fontWeight: '600' }}>{team.name}</Text>
-                          <Text style={{ color: S.WHITE_50, fontSize: 12, marginTop: 2 }}>
-                            {team.captainUserId ? 'Captain assigned' : 'No captain'}
-                          </Text>
-                        </View>
-                        <Text style={{ color: S.WHITE_50 }}>›</Text>
-                      </TouchableOpacity>
-                    ))
+                    <View className="gap-2">
+                      {divTeams.map((team) => (
+                        <ListRow
+                          key={team.id}
+                          title={team.name}
+                          subtitle={team.captainUserId ? 'Captain assigned' : 'No captain'}
+                          trailing={<Body tone="dim">›</Body>}
+                          onPress={() => router.push(`/(protected)/admin-team?teamId=${team.id}`)}
+                        />
+                      ))}
+                    </View>
                   )}
                 </View>
               );
             })}
 
             {unassignedTeams.length > 0 && (
-              <View style={{ marginBottom: 20 }}>
-                <Text style={{ color: S.WHITE_50, fontSize: 13, fontWeight: '700', marginBottom: 8 }}>
-                  UNASSIGNED
-                </Text>
-                {unassignedTeams.map((team) => (
-                  <TouchableOpacity
-                    key={team.id}
-                    onPress={() => router.push(`/(protected)/admin-team?teamId=${team.id}`)}
-                    activeOpacity={0.7}
-                    style={{
-                      padding: 14, borderRadius: 12, marginBottom: 8,
-                      backgroundColor: 'rgba(255,255,255,0.07)',
-                      borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.22)',
-                      flexDirection: 'row', alignItems: 'center',
-                    }}
-                  >
-                    <Text style={{ color: S.WHITE, flex: 1, fontWeight: '600' }}>{team.name}</Text>
-                    <Text style={{ color: S.WHITE_50 }}>›</Text>
-                  </TouchableOpacity>
-                ))}
+              <View className="mb-5">
+                <Caption className="mb-2">Unassigned</Caption>
+                <View className="gap-2">
+                  {unassignedTeams.map((team) => (
+                    <ListRow
+                      key={team.id}
+                      title={team.name}
+                      trailing={<Body tone="dim">›</Body>}
+                      onPress={() => router.push(`/(protected)/admin-team?teamId=${team.id}`)}
+                    />
+                  ))}
+                </View>
               </View>
             )}
           </>
         )}
-      </ScrollView>
 
-      {/* Add team modal */}
-      <Modal visible={!!addTeamTarget} transparent animationType="fade">
-        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.75)', justifyContent: 'center', padding: 24 }}>
-          <BlurView intensity={30} tint="dark" style={{ borderRadius: 20, overflow: 'hidden' }}>
-            <View style={S.glassCard}>
-              <Text style={{ color: S.WHITE, fontSize: 20, fontWeight: '700', marginBottom: 4 }}>
-                Add Team
-              </Text>
-              <Text style={{ color: S.WHITE_50, fontSize: 13, marginBottom: 20 }}>
-                {addTeamTarget?.name}
-              </Text>
+        {addTeamSheet}
+      </Screen>
+    );
+  }
 
-              <Text style={S.label}>TEAM NAME</Text>
-              <TextInput
-                value={newTeamName}
-                onChangeText={setNewTeamName}
-                placeholder="e.g. The Arrows"
-                placeholderTextColor={S.WHITE_30}
-                autoCapitalize="words"
-                autoFocus
-                style={[S.input, { marginBottom: 16 }]}
+  // ── Desktop: division picker, or a Teams/Fixtures/Standings workspace ──
+  if (currentDivision) {
+    const divTeams = teamsForDivision(currentDivision.id);
+    return (
+      <>
+        <Stack.Screen options={{ headerShown: false }} />
+        <AdminShell
+          title={currentDivision.name}
+          breadcrumb={[
+            { label: 'Dashboard', path: '/(protected)/(tabs)/admin' },
+            { label: seasonName || 'Season', path: `/(protected)/admin-season?seasonId=${seasonId}` },
+            { label: currentDivision.name },
+          ]}
+        >
+          <View style={{ maxWidth: 960 }}>
+            <View className="flex-row gap-2 mb-6">
+              {WORKSPACE_TABS.map((t) => (
+                <Chip key={t.value} label={t.label} selected={activeTab === t.value} onPress={() => router.setParams({ tab: t.value })} />
+              ))}
+            </View>
+
+            {activeTab === 'teams' && (
+              <>
+                <View className="flex-row items-center mb-3">
+                  <Heading size="sm" className="flex-1">{divTeams.length} teams</Heading>
+                  <Button size="sm" onPress={() => { setAddTeamTarget(currentDivision); setNewTeamName(''); setNewTeamAddress(''); }}>
+                    + Add Team
+                  </Button>
+                </View>
+                {divTeams.length === 0 ? (
+                  <Body size="sm" className="py-4 text-center">No teams yet in this division</Body>
+                ) : (
+                  <View className="gap-2">
+                    {divTeams.map((team) => (
+                      <ListRow
+                        key={team.id}
+                        title={team.name}
+                        subtitle={team.captainUserId ? 'Captain assigned' : 'No captain'}
+                        trailing={<Body tone="dim">›</Body>}
+                        onPress={() => router.push(`/(protected)/admin-team?teamId=${team.id}`)}
+                      />
+                    ))}
+                  </View>
+                )}
+              </>
+            )}
+
+            {activeTab === 'fixtures' && (
+              <FixturesTab
+                divisionId={currentDivision.id}
+                leagueId={appUser?.leagueId ?? undefined}
+                isDesktop
+                statusFilter={['scheduled', 'awaiting_confirmation']}
               />
+            )}
 
-              <Text style={S.label}>HOME VENUE / ADDRESS (OPTIONAL)</Text>
-              <TextInput
-                value={newTeamAddress}
-                onChangeText={setNewTeamAddress}
-                placeholder="e.g. The Red Lion, 12 High St"
-                placeholderTextColor={S.WHITE_30}
-                autoCapitalize="words"
-                style={[S.input, { marginBottom: 24 }]}
-              />
+            {activeTab === 'results' && (
+              <ResultsTab divisionId={currentDivision.id} leagueId={appUser?.leagueId ?? undefined} />
+            )}
 
-              <View style={{ flexDirection: 'row', gap: 10 }}>
-                <TouchableOpacity
-                  onPress={() => setAddTeamTarget(null)}
-                  style={{ flex: 1, padding: 14, borderRadius: 12, alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.08)', borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.25)' }}
-                >
-                  <Text style={{ color: S.WHITE_80, fontWeight: '600' }}>Cancel</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  onPress={addTeam}
-                  disabled={isAddingTeam || !newTeamName.trim()}
-                  style={[isAddingTeam || !newTeamName.trim() ? S.primaryButtonDisabled : S.primaryButton, { flex: 1 }]}
-                >
-                  {isAddingTeam
-                    ? <ActivityIndicator color={S.WHITE} />
-                    : <Text style={S.primaryButtonText}>Add Team</Text>
-                  }
-                </TouchableOpacity>
+            {activeTab === 'standings' && (
+              <StandingsTab seasonId={seasonId} divisionId={currentDivision.id} leagueId={appUser?.leagueId ?? undefined} />
+            )}
+          </View>
+        </AdminShell>
+        {addTeamSheet}
+      </>
+    );
+  }
+
+  return (
+    <>
+      <Stack.Screen options={{ headerShown: false }} />
+      <AdminShell
+        title={seasonName || 'Season'}
+        breadcrumb={[{ label: 'Dashboard', path: '/(protected)/(tabs)/admin' }, { label: seasonName || 'Season' }]}
+        actions={(
+          <View className="flex-row items-center gap-2">
+            {STATUS_OPTIONS.map((opt) => (
+              <Chip key={opt.value} label={opt.label} tone={opt.tone} selected={seasonStatus === opt.value} onPress={() => setStatus(opt.value)} />
+            ))}
+          </View>
+        )}
+      >
+        <View style={{ maxWidth: 780 }}>
+          <View className="flex-row items-center mb-4">
+            <Heading size="sm" className="flex-1">Divisions</Heading>
+            <Button variant="secondary" size="sm" className="mr-2" onPress={() => setShowAddDivision(true)}>+ Add Division</Button>
+            <Button variant="danger" size="sm" disabled={isDeletingSeason} loading={isDeletingSeason} onPress={confirmDeleteSeason}>
+              Delete Season
+            </Button>
+          </View>
+
+          {isLoading ? (
+            <ActivityIndicator color={RAW.brand} />
+          ) : divisions.length === 0 ? (
+            <Body className="text-center py-5">No divisions yet — add one to start setting up teams and fixtures.</Body>
+          ) : (
+            <View className="gap-2 mb-5">
+              {divisions.map((division) => (
+                <Card key={division.id} className="flex-row items-center">
+                  <View className="flex-1">
+                    <Body tone="strong" weight="semibold">{division.name}</Body>
+                    <Caption className="mt-0.5">{teamsForDivision(division.id).length} teams</Caption>
+                  </View>
+                  <TouchableOpacity
+                    onPress={() => confirmDeleteDivision(division)}
+                    disabled={deletingDivisionId === division.id}
+                    className="mr-4"
+                  >
+                    <Body size="xs" tone="coral" weight="semibold">
+                      {deletingDivisionId === division.id ? 'Deleting…' : 'Delete'}
+                    </Body>
+                  </TouchableOpacity>
+                  <Button size="sm" onPress={() => router.setParams({ divisionId: division.id, tab: 'teams' })}>
+                    Open
+                  </Button>
+                </Card>
+              ))}
+            </View>
+          )}
+
+          {unassignedTeams.length > 0 && (
+            <View className="mb-5">
+              <Caption className="mb-2">Unassigned Teams</Caption>
+              <View className="gap-2">
+                {unassignedTeams.map((team) => (
+                  <ListRow key={team.id} title={team.name} trailing={<Body tone="dim">›</Body>} onPress={() => router.push(`/(protected)/admin-team?teamId=${team.id}`)} />
+                ))}
               </View>
             </View>
-          </BlurView>
+          )}
         </View>
-      </Modal>
-    </LinearGradient>
+      </AdminShell>
+      {addTeamSheet}
+      {addDivisionSheet}
+    </>
   );
 }

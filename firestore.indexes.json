@@ -33,36 +33,11 @@
       ]
     },
     {
-      "collectionGroup": "joinCodes",
+      "collectionGroup": "players",
       "queryScope": "COLLECTION",
       "fields": [
         { "fieldPath": "teamId", "order": "ASCENDING" },
-        { "fieldPath": "role", "order": "ASCENDING" },
-        { "fieldPath": "usedByUserId", "order": "ASCENDING" }
-      ]
-    },
-    {
-      "collectionGroup": "joinCodes",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "teamId", "order": "ASCENDING" },
-        { "fieldPath": "usedByUserId", "order": "ASCENDING" }
-      ]
-    },
-    {
-      "collectionGroup": "claimCodes",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "teamId", "order": "ASCENDING" },
-        { "fieldPath": "usedByUserId", "order": "ASCENDING" }
-      ]
-    },
-    {
-      "collectionGroup": "claimCodes",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "playerId", "order": "ASCENDING" },
-        { "fieldPath": "usedByUserId", "order": "ASCENDING" }
+        { "fieldPath": "claimedByUserId", "order": "ASCENDING" }
       ]
     },
     {
@@ -74,10 +49,11 @@
       ]
     },
     {
-      "collectionGroup": "teamRequests",
+      "collectionGroup": "joinRequests",
       "queryScope": "COLLECTION",
       "fields": [
         { "fieldPath": "leagueId", "order": "ASCENDING" },
+        { "fieldPath": "requestType", "order": "ASCENDING" },
         { "fieldPath": "status", "order": "ASCENDING" }
       ]
     },

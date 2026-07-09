@@ -1,14 +1,18 @@
 import { useState, useEffect, useMemo } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, ActivityIndicator, Alert } from 'react-native';
+import { View, ScrollView, TouchableOpacity, ActivityIndicator, Alert, Platform, useWindowDimensions } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import { Stack, useLocalSearchParams } from 'expo-router';
-import { LinearGradient } from 'expo-linear-gradient';
-import { BlurView } from 'expo-blur';
+import { useColorScheme } from 'nativewind';
 import { collection, doc, getDoc, onSnapshot, query, where, updateDoc } from 'firebase/firestore';
 import { db } from '@/config/firebase';
 import { useAuthStore } from '@/stores/authStore';
 import { goBack } from '@/lib/navigation';
+import { RAW } from '@/lib/theme';
+import { Screen, Body, Caption, Button, Card, Chip, AppBar, AppIcon } from '@/components/ui';
+import { AdminShell } from '@/components/admin/AdminShell';
 import type { Match, MatchGame, MatchSide } from '@/types';
-import * as S from '@/styles/common';
+
+const DESKTOP_BREAKPOINT = 768;
 
 interface Player { id: string; name: string; teamId: string }
 
@@ -27,6 +31,10 @@ function normalize(game: MatchGame) {
 export default function AdminDisputeScreen() {
   const { matchId } = useLocalSearchParams<{ matchId: string }>();
   const { appUser } = useAuthStore();
+  const { colorScheme } = useColorScheme();
+  const isDark = colorScheme === 'dark';
+  const { width } = useWindowDimensions();
+  const isDesktop = width >= DESKTOP_BREAKPOINT;
 
   const [match, setMatch] = useState<Match | null>(null);
   const [homeTeamName, setHomeTeamName] = useState('');
@@ -119,6 +127,7 @@ export default function AdminDisputeScreen() {
     try {
       const finalGames = gameOrders.map((o) => resolved[o]).sort((a, b) => a.order - b.order);
       await updateDoc(doc(db, 'matches', matchId), { status: 'confirmed', games: finalGames });
+      if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       Alert.alert('Result confirmed', 'Standings and stats will update shortly.');
       goBack();
     } catch (e: unknown) {
@@ -131,51 +140,39 @@ export default function AdminDisputeScreen() {
   function GameSummary({ game }: { game: MatchGame }) {
     return (
       <View>
-        <Text style={{ color: S.WHITE, fontSize: 13, marginBottom: 6 }}>
+        <Body size="sm" tone="strong" className="mb-1.5">
           {game.homePlayerIds.map(playerName).join(' & ') || '—'} vs {game.awayPlayerIds.map(playerName).join(' & ') || '—'}
-        </Text>
+        </Body>
         {game.legs.map((leg, i) => (
-          <Text key={i} style={{ color: S.WHITE_50, fontSize: 12, marginBottom: 2 }}>
+          <Body key={i} size="xs" className="mb-0.5">
             Leg {i + 1}: {leg.winner === 'home' ? homeTeamName : awayTeamName} won
             {leg.oneEighties.length ? ` · 180: ${leg.oneEighties.map(playerName).join(', ')}` : ''}
             {leg.highCheckout ? ` · High checkout: ${playerName(leg.highCheckout.playerId)} ${leg.highCheckout.value}` : ''}
-          </Text>
+          </Body>
         ))}
       </View>
     );
   }
 
-  return (
-    <LinearGradient colors={S.GRADIENT} style={{ flex: 1 }}>
-      <Stack.Screen
-        options={{
-          title: 'Resolve Dispute',
-          headerLeft: () => (
-            <TouchableOpacity onPress={() => goBack()} hitSlop={12} style={{ paddingRight: 12 }}>
-              <Text style={{ color: S.WHITE, fontSize: 16 }}>‹ Back</Text>
-            </TouchableOpacity>
-          ),
-        }}
-      />
+  const body = (
+    <>
       {loadError ? (
-        <View style={{ padding: 20 }}><View style={S.errorBox}><Text style={{ color: S.RED }}>{loadError}</Text></View></View>
+        <View className="p-5"><Card tone="coral"><Body tone="coral">{loadError}</Body></Card></View>
       ) : isLoading ? (
-        <ActivityIndicator color={S.BLUE} style={{ marginTop: 60 }} />
+        <ActivityIndicator color={RAW.brand} style={{ marginTop: 60 }} />
       ) : !homeGames || !awayGames ? (
-        <View style={{ padding: 20 }}>
-          <View style={S.errorBox}>
-            <Text style={{ color: S.RED }}>Both teams haven't submitted a result yet — nothing to resolve.</Text>
-          </View>
+        <View className="p-5">
+          <Card tone="coral">
+            <Body tone="coral">Both teams haven't submitted a result yet — nothing to resolve.</Body>
+          </Card>
         </View>
       ) : (
         <>
           <ScrollView contentContainerStyle={{ padding: 20 }}>
-            <Text style={{ color: S.WHITE, fontSize: 18, fontWeight: '700', marginBottom: 4 }}>
-              {homeTeamName} vs {awayTeamName}
-            </Text>
-            <Text style={{ color: S.WHITE_50, fontSize: 13, marginBottom: 20 }}>
+            <Body tone="strong" className="mb-1">{homeTeamName} vs {awayTeamName}</Body>
+            <Body size="sm" className="mb-5">
               Pick or edit the correct version for each game where the two submissions disagree.
-            </Text>
+            </Body>
 
             {gameOrders.map((order) => {
               const hg = homeGames.find((g) => g.order === order);
@@ -184,45 +181,48 @@ export default function AdminDisputeScreen() {
               const chosen = resolved[order];
 
               return (
-                <View key={order} style={{ marginBottom: 20 }}>
-                  <Text style={{ color: S.WHITE_50, fontSize: 12, fontWeight: '700', marginBottom: 8 }}>
-                    GAME {order} · {hg?.type === 'pairs' || ag?.type === 'pairs' ? 'PAIRS' : 'SINGLES'}
-                    {agree ? '  ·  ✓ teams agree' : '  ·  ⚠ conflict'}
-                  </Text>
+                <View key={order} className="mb-5">
+                  <View className="flex-row items-center gap-1 mb-2">
+                    <Caption>
+                      Game {order} · {hg?.type === 'pairs' || ag?.type === 'pairs' ? 'Pairs' : 'Singles'} ·
+                    </Caption>
+                    <AppIcon
+                      name={agree ? 'check' : 'warning'}
+                      size={11}
+                      color={agree ? (isDark ? RAW.textFaintDark : RAW.textFaint) : (isDark ? RAW.coralInkDark : RAW.coralInk)}
+                    />
+                    <Caption className={agree ? '' : 'text-coral-ink dark:text-coral-ink-dark'}>
+                      {agree ? 'teams agree' : 'conflict'}
+                    </Caption>
+                  </View>
 
                   {agree && chosen ? (
-                    <View style={{ padding: 12, borderRadius: 12, backgroundColor: 'rgba(52,199,89,0.08)', borderWidth: 1, borderColor: 'rgba(52,199,89,0.3)' }}>
+                    <Card tone="sage">
                       <GameSummary game={chosen} />
-                    </View>
+                    </Card>
                   ) : (
-                    <View style={{ gap: 8 }}>
+                    <View className="gap-2">
                       {hg && (
-                        <TouchableOpacity
+                        <TouchableOpacity activeOpacity={0.7}
                           onPress={() => pick(order, hg)}
-                          style={{
-                            padding: 14, borderRadius: 12,
-                            backgroundColor: chosen === hg ? 'rgba(0,122,255,0.18)' : 'rgba(255,255,255,0.08)',
-                            borderWidth: 1.5, borderColor: chosen === hg ? S.BLUE : 'rgba(255,255,255,0.25)',
-                          }}
+                          className={[
+                            'p-3.5 rounded-2xl',
+                            chosen === hg ? 'bg-brand-fill dark:bg-brand-fill-dark' : 'bg-surface-2 dark:bg-surface-2-dark',
+                          ].join(' ')}
                         >
-                          <Text style={{ color: chosen === hg ? S.WHITE : S.WHITE_80, fontSize: 11, fontWeight: '700', marginBottom: 6 }}>
-                            {homeTeamName.toUpperCase()}'S VERSION
-                          </Text>
+                          <Caption className="mb-1.5">{homeTeamName}'s version</Caption>
                           <GameSummary game={hg} />
                         </TouchableOpacity>
                       )}
                       {ag && (
-                        <TouchableOpacity
+                        <TouchableOpacity activeOpacity={0.7}
                           onPress={() => pick(order, ag)}
-                          style={{
-                            padding: 14, borderRadius: 12,
-                            backgroundColor: chosen === ag ? 'rgba(0,122,255,0.18)' : 'rgba(255,255,255,0.08)',
-                            borderWidth: 1.5, borderColor: chosen === ag ? S.BLUE : 'rgba(255,255,255,0.25)',
-                          }}
+                          className={[
+                            'p-3.5 rounded-2xl',
+                            chosen === ag ? 'bg-brand-fill dark:bg-brand-fill-dark' : 'bg-surface-2 dark:bg-surface-2-dark',
+                          ].join(' ')}
                         >
-                          <Text style={{ color: chosen === ag ? S.WHITE : S.WHITE_80, fontSize: 11, fontWeight: '700', marginBottom: 6 }}>
-                            {awayTeamName.toUpperCase()}'S VERSION
-                          </Text>
+                          <Caption className="mb-1.5">{awayTeamName}'s version</Caption>
                           <GameSummary game={ag} />
                         </TouchableOpacity>
                       )}
@@ -231,27 +231,19 @@ export default function AdminDisputeScreen() {
 
                   {/* Leg-winner override on whichever version is currently chosen */}
                   {chosen && !agree && (
-                    <View style={{ flexDirection: 'row', gap: 6, marginTop: 8 }}>
+                    <View className="flex-row gap-1.5 mt-2">
                       {chosen.legs.map((leg, legIdx) => (
-                        <View key={legIdx} style={{ flex: 1, flexDirection: 'row', gap: 4 }}>
-                          {(['home', 'away'] as MatchSide[]).map((side) => {
-                            const selected = leg.winner === side;
-                            return (
-                              <TouchableOpacity
-                                key={side}
-                                onPress={() => overrideLegWinner(order, legIdx, side)}
-                                style={{
-                                  flex: 1, minHeight: 40, justifyContent: 'center', borderRadius: 8, alignItems: 'center',
-                                  backgroundColor: selected ? 'rgba(52,199,89,0.2)' : 'rgba(255,255,255,0.08)',
-                                  borderWidth: 1.5, borderColor: selected ? S.GREEN : 'rgba(255,255,255,0.25)',
-                                }}
-                              >
-                                <Text style={{ color: selected ? S.GREEN : S.WHITE_80, fontSize: 11, fontWeight: '600' }}>
-                                  L{legIdx + 1}: {side === 'home' ? 'Home' : 'Away'}
-                                </Text>
-                              </TouchableOpacity>
-                            );
-                          })}
+                        <View key={legIdx} className="flex-1 flex-row gap-1">
+                          {(['home', 'away'] as MatchSide[]).map((side) => (
+                            <Chip
+                              key={side}
+                              tone="sage"
+                              selected={leg.winner === side}
+                              onPress={() => overrideLegWinner(order, legIdx, side)}
+                              label={`L${legIdx + 1}: ${side === 'home' ? 'Home' : 'Away'}`}
+                              className="flex-1 px-2"
+                            />
+                          ))}
                         </View>
                       ))}
                     </View>
@@ -261,17 +253,31 @@ export default function AdminDisputeScreen() {
             })}
           </ScrollView>
 
-          <View style={{ padding: 20, paddingTop: 8 }}>
-            <TouchableOpacity
-              onPress={confirmResult}
-              disabled={!allResolved || isConfirming}
-              style={allResolved && !isConfirming ? S.primaryButton : S.primaryButtonDisabled}
-            >
-              {isConfirming ? <ActivityIndicator color={S.WHITE} /> : <Text style={S.primaryButtonText}>Confirm Result</Text>}
-            </TouchableOpacity>
+          <View className="p-5 pt-2">
+            <Button disabled={!allResolved || isConfirming} loading={isConfirming} onPress={confirmResult}>
+              Confirm Result
+            </Button>
           </View>
         </>
       )}
-    </LinearGradient>
+    </>
+  );
+
+  if (isDesktop) {
+    return (
+      <>
+        <Stack.Screen options={{ headerShown: false }} />
+        <AdminShell title="Resolve Dispute" breadcrumb={[{ label: 'Dashboard', path: '/(protected)/(tabs)/admin' }, { label: 'Inbox', path: '/(protected)/admin-inbox' }, { label: 'Resolve Dispute' }]}>
+          <View style={{ maxWidth: 780 }}>{body}</View>
+        </AdminShell>
+      </>
+    );
+  }
+
+  return (
+    <Screen scroll={false} header={<AppBar title="Resolve Dispute" />}>
+      <Stack.Screen options={{ headerShown: false }} />
+      {body}
+    </Screen>
   );
 }

@@ -10,13 +10,9 @@ import {
 import {
   doc,
   setDoc,
-  getDoc,
   updateDoc,
-  runTransaction,
-  collection,
   onSnapshot,
   serverTimestamp,
-  writeBatch,
 } from 'firebase/firestore';
 import { auth, db } from '@/config/firebase';
 import type { AppUser, PhoneVisibility } from '@/types';
@@ -28,9 +24,8 @@ interface AuthState {
   error: string | null;
   signIn: (email: string, password: string) => Promise<void>;
   register: (email: string, password: string, displayName: string) => Promise<void>;
-  processJoinCode: (code: string, phone?: string, phoneVisibility?: PhoneVisibility) => Promise<void>;
-  processClaimCode: (code: string) => Promise<void>;
   updateContactDetails: (phone: string, phoneVisibility: PhoneVisibility) => Promise<void>;
+  updateProfileDetails: (name: string, nickname: string | null) => Promise<void>;
   logOut: () => Promise<void>;
   clearError: () => void;
 }
@@ -64,6 +59,7 @@ export const useAuthStore = create<AuthState>((set) => ({
         teamId: null,
         divisionId: null,
         playerId: null,
+        isLeagueAdmin: false,
         pendingRequestType: null,
         createdAt: serverTimestamp(),
       });
@@ -74,7 +70,9 @@ export const useAuthStore = create<AuthState>((set) => ({
           uid: credential.user.uid,
           email,
           displayName,
+          nickname: null,
           role: 'pending',
+          isLeagueAdmin: false,
           leagueId: null,
           seasonId: null,
           teamId: null,
@@ -94,78 +92,17 @@ export const useAuthStore = create<AuthState>((set) => ({
     }
   },
 
-  processJoinCode: async (code: string, phone?: string, phoneVisibility?: PhoneVisibility) => {
-    const currentUser = auth.currentUser;
-    if (!currentUser) throw new Error('Not authenticated');
-
-    const trimmed = code.trim().toUpperCase();
-    const uid = currentUser.uid;
-    const displayName = currentUser.displayName ?? currentUser.email ?? 'Unknown';
-    const playerRef = doc(collection(db, 'players'));
-
-    await runTransaction(db, async (txn) => {
-      const codeRef = doc(db, 'joinCodes', trimmed);
-      const codeDoc = await txn.get(codeRef);
-      if (!codeDoc.exists()) throw new Error('Invalid join code');
-      const data = codeDoc.data();
-      if (data.usedByUserId != null) throw new Error('Code already used');
-
-      const { role, leagueId, teamId, seasonId, divisionId } = data as Record<string, string>;
-
-      txn.update(codeRef, { usedByUserId: uid, usedAt: serverTimestamp() });
-      txn.set(playerRef, {
-        leagueId, seasonId, divisionId, teamId,
-        name: displayName,
-        claimedByUserId: uid,
-        claimedAt: serverTimestamp(),
-        createdAt: serverTimestamp(),
-      });
-      txn.update(doc(db, 'users', uid), {
-        role, leagueId, teamId, divisionId,
-        playerId: playerRef.id,
-        joinedViaCode: trimmed,
-        ...(phone ? { phone, phoneVisibility: phoneVisibility ?? 'captains' } : {}),
-      });
-      const teamField = role === 'viceCaptain' ? 'viceCaptainUserId' : 'captainUserId';
-      txn.update(doc(db, 'teams', teamId), { [teamField]: uid });
-    });
-  },
-
   updateContactDetails: async (phone: string, phoneVisibility: PhoneVisibility) => {
     const currentUser = auth.currentUser;
     if (!currentUser) throw new Error('Not authenticated');
     await updateDoc(doc(db, 'users', currentUser.uid), { phone, phoneVisibility });
   },
 
-  processClaimCode: async (code: string) => {
+  updateProfileDetails: async (name: string, nickname: string | null) => {
     const currentUser = auth.currentUser;
     if (!currentUser) throw new Error('Not authenticated');
-
-    const uid = currentUser.uid;
-    const trimmed = code.trim().toUpperCase();
-    const codeRef = doc(db, 'claimCodes', trimmed);
-    const codeSnap = await getDoc(codeRef);
-
-    if (!codeSnap.exists()) throw new Error('Invalid claim code');
-    const codeData = codeSnap.data();
-    if (codeData.usedByUserId != null) throw new Error('This code has already been used');
-
-    const { playerId, leagueId, teamId } = codeData as Record<string, string>;
-
-    await runTransaction(db, async (txn) => {
-      txn.update(codeRef, { usedByUserId: uid, usedAt: serverTimestamp() });
-      txn.update(doc(db, 'players', playerId), {
-        claimedByUserId: uid,
-        claimedAt: serverTimestamp(),
-      });
-      txn.update(doc(db, 'users', uid), {
-        role: 'player',
-        leagueId,
-        teamId,
-        playerId,
-        pendingRequestType: null,
-      });
-    });
+    await updateProfile(currentUser, { displayName: name });
+    await updateDoc(doc(db, 'users', currentUser.uid), { displayName: name, nickname });
   },
 
   logOut: async () => {
@@ -212,7 +149,9 @@ export function initAuthListener() {
               uid: user.uid,
               email: d.email ?? user.email ?? '',
               displayName: d.displayName ?? user.displayName ?? '',
+              nickname: d.nickname ?? null,
               role: d.role,
+              isLeagueAdmin: d.isLeagueAdmin ?? false,
               leagueId: d.leagueId ?? null,
               seasonId: d.seasonId ?? null,
               teamId: d.teamId ?? null,

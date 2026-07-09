@@ -8,8 +8,10 @@ they're actually shipped and tested, not just started.
 
 - **Now:** Phase 1 core league loop (fixtures → results → auto-confirm/dispute →
   standings/stats) is built end-to-end as of 2026-07-06. Not yet deployed/tested against
-  real Firestore — see "Not yet verified" note under Phase 1 below. Push notifications
-  is the one remaining Phase 1 item.
+  real Firestore — see "Not yet verified" note under Phase 1 below. Remaining Phase 1
+  items: push notifications, admin role-management screen, venue contact field (the
+  latter two added 2026-07-08 after clarifying the roles/permissions model with Jake —
+  see Roles & Permissions below).
 - **Deadlines:** Showcase to league committee/captains in **August 2026**. Live trial
   with own league for the **2026/27 winter season (starts Sept/Oct 2026)**.
 - **What already exists and works:** account onboarding (admin/captain/VC/player roles,
@@ -31,6 +33,119 @@ they're actually shipped and tested, not just started.
   224 fixtures across 4 divisions is not hand-enterable, so the free tier needs *some*
   generator. The "paid" version is a nicer wizard (custom rounds, byes, scheduling
   constraints) on top of the same underlying data model. Don't gate the basic one.
+
+## Roles & permissions (clarified with Jake 2026-07-08)
+
+Three tiers. Confirmed against the actual `firestore.rules` + app screens on
+2026-07-08 — mostly already true today, not a redesign:
+
+- **Admin** — full reign: create/edit teams, edit players, see all results, create
+  fixtures, create/edit divisions, create competitions (Phase 2), edit anyone's role.
+  Already true today via `isAdmin()` in `firestore.rules` for everything except
+  **role editing, which has no UI yet** — see the new Phase 1 item below.
+- **Captain / Vice-Captain** — run their own team only (`me().teamId == teamId`
+  everywhere in the rules): accept new players (approve join requests), submit match
+  results, create new players, edit their team's venue address. **A captain or VC is
+  always automatically also a player** — a captain/VC is a `users` doc
+  (`role: 'captain'`/`'viceCaptain'`) *plus* a linked `players` doc, not a separate
+  flag; every other screen (rosters, stats) assumes this, so don't change the shape.
+  (Historical note: this used to be implemented via `authStore.ts`'s
+  `processJoinCode`/`processClaimCode` and the `joinCodes`/`claimCodes` collections —
+  both removed 2026-07-08, see "Onboarding — request & approve, no codes" below. The
+  auto-player-on-approval behavior itself is unchanged, just the trigger that leads to
+  approval.)
+- **Player** — join a team, edit only their own details (name/phone), view fixtures
+  and division stats, no write access to anything else. Already enforced by the
+  `users` update rule (a user can only touch their own safe fields unless they're
+  admin/captain-of-their-team).
+
+**Two gaps found while checking this against the code, both confirmed with Jake as
+wanted, added to Phase 1 below:**
+1. No admin screen exists to directly change an existing user's role (promote a
+   player to VC, demote a captain, hand captaincy to someone else) — today roles only
+   change via the team-approval flow or by someone redeeming an invite/join code
+   themselves. The data-layer rule already permits admin to write any user doc, so
+   this is a new screen, not a rules change.
+2. "Contact details" a captain/VC can edit refers to the **venue's** contact info
+   (e.g. a phone number for the pub), not the captain's own phone (which is already
+   editable). `Team` currently only has an `address` field, no contact-number
+   field — needs a new field + edit UI, same place as the existing venue-address
+   editor on the Team tab.
+
+## Onboarding — request & approve, no codes (2026-07-08)
+
+**Status: code complete and typechecks clean; rules deployed; indexes NOT yet
+confirmed deployed; live end-to-end verification incomplete — see "Resume here"
+below before touching this again.**
+
+Jake wants all invite/claim codes gone (captain codes, VC codes, player invite
+codes, claim codes) in favor of search-and-request, mirroring how team-request
+already worked. New model, confirmed with Jake:
+
+- **Admin creates teams first** (already true — `admin-season.tsx`'s "+ Add Team",
+  unaffected by this change). The old "captain requests a brand-new team"
+  flow (`team-request.tsx`, league-level `captainInviteCode`) is **gone** — a
+  captain/VC can now only request to join a team admin already created.
+- **Player**: search league → pick team → see that team's *unclaimed* roster →
+  either tap **"This is me"** (a `joinRequests` doc with `requestType: 'claim'`,
+  `claimPlayerId` set) or **"I'm not here"** (`requestType: 'join'`, same as
+  before). Both need the team's captain/VC to approve — claiming is no longer
+  instant/unreviewed like the old claim-code flow was.
+- **Captain/VC**: new screen `request-captain-role.tsx` (replaces
+  `team-request.tsx`) — search for an existing team, pick Captain or Vice
+  Captain, submit (`requestType: 'captainRole'`, `requestedRole` set).
+  - Requesting **Captain** → always **admin** approves (`admin-inbox.tsx`, new
+    "Captain / VC Requests" section, replacing the old "Pending Team Requests").
+  - Requesting **Vice Captain** → the team's **current captain** approves, in
+    their own Captains → Inbox tab — *not* just any VC, and not admin, unless
+    the team has no captain yet (then it falls through to admin, since there's
+    nobody else to ask).
+- `JoinRequest` (new shared type in `src/types/index.ts`) unifies all three
+  kinds in the existing `joinRequests` collection — no new collection needed.
+  `claimCodes`, `joinCodes`, `teamRequests` collections/rules are all removed.
+
+**Security note (important, don't reintroduce):** the old rules had two
+self-service bypass clauses (anyone could self-assign an unclaimed
+`teams.captainUserId`/`viceCaptainUserId`, or self-claim any unclaimed
+`players` doc) that existed only to support the old code-redemption
+transactions. Both were **removed** as part of this change — leaving them in
+would let anyone skip approval entirely. If you ever see "self-assign" style
+clauses reappear in `firestore.rules`, that's almost certainly wrong now.
+
+**Resume here (2026-07-08 session ran out of time before finishing
+verification):**
+1. Confirm both `firestore.rules` and `firestore.indexes.json` are deployed to
+   the live `chalkie-app` project (rules were deployed manually by Jake this
+   session; indexes were not confirmed — check the Firestore → Indexes tab in
+   the Firebase Console for two indexes: `players` (teamId, claimedByUserId)
+   and `joinRequests` (leagueId, requestType, status), both should read
+   "Enabled" not "Building").
+2. Re-run the end-to-end claim flow that was in progress when this session
+   ended: register a brand-new test account (name it after one of the seeded
+   unclaimed test players, e.g. "Bev Carter" or "Colin Dean" from the
+   `seedTestLeague` fixture), search the league ("Bedford & Kempston
+   District" in this environment), choose "I'm a Player", search/select "Test
+   Home Tigers", confirm the unclaimed roster loads without a permission
+   error (this exact step was broken and fixed once already — the `players`
+   read rule needed the same "pending user browsing" allowance `teams`
+   already had; if it breaks again, check whether the rules deploy actually
+   went out), tap "This is me" on the matching name.
+3. Sign in as `test.home.captain@chalkie.test` (password `TestPass123!`),
+   check Captains → Inbox — the claim request should show "Says this is: Bev
+   Carter" (or whichever name), approve it, confirm the roster now shows them
+   as "Registered".
+4. Also still unverified: the "I'm not here" new-player path (should still
+   work, minimal change from before), the full captain/VC role-request flow
+   (`request-captain-role.tsx` → admin approves a Captain request in
+   `admin-inbox.tsx`, or the team's captain approves a VC request in
+   `captains.tsx` Inbox — **no admin test account exists in this sandbox**,
+   same long-standing limitation noted elsewhere in this doc, so the admin
+   side of this needs a real human pass).
+5. Two orphaned test accounts were created while debugging this session
+   (`bev.test.<timestamp>@chalkie.test`, password `TestPass123!`) — they got
+   as far as "pending, no request submitted yet" before hitting the bug in
+   step 2 above. Harmless, but fine to delete from Firebase Auth if they show
+   up in a user list and look confusing.
 
 ## Match format (the core rules to encode)
 
@@ -185,11 +300,100 @@ Functions. Flag this to Jake before starting Phase 1 build.
 - [x] Stats screens: player's own stats (personal), division leaderboard (most 180s,
       best win %, notable high checkouts). Done 2026-07-06: `stats.tsx`, two tabs ("My
       Stats" / "Leaderboard"). Linked from `home.tsx`, `captain.tsx`.
+- [x] Home page "next fixture" tile: glanceable card for anyone tied to a team —
+      opponent, Home/Away, venue, the *opposing* captain/VC's contact details (gated by
+      their `phoneVisibility` choice same as everywhere else, not a new permission
+      concept), the team's division position, and last-3-results form (W green / L
+      red). Done 2026-07-08: `src/components/NextFixtureTile.tsx`, shared between
+      `home.tsx` (player role) and `captain.tsx` (captain/VC role — these are two
+      separate screens even though the tab bar labels both "Home", see `TabBar.tsx`
+      `visibleRouteNames()`; the tile had to be added to both or captains/VCs
+      wouldn't see it). Verified via Playwright against the seeded test league in both
+      themes; the "no upcoming fixture" and "form" (W/L) states were exercised for
+      real, but the seed data doesn't include a division-table row or an opposing
+      captain phone number, so the position-badge and contact-row rendering paths are
+      untested against live data — worth a manual check once real fixtures/results
+      exist.
+- [x] Home simplified + new "Captains" section (2026-07-08, supersedes part of the
+      entry above). Jake wanted Home to be *just* the next 1-2 fixture cards for
+      everyone tied to a team, nothing else — all of `captain.tsx`'s old team-management
+      content (roster, venue editor, own contact details, join requests) needed a new
+      home. Rather than keep it crammed into what the tab bar merely *labels* "Home"
+      (the pre-existing `captain`/`home` route split from the entry above), added a
+      genuine 5th bottom tab, **captain/VC only**: "Captains", with an internal
+      "My Team" / "Inbox" switcher (same `Chip` sub-tab pattern already used in
+      `stats.tsx`). Concretely:
+      - `NextFixtureTile` reworked to render up to `count` (default 2) separate
+        `Card`s instead of one combined tile — each fixture is now its own card per
+        Jake's wording ("fixture card**s**"); table position and form only show on
+        the nearest one, not repeated on both.
+      - New `src/components/HomeFixturesScreen.tsx` — the actual minimal Home content
+        (just `NextFixtureTile`). Both `home.tsx` and `captain.tsx` are now two-line
+        re-exports of it, so player and captain/VC roles see byte-for-byte the same
+        Home.
+      - New `(tabs)/captains.tsx` — "My Team" tab is the old `captain.tsx` content
+        verbatim (venue/contact editing, add-player, claim codes), plus player roster
+        rows now show a role badge (Captain/Vice Captain), reusing the view-only
+        display logic from the admin role-management work above. "Inbox" tab is new:
+        pending join requests (moved from My Team) + a new "Needs Your Action" list —
+        fixtures where nobody's submitted yet and the scheduled date has passed, or
+        the opponent has submitted and this team hasn't (checked via a
+        `matches/{id}/submissions/{teamId}` existence read). There was no
+        notification concept in the app before this; confirmed with Jake to scope it
+        to exactly these two states, not disputes (admin's problem, not the
+        captain's).
+      - `TabBar.tsx`: `visibleRouteNames()` now returns 5 names for captain/VC
+        (`captain`, `captains`, `fixtures`, `standings`, `stats`) vs. 4 for player —
+        admin's 3-tab set is unchanged.
+      - Verified via Playwright in both themes, signed in as Test Home Captain: Home
+        shows only the fixture card, the Captains tab's My Team/Inbox switcher both
+        render (including the "Captain" role badge on the seeded captain's own roster
+        row), and the address/phone saved earlier in this session persisted through
+        the restructuring. **Not verified**: the "Needs Your Action" list with an
+        actual actionable match in it, or the join-requests list with a real pending
+        request — the seeded test league has neither state right now, and there's no
+        admin account available in this sandbox to re-seed it (same limitation noted
+        elsewhere in this doc).
 - [ ] Push notifications: register Expo push token on user doc; Cloud Functions (or
       scheduled function) for: fixture reminder day-before, "result needs your
       confirmation", "result confirmed", admin/captain approval alerts (team/join
       requests — reuses existing approval flows from the already-built onboarding).
-      **This is the only Phase 1 item left.**
+- [x] Admin role management screen. Done 2026-07-08, scoped **per-team** (not a
+      league-wide user browser — decided with Jake to keep captaincy transfer tied to
+      the team it happens on): `admin-team.tsx`'s player roster now shows each claimed
+      player's current role as a badge (Captain/Vice Captain/Player) with a "Change"
+      button opening a `Sheet` role picker. Assigning Captain/VC auto-demotes whoever
+      currently holds that slot on the team back to Player (confirmed with Jake — no
+      separate manual-demote step needed). Writes `users.role` +
+      `teams.captainUserId`/`viceCaptainUserId` in one `writeBatch`; never touches the
+      `players` collection, so the promoted/demoted user keeps their existing linked
+      player doc, no duplicates. Deliberately does **not** cover changing who the
+      league's Admin is — confirmed out of scope, that stays a separate rarer
+      operation. `npx tsc --noEmit` clean. **Not verified against live Firestore**:
+      this sandbox has no admin test credentials (same limitation noted elsewhere in
+      this doc), and worse — trying to view `admin-team.tsx` signed in as a non-admin
+      captain (the usual verification workaround used elsewhere in this project)
+      crashes the page, because `joinCodes` has `allow list: if isAdmin()` and this
+      screen's `onSnapshot` on that collection has no error handler. That's a
+      pre-existing gap, not something this change introduced — same class of bug as
+      the "Bugs found & fixed" entry below, just not yet hit until now. **Jake: this
+      screen needs a real admin-account pass before trusting it.**
+- [x] Venue contact field. Done 2026-07-08: `Team.venuePhone` (string | null), editable
+      alongside the existing address field on the Home Venue card in both
+      `captain.tsx` and `admin-team.tsx` (same save action, no rules change needed —
+      the existing team-update rule already covers it). Also wired into
+      `NextFixtureTile`: when your team is the away side, the tile now shows the
+      venue's contact number in addition to the opposing captain's personal contact
+      (confirmed with Jake — venue contact only matters when you're the one
+      travelling). Verified live end-to-end for the write path (saved
+      "The Red Lion, 12 High St" / "01234 567890" as Test Home Captain, persisted and
+      re-rendered correctly). The tile's away-game display of this field was
+      exercised by code review only, not a live screenshot — the seeded test fixture
+      had already moved out of `'scheduled'` status by the time this was checked
+      (resolved during earlier testing this session), so there was no live "upcoming
+      away fixture" to screenshot. Re-seeding the test league to get back to a
+      `'scheduled'` state requires the admin-only seed tool in `admin-tools.tsx`, which
+      hits the same no-admin-credentials wall as above.
 
   **Not yet verified (2026-07-06 build):** typechecks clean (`mobile` + `functions`
   both build with no errors) and the web bundle boots with no console errors (checked
@@ -211,8 +415,9 @@ Functions. Flag this to Jake before starting Phase 1 build.
       Reuses the exact match/results/confirmation infrastructure from Phase 1 — just a
       different bracket wrapper around `matches`.
 - [ ] Generalized individual/pairs knockout engine, covering:
-  - [ ] Singles knockout (individual players)
-  - [ ] Pairs knockout
+  - [ ] Singles knockout (individual players) — must have played a league game this season
+  - [ ] Pairs knockout — same eligibility as singles, doubles format
+  - [ ] Captains Cup — singles format, eligibility filtered to `role in [captain, viceCaptain]`
   - [ ] Player Championship — top 12 players per division, auto-seeded from
         `playerSeasonStats` once that's live
   - [ ] 180 Cup — auto-eligibility for anyone with `oneEighties > 0` that season

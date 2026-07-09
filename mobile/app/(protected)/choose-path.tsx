@@ -1,16 +1,18 @@
 import { View, Text, TouchableOpacity } from 'react-native';
 import { router, Stack } from 'expo-router';
-import { LinearGradient } from 'expo-linear-gradient';
-import { BlurView } from 'expo-blur';
+import { useColorScheme } from 'nativewind';
 import { useOnboardingStore } from '@/stores/onboardingStore';
-import * as S from '@/styles/common';
+import { RAW } from '@/lib/theme';
+import { Heading, Body, Card, AppIcon } from '@/components/ui';
 
 export default function ChoosePathScreen() {
   const { league, setCaptainPath } = useOnboardingStore();
+  const { colorScheme } = useColorScheme();
+  const isDark = colorScheme === 'dark';
 
   function goAsCaptain() {
     setCaptainPath(true);
-    router.push('/(protected)/team-request');
+    router.push('/(protected)/request-captain-role');
   }
 
   function goAsPlayer() {
@@ -18,72 +20,35 @@ export default function ChoosePathScreen() {
     router.push('/(protected)/browse-teams');
   }
 
-  function goClaimProfile() {
-    router.push('/(protected)/claim-profile');
-  }
-
   return (
-    <LinearGradient colors={S.GRADIENT} style={{ flex: 1 }}>
+    <View className="flex-1 bg-bg dark:bg-bg-dark justify-center px-5">
       <Stack.Screen options={{ title: league?.name ?? 'Your Role' }} />
-      <View style={{ flex: 1, justifyContent: 'center', paddingHorizontal: 20 }}>
-        <BlurView intensity={20} tint="dark" style={{ borderRadius: 20, overflow: 'hidden' }}>
-          <View style={S.glassCard}>
-            <Text style={{ color: S.WHITE, fontSize: 22, fontWeight: '700', marginBottom: 6 }}>
-              How are you joining?
-            </Text>
-            <Text style={{ color: S.WHITE_50, fontSize: 14, marginBottom: 28 }}>
-              {league?.name}
-            </Text>
+      <Card>
+        <Heading size="lg" className="mb-1.5">How are you joining?</Heading>
+        <Body className="mb-7">{league?.name}</Body>
 
-            {/* Captain */}
-            <TouchableOpacity
-              onPress={goAsCaptain}
-              activeOpacity={0.8}
-              style={{
-                backgroundColor: S.BLUE,
-                borderRadius: 14,
-                padding: 20,
-                marginBottom: 12,
-              }}
-            >
-              <Text style={{ color: S.WHITE, fontSize: 17, fontWeight: '700', marginBottom: 4 }}>
-                🏆  I'm a Captain
-              </Text>
-              <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 13 }}>
-                Create a new team and manage your squad
-              </Text>
-            </TouchableOpacity>
-
-            {/* Player */}
-            <TouchableOpacity
-              onPress={goAsPlayer}
-              activeOpacity={0.8}
-              style={{
-                backgroundColor: 'rgba(255,255,255,0.1)',
-                borderRadius: 14,
-                padding: 20,
-                borderWidth: 1,
-                borderColor: 'rgba(255,255,255,0.3)',
-                marginBottom: 20,
-              }}
-            >
-              <Text style={{ color: S.WHITE, fontSize: 17, fontWeight: '700', marginBottom: 4 }}>
-                🎯  I'm a Player
-              </Text>
-              <Text style={{ color: S.WHITE_50, fontSize: 13 }}>
-                Find your team and request to join
-              </Text>
-            </TouchableOpacity>
-
-            {/* Claim profile */}
-            <TouchableOpacity onPress={goClaimProfile} activeOpacity={0.7}>
-              <Text style={{ color: S.BLUE, fontSize: 14, textAlign: 'center' }}>
-                My captain already added me — I have a claim code
-              </Text>
-            </TouchableOpacity>
+        {/* Captain */}
+        <TouchableOpacity onPress={goAsCaptain} activeOpacity={0.8} className="flex-row items-center rounded-2xl p-5 mb-3 bg-brand dark:bg-brand-dark">
+          <View className="w-10 h-10 rounded-full items-center justify-center bg-white/20 mr-3">
+            <AppIcon name="trophy" size={20} color="#FFFFFF" />
           </View>
-        </BlurView>
-      </View>
-    </LinearGradient>
+          <View className="flex-1">
+            <Text className="text-white text-[17px] font-bold mb-1">I'm a Captain / Vice Captain</Text>
+            <Text className="text-white/70 text-[13px]">Find your team and request the role</Text>
+          </View>
+        </TouchableOpacity>
+
+        {/* Player */}
+        <TouchableOpacity onPress={goAsPlayer} activeOpacity={0.8} className="flex-row items-center rounded-2xl p-5 mb-3 bg-surface-2 dark:bg-surface-2-dark">
+          <View className="w-10 h-10 rounded-full items-center justify-center bg-brand-fill dark:bg-brand-fill-dark mr-3">
+            <AppIcon name="target" size={20} color={isDark ? RAW.brandInkDark : RAW.brandInk} />
+          </View>
+          <View className="flex-1">
+            <Body tone="strong" weight="bold" className="mb-1">I'm a Player</Body>
+            <Body size="sm">Find your team and request to join</Body>
+          </View>
+        </TouchableOpacity>
+      </Card>
+    </View>
   );
 }

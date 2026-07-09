@@ -1,48 +1,69 @@
 import { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, ActivityIndicator, Share, Platform, TextInput, Alert } from 'react-native';
+import { View, TouchableOpacity, ActivityIndicator, Alert, useWindowDimensions } from 'react-native';
 import { Stack, useLocalSearchParams } from 'expo-router';
-import { LinearGradient } from 'expo-linear-gradient';
-import { BlurView } from 'expo-blur';
 import {
-  collection, doc, onSnapshot, query, where, updateDoc, getDoc, getDocs, writeBatch, serverTimestamp,
+  collection, doc, onSnapshot, query, where, updateDoc, getDoc, addDoc, writeBatch,
 } from 'firebase/firestore';
-import { db } from '@/config/firebase';
+import { httpsCallable } from 'firebase/functions';
+import { db, functions } from '@/config/firebase';
 import { useAuthStore } from '@/stores/authStore';
-import * as S from '@/styles/common';
+import { goBack } from '@/lib/navigation';
+import { RAW } from '@/lib/theme';
+import { Screen, Heading, Body, Caption, Button, Card, Avatar, ListRow, Input, Label, Badge, Sheet } from '@/components/ui';
+import { AdminShell } from '@/components/admin/AdminShell';
 
-interface Player { id: string; name: string; claimedByUserId: string | null }
+const DESKTOP_BREAKPOINT = 768;
 
-function generateCode() {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  return Array.from({ length: 8 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
-}
+interface Player { id: string; name: string; teamId: string; claimedByUserId: string | null }
+interface OtherTeam { id: string; name: string }
 
-async function shareText(text: string) {
-  if (Platform.OS === 'web') {
-    try { await (navigator as any).clipboard.writeText(text); } catch {}
-  } else {
-    await Share.share({ message: text });
-  }
-}
+type TeamRole = 'captain' | 'viceCaptain' | 'player';
+
+const ROLE_OPTIONS: { value: TeamRole; label: string; description: string }[] = [
+  { value: 'captain', label: 'Captain', description: "Becomes the team's Captain. Whoever currently holds that role on this team moves to Player." },
+  { value: 'viceCaptain', label: 'Vice Captain', description: "Becomes the team's Vice Captain. Whoever currently holds that role on this team moves to Player." },
+  { value: 'player', label: 'Player', description: 'No captaincy — a regular squad player.' },
+];
+
+const ROLE_BADGE_LABEL: Record<TeamRole, string> = {
+  captain: 'Captain',
+  viceCaptain: 'Vice Captain',
+  player: 'Player',
+};
 
 export default function AdminTeamScreen() {
   const { teamId } = useLocalSearchParams<{ teamId: string }>();
   const { appUser } = useAuthStore();
+  const { width } = useWindowDimensions();
+  const isDesktop = width >= DESKTOP_BREAKPOINT;
 
   const [teamName, setTeamName] = useState('');
   const [teamAddress, setTeamAddress] = useState<string | null>(null);
+  const [teamVenuePhone, setTeamVenuePhone] = useState<string | null>(null);
+  const [seasonId, setSeasonId] = useState<string | null>(null);
+  const [divisionId, setDivisionId] = useState<string | null>(null);
+  const [seasonName, setSeasonName] = useState<string | null>(null);
+  const [divisionName, setDivisionName] = useState<string | null>(null);
+  const [captainUserId, setCaptainUserId] = useState<string | null>(null);
+  const [vcUserId, setVcUserId] = useState<string | null>(null);
   const [captainName, setCaptainName] = useState<string | null>(null);
   const [vcName, setVcName] = useState<string | null>(null);
-  const [playerCode, setPlayerCode] = useState<string | null>(null);
-  const [captainJoinCode, setCaptainJoinCode] = useState<string | null>(null);
-  const [vcJoinCode, setVcJoinCode] = useState<string | null>(null);
+  const [roleSheetPlayer, setRoleSheetPlayer] = useState<Player | null>(null);
+  const [isChangingRole, setIsChangingRole] = useState(false);
   const [players, setPlayers] = useState<Player[]>([]);
-  const [isGeneratingPlayer, setIsGeneratingPlayer] = useState(false);
-  const [generatingJoinCode, setGeneratingJoinCode] = useState<'captain' | 'viceCaptain' | null>(null);
+  const [otherTeams, setOtherTeams] = useState<OtherTeam[]>([]);
 
   const [editingAddress, setEditingAddress] = useState(false);
   const [addressDraft, setAddressDraft] = useState('');
+  const [venuePhoneDraft, setVenuePhoneDraft] = useState('');
   const [isSavingAddress, setIsSavingAddress] = useState(false);
+
+  const [showAddPlayer, setShowAddPlayer] = useState(false);
+  const [newPlayerName, setNewPlayerName] = useState('');
+  const [isAddingPlayer, setIsAddingPlayer] = useState(false);
+
+  const [moveTarget, setMoveTarget] = useState<Player | null>(null);
+  const [isMoving, setIsMoving] = useState(false);
 
   useEffect(() => {
     if (!teamId) return;
@@ -51,8 +72,22 @@ export default function AdminTeamScreen() {
       if (!snap.exists()) return;
       const data = snap.data();
       setTeamName(data.name);
-      setPlayerCode(data.playerInviteCode ?? null);
       setTeamAddress(data.address ?? null);
+      setTeamVenuePhone(data.venuePhone ?? null);
+
+      setCaptainUserId(data.captainUserId ?? null);
+      setVcUserId(data.viceCaptainUserId ?? null);
+
+      setSeasonId(data.seasonId ?? null);
+      setDivisionId(data.divisionId ?? null);
+      if (data.seasonId) {
+        const seasonSnap = await getDoc(doc(db, 'seasons', data.seasonId));
+        if (seasonSnap.exists()) setSeasonName(seasonSnap.data().name ?? null);
+      }
+      if (data.divisionId) {
+        const divisionSnap = await getDoc(doc(db, 'divisions', data.divisionId));
+        if (divisionSnap.exists()) setDivisionName(divisionSnap.data().name ?? null);
+      }
 
       if (data.captainUserId) {
         const userSnap = await getDoc(doc(db, 'users', data.captainUserId));
@@ -74,288 +109,404 @@ export default function AdminTeamScreen() {
       (snap) => setPlayers(snap.docs.map((d) => ({ id: d.id, ...d.data() } as Player))),
     );
 
-    const unsubJoinCodes = onSnapshot(
-      query(collection(db, 'joinCodes'), where('teamId', '==', teamId), where('usedByUserId', '==', null)),
-      (snap) => {
-        let capCode: string | null = null;
-        let vcCode: string | null = null;
-        snap.docs.forEach((d) => {
-          if (d.data().role === 'captain') capCode = d.id;
-          if (d.data().role === 'viceCaptain') vcCode = d.id;
-        });
-        setCaptainJoinCode(capCode);
-        setVcJoinCode(vcCode);
-      },
-    );
-
-    return () => { unsubTeam(); unsubPlayers(); unsubJoinCodes(); };
+    return () => { unsubTeam(); unsubPlayers(); };
   }, [teamId]);
 
-  async function generatePlayerCode() {
-    if (!teamId) return;
-    setIsGeneratingPlayer(true);
-    const code = generateCode();
-    await updateDoc(doc(db, 'teams', teamId), { playerInviteCode: code });
-    setIsGeneratingPlayer(false);
-  }
-
-  async function generateJoinCode(role: 'captain' | 'viceCaptain') {
-    if (!teamId || !appUser?.leagueId) return;
-    setGeneratingJoinCode(role);
-    try {
-      const teamSnap = await getDoc(doc(db, 'teams', teamId));
-      if (!teamSnap.exists()) return;
-      const teamData = teamSnap.data();
-
-      const existing = await getDocs(
-        query(collection(db, 'joinCodes'),
-          where('teamId', '==', teamId),
-          where('role', '==', role),
-          where('usedByUserId', '==', null)),
-      );
-      const batch = writeBatch(db);
-      existing.docs.forEach((d) => batch.delete(d.ref));
-
-      const code = generateCode();
-      batch.set(doc(db, 'joinCodes', code), {
-        leagueId: appUser.leagueId,
-        seasonId: teamData.seasonId ?? null,
-        divisionId: teamData.divisionId ?? null,
-        teamId,
-        role,
-        createdByUserId: appUser.uid,
-        usedByUserId: null,
-        usedAt: null,
-        createdAt: serverTimestamp(),
-      });
-      await batch.commit();
-    } catch (e: unknown) {
-      Alert.alert('Error', (e as Error).message ?? 'Something went wrong');
-    } finally {
-      setGeneratingJoinCode(null);
-    }
-  }
+  useEffect(() => {
+    if (!appUser?.leagueId) return;
+    const unsub = onSnapshot(
+      query(collection(db, 'teams'), where('leagueId', '==', appUser.leagueId)),
+      (snap) => {
+        setOtherTeams(
+          snap.docs
+            .map((d) => ({ id: d.id, name: d.data().name as string }))
+            .filter((t) => t.id !== teamId)
+            .sort((a, b) => a.name.localeCompare(b.name)),
+        );
+      },
+    );
+    return unsub;
+  }, [appUser?.leagueId, teamId]);
 
   async function saveAddress() {
     if (!teamId) return;
     setIsSavingAddress(true);
     try {
-      await updateDoc(doc(db, 'teams', teamId), { address: addressDraft.trim() || null });
+      await updateDoc(doc(db, 'teams', teamId), {
+        address: addressDraft.trim() || null,
+        venuePhone: venuePhoneDraft.trim() || null,
+      });
       setEditingAddress(false);
     } finally {
       setIsSavingAddress(false);
     }
   }
 
-  function JoinCodeRow({ role, code }: { role: 'captain' | 'viceCaptain'; code: string | null }) {
-    const label = role === 'captain' ? 'Captain' : 'Vice Captain';
-    const isGenerating = generatingJoinCode === role;
-    return (
-      <View style={{ marginBottom: 4 }}>
-        <Text style={{ color: S.WHITE, fontSize: 14, fontWeight: '600', marginBottom: 4 }}>{label}</Text>
-        {code ? (
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <Text style={{ color: S.BLUE, fontSize: 18, fontWeight: '700', letterSpacing: 3, flex: 1 }}>{code}</Text>
-            <TouchableOpacity
-              onPress={() => shareText(code)}
-              style={{ minHeight: 36, justifyContent: 'center', backgroundColor: 'rgba(0,122,255,0.2)', borderRadius: 8, paddingHorizontal: 12, borderWidth: 1.5, borderColor: 'rgba(0,122,255,0.5)' }}
-            >
-              <Text style={{ color: S.WHITE, fontWeight: '600', fontSize: 12 }}>Share</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={() => generateJoinCode(role)}
-              disabled={isGenerating}
-              style={{ minHeight: 36, justifyContent: 'center', paddingHorizontal: 10, borderRadius: 8, borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.25)' }}
-            >
-              {isGenerating
-                ? <ActivityIndicator color={S.WHITE_50} size="small" />
-                : <Text style={{ color: S.WHITE_80, fontSize: 12, fontWeight: '600' }}>Regen</Text>
-              }
-            </TouchableOpacity>
-          </View>
-        ) : (
-          <TouchableOpacity
-            onPress={() => generateJoinCode(role)}
-            disabled={isGenerating}
-            style={{
-              minHeight: 44, justifyContent: 'center', borderRadius: 10, padding: 10, borderWidth: 1.5,
-              borderColor: 'rgba(255,255,255,0.35)', borderStyle: 'dashed', alignItems: 'center',
+  function roleOf(player: Player): TeamRole | null {
+    if (!player.claimedByUserId) return null;
+    if (player.claimedByUserId === captainUserId) return 'captain';
+    if (player.claimedByUserId === vcUserId) return 'viceCaptain';
+    return 'player';
+  }
+
+  async function changeRole(player: Player, newRole: TeamRole) {
+    if (!teamId || !player.claimedByUserId) return;
+    const targetUid = player.claimedByUserId;
+    setIsChangingRole(true);
+    try {
+      const teamSnap = await getDoc(doc(db, 'teams', teamId));
+      if (!teamSnap.exists()) return;
+      const teamData = teamSnap.data();
+
+      let nextCaptainUserId: string | null = teamData.captainUserId ?? null;
+      let nextVcUserId: string | null = teamData.viceCaptainUserId ?? null;
+
+      // Clear the target out of whichever slot they currently hold
+      if (nextCaptainUserId === targetUid) nextCaptainUserId = null;
+      if (nextVcUserId === targetUid) nextVcUserId = null;
+
+      const batch = writeBatch(db);
+
+      if (newRole === 'captain') {
+        if (nextCaptainUserId && nextCaptainUserId !== targetUid) {
+          batch.update(doc(db, 'users', nextCaptainUserId), { role: 'player' });
+        }
+        nextCaptainUserId = targetUid;
+      } else if (newRole === 'viceCaptain') {
+        if (nextVcUserId && nextVcUserId !== targetUid) {
+          batch.update(doc(db, 'users', nextVcUserId), { role: 'player' });
+        }
+        nextVcUserId = targetUid;
+      }
+
+      batch.update(doc(db, 'teams', teamId), {
+        captainUserId: nextCaptainUserId,
+        viceCaptainUserId: nextVcUserId,
+      });
+      batch.update(doc(db, 'users', targetUid), { role: newRole });
+
+      await batch.commit();
+      setRoleSheetPlayer(null);
+    } catch (e: unknown) {
+      Alert.alert('Error', (e as Error).message ?? 'Something went wrong');
+    } finally {
+      setIsChangingRole(false);
+    }
+  }
+
+  async function addPlayer() {
+    if (!newPlayerName.trim() || !teamId || !appUser?.leagueId) return;
+    setIsAddingPlayer(true);
+    try {
+      await addDoc(collection(db, 'players'), {
+        leagueId: appUser.leagueId,
+        teamId,
+        name: newPlayerName.trim(),
+        claimedByUserId: null,
+      });
+      setNewPlayerName('');
+      setShowAddPlayer(false);
+    } catch (e: unknown) {
+      Alert.alert('Error', (e as Error).message ?? 'Something went wrong');
+    } finally {
+      setIsAddingPlayer(false);
+    }
+  }
+
+  function confirmDeletePlayer(player: Player) {
+    const claimed = !!player.claimedByUserId;
+    Alert.alert(
+      'Delete player',
+      claimed
+        ? `${player.name} has a linked account. Deleting removes them from this team and sends their account back to "find a team" — this can't be undone.`
+        : `Delete ${player.name}? This can't be undone.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Delete', style: 'destructive', onPress: () => deletePlayer(player) },
+      ],
+    );
+  }
+
+  async function deletePlayer(player: Player) {
+    if (!teamId) return;
+    try {
+      const batch = writeBatch(db);
+      batch.delete(doc(db, 'players', player.id));
+      if (player.claimedByUserId) {
+        batch.update(doc(db, 'users', player.claimedByUserId), {
+          teamId: null, playerId: null, divisionId: null, role: 'pending',
+        });
+        if (player.claimedByUserId === captainUserId || player.claimedByUserId === vcUserId) {
+          batch.update(doc(db, 'teams', teamId), {
+            captainUserId: player.claimedByUserId === captainUserId ? null : captainUserId,
+            viceCaptainUserId: player.claimedByUserId === vcUserId ? null : vcUserId,
+          });
+        }
+      }
+      await batch.commit();
+    } catch (e: unknown) {
+      Alert.alert('Error', (e as Error).message ?? 'Something went wrong');
+    }
+  }
+
+  async function movePlayerTo(player: Player, targetTeamId: string) {
+    if (!teamId) return;
+    setIsMoving(true);
+    try {
+      const batch = writeBatch(db);
+      batch.update(doc(db, 'players', player.id), { teamId: targetTeamId });
+      if (player.claimedByUserId) {
+        batch.update(doc(db, 'users', player.claimedByUserId), { teamId: targetTeamId, role: 'player' });
+        if (player.claimedByUserId === captainUserId || player.claimedByUserId === vcUserId) {
+          batch.update(doc(db, 'teams', teamId), {
+            captainUserId: player.claimedByUserId === captainUserId ? null : captainUserId,
+            viceCaptainUserId: player.claimedByUserId === vcUserId ? null : vcUserId,
+          });
+        }
+      }
+      await batch.commit();
+      setMoveTarget(null);
+    } catch (e: unknown) {
+      Alert.alert('Error', (e as Error).message ?? 'Something went wrong');
+    } finally {
+      setIsMoving(false);
+    }
+  }
+
+  const [isDeletingTeam, setIsDeletingTeam] = useState(false);
+
+  function confirmDeleteTeam() {
+    Alert.alert(
+      'Delete team',
+      `Delete ${teamName}? This removes all its players and any unplayed fixtures. Blocked if this team has any confirmed match results.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Delete', style: 'destructive', onPress: deleteTeam },
+      ],
+    );
+  }
+
+  async function deleteTeam() {
+    if (!teamId) return;
+    setIsDeletingTeam(true);
+    try {
+      await httpsCallable(functions, 'adminDeleteTeam')({ teamId });
+      goBack();
+    } catch (e: unknown) {
+      Alert.alert("Can't delete team", (e as Error).message ?? 'Something went wrong');
+    } finally {
+      setIsDeletingTeam(false);
+    }
+  }
+
+  const captainCard = (
+    <Card className="mb-4">
+      <View className={vcName ? 'mb-3' : ''}>
+        <Caption className="mb-1">Captain</Caption>
+        <Body tone={captainName ? 'strong' : 'dim'} weight="semibold">{captainName ?? 'Not yet assigned'}</Body>
+      </View>
+      {vcName && (
+        <View>
+          <Caption className="mb-1">Vice Captain</Caption>
+          <Body tone="strong" weight="semibold">{vcName}</Body>
+        </View>
+      )}
+      {!captainName && (
+        <Body size="xs" className="mt-2">
+          Waiting for someone to request this role — see the league Inbox.
+        </Body>
+      )}
+    </Card>
+  );
+
+  const venueCard = (
+    <Card className="mb-5">
+      <View className="flex-row items-center mb-2.5">
+        <Heading size="sm" className="flex-1">Home Venue</Heading>
+        {!editingAddress && (
+          <Button
+            variant="secondary"
+            size="sm"
+            onPress={() => {
+              setAddressDraft(teamAddress ?? '');
+              setVenuePhoneDraft(teamVenuePhone ?? '');
+              setEditingAddress(true);
             }}
           >
-            {isGenerating
-              ? <ActivityIndicator color={S.WHITE_50} size="small" />
-              : <Text style={{ color: S.BLUE, fontSize: 13, fontWeight: '600' }}>Generate {label} Code</Text>
-            }
-          </TouchableOpacity>
+            {teamAddress ? 'Edit' : 'Add'}
+          </Button>
         )}
       </View>
+      {editingAddress ? (
+        <>
+          <Input
+            value={addressDraft}
+            onChangeText={setAddressDraft}
+            placeholder="e.g. The Red Lion, 12 High St, Birmingham"
+            autoCapitalize="words"
+            autoFocus
+            className="mb-2.5"
+          />
+          <Input
+            value={venuePhoneDraft}
+            onChangeText={setVenuePhoneDraft}
+            placeholder="Venue contact number (optional)"
+            keyboardType="phone-pad"
+            className="mb-2.5"
+          />
+          <View className="flex-row gap-2">
+            <Button variant="ghost" className="flex-1" onPress={() => setEditingAddress(false)}>Cancel</Button>
+            <Button className="flex-1" disabled={isSavingAddress} loading={isSavingAddress} onPress={saveAddress}>Save</Button>
+          </View>
+        </>
+      ) : (
+        <>
+          <Body size="sm" tone={teamAddress ? 'strong' : 'dim'}>{teamAddress ?? 'No venue set'}</Body>
+          {teamVenuePhone && <Body size="sm" className="mt-1">{teamVenuePhone}</Body>}
+        </>
+      )}
+    </Card>
+  );
+
+  const body = (
+    <>
+      {captainCard}
+      {venueCard}
+
+      <View className="flex-row items-center mb-2.5">
+        <Heading size="sm" className="flex-1">Players ({players.length})</Heading>
+        <Button size="sm" onPress={() => setShowAddPlayer(true)}>+ Add Player</Button>
+      </View>
+      {players.length === 0 ? (
+        <Body className="text-center py-4">No players yet</Body>
+      ) : (
+        <View className="gap-2">
+          {players.map((player) => {
+            const role = roleOf(player);
+            return (
+              <ListRow
+                key={player.id}
+                avatar={<Avatar initial={player.name.charAt(0)} tone="brand" size="sm" />}
+                title={player.name}
+                subtitle={role ? undefined : 'No account yet'}
+                trailing={(
+                  <View className="items-end gap-1.5">
+                    {role && <Badge tone={role === 'player' ? 'butter' : 'brand'}>{ROLE_BADGE_LABEL[role]}</Badge>}
+                    <View className="flex-row gap-3">
+                      {role && (
+                        <TouchableOpacity onPress={() => setRoleSheetPlayer(player)}>
+                          <Body size="xs" tone="brand" weight="semibold">Change Role</Body>
+                        </TouchableOpacity>
+                      )}
+                      <TouchableOpacity onPress={() => setMoveTarget(player)}>
+                        <Body size="xs" tone="brand" weight="semibold">Move</Body>
+                      </TouchableOpacity>
+                      <TouchableOpacity onPress={() => confirmDeletePlayer(player)}>
+                        <Body size="xs" tone="coral" weight="semibold">Delete</Body>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                )}
+              />
+            );
+          })}
+        </View>
+      )}
+
+      <Button variant="danger" className="mt-6" disabled={isDeletingTeam} loading={isDeletingTeam} onPress={confirmDeleteTeam}>
+        Delete Team
+      </Button>
+    </>
+  );
+
+  const modals = (
+    <>
+      <Sheet visible={!!roleSheetPlayer} onClose={() => setRoleSheetPlayer(null)}>
+        {roleSheetPlayer && (
+          <>
+            <Heading size="sm" className="mb-1">Change Role</Heading>
+            <Body size="sm" className="mb-4">{roleSheetPlayer.name}</Body>
+            <View className="gap-2">
+              {ROLE_OPTIONS.map((opt) => {
+                const selected = roleOf(roleSheetPlayer) === opt.value;
+                return (
+                  <TouchableOpacity
+                    key={opt.value}
+                    onPress={() => changeRole(roleSheetPlayer, opt.value)}
+                    disabled={isChangingRole}
+                    activeOpacity={0.7}
+                    className={[
+                      'p-3 rounded-2xl',
+                      selected ? 'bg-brand-fill dark:bg-brand-fill-dark' : 'bg-surface-2 dark:bg-surface-2-dark',
+                    ].join(' ')}
+                  >
+                    <Body tone="strong" weight="semibold">{opt.label}</Body>
+                    <Body size="xs" className="mt-0.5">{opt.description}</Body>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+            {isChangingRole && <ActivityIndicator color={RAW.brand} style={{ marginTop: 16 }} />}
+            <Button variant="ghost" className="mt-4" disabled={isChangingRole} onPress={() => setRoleSheetPlayer(null)}>
+              Cancel
+            </Button>
+          </>
+        )}
+      </Sheet>
+
+      <Sheet visible={showAddPlayer} onClose={() => setShowAddPlayer(false)}>
+        <Heading size="lg" className="mb-4">Add Player</Heading>
+        <Label>Name</Label>
+        <Input value={newPlayerName} onChangeText={setNewPlayerName} placeholder="e.g. Alex Turner" autoCapitalize="words" autoFocus className="mb-6" />
+        <View className="flex-row gap-2.5">
+          <Button variant="ghost" className="flex-1" onPress={() => setShowAddPlayer(false)}>Cancel</Button>
+          <Button className="flex-1" disabled={isAddingPlayer || !newPlayerName.trim()} loading={isAddingPlayer} onPress={addPlayer}>
+            Add
+          </Button>
+        </View>
+      </Sheet>
+
+      <Sheet visible={!!moveTarget} onClose={() => setMoveTarget(null)}>
+        <Heading size="lg" className="mb-1">Move Player</Heading>
+        <Body size="sm" className="mb-4">{moveTarget?.name} — pick the team to move them to</Body>
+        {otherTeams.length === 0 ? (
+          <Body size="sm">No other teams in this league yet.</Body>
+        ) : (
+          <View className="gap-2 mb-2">
+            {otherTeams.map((t) => (
+              <ListRow key={t.id} title={t.name} onPress={() => moveTarget && movePlayerTo(moveTarget, t.id)} />
+            ))}
+          </View>
+        )}
+        {isMoving && <ActivityIndicator color={RAW.brand} style={{ marginTop: 12 }} />}
+        <Button variant="ghost" className="mt-4" disabled={isMoving} onPress={() => setMoveTarget(null)}>Cancel</Button>
+      </Sheet>
+    </>
+  );
+
+  if (isDesktop) {
+    const breadcrumb = [
+      { label: 'Dashboard', path: '/(protected)/(tabs)/admin' },
+      ...(seasonId ? [{ label: seasonName ?? 'Season', path: `/(protected)/admin-season?seasonId=${seasonId}` }] : []),
+      ...(seasonId && divisionId ? [{ label: divisionName ?? 'Division', path: `/(protected)/admin-season?seasonId=${seasonId}&divisionId=${divisionId}&tab=teams` }] : []),
+      { label: teamName || 'Team' },
+    ];
+    return (
+      <>
+        <Stack.Screen options={{ headerShown: false }} />
+        <AdminShell title={teamName || 'Team'} breadcrumb={breadcrumb}>
+          <View style={{ maxWidth: 780 }}>{body}</View>
+        </AdminShell>
+        {modals}
+      </>
     );
   }
 
   return (
-    <LinearGradient colors={S.GRADIENT} style={{ flex: 1 }}>
+    <Screen>
       <Stack.Screen options={{ title: teamName || 'Team' }} />
-      <ScrollView contentContainerStyle={{ padding: 20 }}>
-
-        {/* Captain / VC */}
-        <BlurView intensity={20} tint="dark" style={{ borderRadius: 16, overflow: 'hidden', marginBottom: 16 }}>
-          <View style={[S.glassCard, { padding: 16 }]}>
-            <View style={{ marginBottom: vcName ? 12 : 0 }}>
-              <Text style={{ color: S.WHITE_50, fontSize: 11, marginBottom: 4 }}>CAPTAIN</Text>
-              <Text style={{ color: captainName ? S.WHITE : S.WHITE_50, fontSize: 15, fontWeight: '600' }}>
-                {captainName ?? 'Not yet assigned'}
-              </Text>
-            </View>
-            {vcName && (
-              <View>
-                <Text style={{ color: S.WHITE_50, fontSize: 11, marginBottom: 4 }}>VICE CAPTAIN</Text>
-                <Text style={{ color: S.WHITE, fontSize: 15, fontWeight: '600' }}>{vcName}</Text>
-              </View>
-            )}
-          </View>
-        </BlurView>
-
-        {/* Home venue */}
-        <BlurView intensity={20} tint="dark" style={{ borderRadius: 16, overflow: 'hidden', marginBottom: 16 }}>
-          <View style={[S.glassCard, { padding: 16 }]}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
-              <Text style={{ color: S.WHITE, fontSize: 15, fontWeight: '700', flex: 1 }}>Home Venue</Text>
-              {!editingAddress && (
-                <TouchableOpacity
-                  onPress={() => { setAddressDraft(teamAddress ?? ''); setEditingAddress(true); }}
-                  style={{ minHeight: 36, justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: 8, paddingHorizontal: 12, borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.25)' }}
-                >
-                  <Text style={{ color: S.WHITE_80, fontSize: 12, fontWeight: '600' }}>{teamAddress ? 'Edit' : 'Add'}</Text>
-                </TouchableOpacity>
-              )}
-            </View>
-            {editingAddress ? (
-              <>
-                <TextInput
-                  value={addressDraft}
-                  onChangeText={setAddressDraft}
-                  placeholder="e.g. The Red Lion, 12 High St, Birmingham"
-                  placeholderTextColor={S.WHITE_30}
-                  autoCapitalize="words"
-                  autoFocus
-                  style={[S.input, { marginBottom: 10 }]}
-                />
-                <View style={{ flexDirection: 'row', gap: 8 }}>
-                  <TouchableOpacity
-                    onPress={() => setEditingAddress(false)}
-                    style={{ flex: 1, minHeight: 44, justifyContent: 'center', padding: 10, borderRadius: 10, alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.08)', borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.25)' }}
-                  >
-                    <Text style={{ color: S.WHITE_80, fontWeight: '600' }}>Cancel</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    onPress={saveAddress}
-                    disabled={isSavingAddress}
-                    style={[S.primaryButton, { flex: 1, paddingVertical: 10 }]}
-                  >
-                    {isSavingAddress ? <ActivityIndicator color={S.WHITE} /> : <Text style={S.primaryButtonText}>Save</Text>}
-                  </TouchableOpacity>
-                </View>
-              </>
-            ) : (
-              <Text style={{ color: teamAddress ? S.WHITE : S.WHITE_50, fontSize: 14 }}>
-                {teamAddress ?? 'No venue set'}
-              </Text>
-            )}
-          </View>
-        </BlurView>
-
-        {/* Join codes */}
-        <BlurView intensity={20} tint="dark" style={{ borderRadius: 16, overflow: 'hidden', marginBottom: 16 }}>
-          <View style={[S.glassCard, { padding: 16 }]}>
-            <Text style={{ color: S.WHITE_50, fontSize: 11, fontWeight: '600', marginBottom: 4 }}>CAPTAIN / VICE CAPTAIN CODES</Text>
-            <Text style={{ color: S.WHITE_50, fontSize: 12, marginBottom: 16 }}>
-              Share these codes so captains and vice captains can claim the team
-            </Text>
-            <JoinCodeRow role="captain" code={captainJoinCode} />
-            <View style={{ height: 1, backgroundColor: 'rgba(255,255,255,0.08)', marginVertical: 14 }} />
-            <JoinCodeRow role="viceCaptain" code={vcJoinCode} />
-          </View>
-        </BlurView>
-
-        {/* Player invite code */}
-        <BlurView intensity={20} tint="dark" style={{ borderRadius: 16, overflow: 'hidden', marginBottom: 20 }}>
-          <View style={[S.glassCard, { padding: 16 }]}>
-            <Text style={{ color: S.WHITE, fontSize: 15, fontWeight: '700', marginBottom: 4 }}>
-              Player Invite Code
-            </Text>
-            <Text style={{ color: S.WHITE_50, fontSize: 12, marginBottom: 12 }}>
-              Captains can share this so players can find the team quickly
-            </Text>
-            {playerCode ? (
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                <Text style={{ color: S.BLUE, fontSize: 22, fontWeight: '700', letterSpacing: 4, flex: 1 }}>
-                  {playerCode}
-                </Text>
-                <TouchableOpacity
-                  onPress={() => shareText(playerCode)}
-                  style={{ minHeight: 40, justifyContent: 'center', backgroundColor: 'rgba(0,122,255,0.2)', borderRadius: 8, paddingHorizontal: 14, borderWidth: 1.5, borderColor: 'rgba(0,122,255,0.5)' }}
-                >
-                  <Text style={{ color: S.WHITE, fontWeight: '600', fontSize: 13 }}>Share</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  onPress={generatePlayerCode}
-                  style={{ minHeight: 40, justifyContent: 'center', paddingHorizontal: 10, borderRadius: 8, borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.25)' }}
-                >
-                  <Text style={{ color: S.WHITE_80, fontSize: 13, fontWeight: '600' }}>Regen</Text>
-                </TouchableOpacity>
-              </View>
-            ) : (
-              <TouchableOpacity
-                onPress={generatePlayerCode}
-                disabled={isGeneratingPlayer}
-                style={[S.primaryButton, { paddingVertical: 10 }]}
-                activeOpacity={0.8}
-              >
-                {isGeneratingPlayer
-                  ? <ActivityIndicator color={S.WHITE} />
-                  : <Text style={S.primaryButtonText}>Generate Code</Text>
-                }
-              </TouchableOpacity>
-            )}
-          </View>
-        </BlurView>
-
-        {/* Players */}
-        <Text style={{ color: S.WHITE, fontSize: 15, fontWeight: '700', marginBottom: 10 }}>
-          Players ({players.length})
-        </Text>
-        {players.length === 0 ? (
-          <Text style={{ color: S.WHITE_50, textAlign: 'center', paddingVertical: 16 }}>No players yet</Text>
-        ) : (
-          players.map((player) => (
-            <View
-              key={player.id}
-              style={{
-                padding: 14, borderRadius: 12, marginBottom: 8,
-                backgroundColor: 'rgba(255,255,255,0.07)',
-                borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.22)',
-                flexDirection: 'row', alignItems: 'center',
-              }}
-            >
-              <View style={{
-                width: 36, height: 36, borderRadius: 18,
-                backgroundColor: 'rgba(0,122,255,0.3)',
-                alignItems: 'center', justifyContent: 'center', marginRight: 12,
-              }}>
-                <Text style={{ color: S.BLUE, fontWeight: '700' }}>
-                  {player.name.charAt(0).toUpperCase()}
-                </Text>
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={{ color: S.WHITE, fontWeight: '600' }}>{player.name}</Text>
-                <Text style={{ color: S.WHITE_50, fontSize: 12 }}>
-                  {player.claimedByUserId ? 'Account linked' : 'No account yet'}
-                </Text>
-              </View>
-            </View>
-          ))
-        )}
-      </ScrollView>
-    </LinearGradient>
+      {body}
+      {modals}
+    </Screen>
   );
 }

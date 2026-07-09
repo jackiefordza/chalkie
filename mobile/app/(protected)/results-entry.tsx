@@ -1,16 +1,21 @@
 import { useState, useEffect, useMemo } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, ActivityIndicator, Modal, TextInput, Alert } from 'react-native';
+import { View, TouchableOpacity, ScrollView, ActivityIndicator, Alert, Platform, useWindowDimensions } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import { Stack, useLocalSearchParams } from 'expo-router';
-import { LinearGradient } from 'expo-linear-gradient';
-import { BlurView } from 'expo-blur';
 import {
-  collection, doc, onSnapshot, query, where, getDoc, setDoc, serverTimestamp,
+  collection, doc, onSnapshot, query, where, getDoc, setDoc, updateDoc, deleteDoc, serverTimestamp,
 } from 'firebase/firestore';
 import { db } from '@/config/firebase';
 import { useAuthStore } from '@/stores/authStore';
 import { goBack } from '@/lib/navigation';
+import { RAW } from '@/lib/theme';
+import {
+  Screen, Heading, Body, Caption, Stat, Button, Card, Chip, Input, Label, Sheet, AppBar,
+} from '@/components/ui';
+import { AdminShell } from '@/components/admin/AdminShell';
 import type { Match, MatchGame, GameType, MatchSide, HighCheckout } from '@/types';
-import * as S from '@/styles/common';
+
+const DESKTOP_BREAKPOINT = 768;
 
 interface Player { id: string; name: string; teamId: string }
 
@@ -102,6 +107,8 @@ function normalizeGameForCompare(g: DraftGame): string {
 export default function ResultsEntryScreen() {
   const { matchId } = useLocalSearchParams<{ matchId: string }>();
   const { appUser } = useAuthStore();
+  const { width } = useWindowDimensions();
+  const isDesktop = width >= DESKTOP_BREAKPOINT;
 
   const [match, setMatch] = useState<Match | null>(null);
   const [homeTeamName, setHomeTeamName] = useState('');
@@ -113,6 +120,7 @@ export default function ResultsEntryScreen() {
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const [editing, setEditing] = useState(false);
+  const [adminCorrecting, setAdminCorrecting] = useState(false);
   const [games, setGames] = useState<DraftGame[]>(blankGames());
   const [isSubmitting, setIsSubmitting] = useState(false);
   // Review mode: games flagged as "not right, let me fix this" — everything else
@@ -131,6 +139,7 @@ export default function ResultsEntryScreen() {
   const isHome = match ? teamId === match.homeTeamId : false;
   const isAway = match ? teamId === match.awayTeamId : false;
   const myTeamId = isHome ? match?.homeTeamId : isAway ? match?.awayTeamId : null;
+  const isAdmin = !!appUser?.isLeagueAdmin;
 
   useEffect(() => {
     if (!matchId || !appUser?.leagueId) return;
@@ -351,6 +360,7 @@ export default function ResultsEntryScreen() {
         createdAt: serverTimestamp(),
       });
       setEditing(false);
+      if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       Alert.alert(
         'Result submitted',
         otherSubmission
@@ -365,130 +375,160 @@ export default function ResultsEntryScreen() {
     }
   }
 
-  const canEnterResult = (isHome || isAway) && match && match.status !== 'confirmed';
+  function openAdminCorrection() {
+    if (!match) return;
+    setGames(toDraft(match.games ?? []));
+    setAdminCorrecting(true);
+    setEditing(true);
+  }
 
-  return (
-    <LinearGradient colors={S.GRADIENT} style={{ flex: 1 }}>
-      <Stack.Screen
-        options={{
-          title: 'Enter Result',
-          headerLeft: () => (
-            <TouchableOpacity onPress={() => goBack()} hitSlop={12} style={{ paddingRight: 12 }}>
-              <Text style={{ color: S.WHITE, fontSize: 16 }}>‹ Back</Text>
-            </TouchableOpacity>
-          ),
-        }}
-      />
+  async function saveAdminCorrection() {
+    if (!matchId || !allComplete) return;
+    setIsSubmitting(true);
+    try {
+      const finalGames: MatchGame[] = games.map(toMatchGame);
+      await updateDoc(doc(db, 'matches', matchId), { games: finalGames });
+      setAdminCorrecting(false);
+      setEditing(false);
+      Alert.alert('Result updated', 'Standings and player stats have been recalculated.');
+      goBack();
+    } catch (e: unknown) {
+      Alert.alert('Error', (e as Error).message ?? 'Something went wrong');
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  function confirmDeleteMatch() {
+    Alert.alert(
+      'Delete this fixture',
+      "This removes the fixture and its result completely, and reverses its contribution to standings and player stats. This can't be undone.",
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Delete', style: 'destructive', onPress: deleteMatch },
+      ],
+    );
+  }
+
+  async function deleteMatch() {
+    if (!matchId) return;
+    try {
+      await deleteDoc(doc(db, 'matches', matchId));
+      goBack();
+    } catch (e: unknown) {
+      Alert.alert('Error', (e as Error).message ?? 'Something went wrong');
+    }
+  }
+
+  // Anyone on either team can view a confirmed match's score card; admins can
+  // view (and correct) any match regardless of team.
+  const canView = (isHome || isAway || isAdmin) && !!match;
+  const title = adminCorrecting ? 'Edit Result' : match?.status === 'confirmed' ? 'Result' : 'Enter Result';
+
+  const body = (
+    <>
 
       {loadError ? (
-        <View style={{ padding: 20 }}>
-          <View style={S.errorBox}>
-            <Text style={{ color: S.RED }}>{loadError}</Text>
-          </View>
+        <View className="p-5">
+          <Card tone="coral"><Body tone="coral">{loadError}</Body></Card>
         </View>
       ) : isLoading ? (
-        <ActivityIndicator color={S.BLUE} style={{ marginTop: 60 }} />
-      ) : !canEnterResult ? (
-        <View style={{ padding: 20 }}>
-          <BlurView intensity={20} tint="dark" style={{ borderRadius: 16, overflow: 'hidden' }}>
-            <View style={[S.glassCard, { alignItems: 'center', paddingVertical: 32 }]}>
-              <Text style={{ color: S.WHITE, fontWeight: '600', marginBottom: 4 }}>
-                {match?.status === 'confirmed' ? 'Result already confirmed' : "You can't submit this result"}
-              </Text>
-            </View>
-          </BlurView>
+        <ActivityIndicator color={RAW.brand} style={{ marginTop: 60 }} />
+      ) : !canView ? (
+        <View className="p-5">
+          <Card className="items-center py-8">
+            <Body tone="strong" weight="semibold">You can't view this result</Body>
+          </Card>
         </View>
+      ) : match!.status === 'confirmed' && !adminCorrecting ? (
+        <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 8 }}>
+          <Card className="mb-4">
+            <Heading className="mb-1">{homeTeamName} vs {awayTeamName}</Heading>
+            <Body size="sm">
+              {match!.homeLegsWon} - {match!.awayLegsWon} legs · {match!.homeGamesWon} - {match!.awayGamesWon} games
+            </Body>
+          </Card>
+          {isAdmin && (
+            <View className="flex-row gap-2.5 mb-4">
+              <Button variant="secondary" size="sm" className="flex-1" onPress={openAdminCorrection}>Edit Result</Button>
+              <Button variant="danger" size="sm" className="flex-1" onPress={confirmDeleteMatch}>Delete Fixture</Button>
+            </View>
+          )}
+          {toDraft(match!.games ?? []).map((game, gameIndex) => (
+            <Card key={gameIndex} tone="sage" className="mb-3.5">
+              <Caption className="mb-2">Game {gameIndex + 1} · {game.type === 'singles' ? 'Singles' : 'Pairs'}</Caption>
+              <Body tone="strong" className="mb-0.5">
+                {game.homePlayerIds.map(playerName).join(' & ') || '—'} vs {game.awayPlayerIds.map(playerName).join(' & ') || '—'}
+              </Body>
+              <Body size="sm">
+                Legs: {game.score ? `${game.score.home}-${game.score.away}` : '—'}
+                {game.oneEighties.length ? ` · 180s: ${game.oneEighties.map(playerName).join(', ')}` : ''}
+                {game.highCheckouts.length ? ` · Checkouts: ${game.highCheckouts.map((hc) => `${playerName(hc.playerId)} ${hc.value}`).join(', ')}` : ''}
+              </Body>
+            </Card>
+          ))}
+        </ScrollView>
       ) : !editing ? (
         <ScrollView contentContainerStyle={{ padding: 20 }}>
-          <BlurView intensity={20} tint="dark" style={{ borderRadius: 16, overflow: 'hidden', marginBottom: 20 }}>
-            <View style={[S.glassCard, { padding: 20 }]}>
-              <Text style={{ color: S.WHITE, fontSize: 18, fontWeight: '700', marginBottom: 6 }}>
-                {homeTeamName} vs {awayTeamName}
-              </Text>
-              <Text style={{ color: S.WHITE_50, fontSize: 13, marginBottom: 16 }}>
-                7 games · 5 singles, 2 pairs · enter the legs score for each
-              </Text>
-              {mode === 'reconcile' && diffGameIndexes.length > 0 && (
-                <View style={[S.errorBox, { marginBottom: 4 }]}>
-                  <Text style={{ color: S.RED, fontSize: 13 }}>
-                    {diffGameIndexes.length} game{diffGameIndexes.length > 1 ? 's' : ''} don't match the other team's submission.
-                    Check each one — adopt their version if they're right, or leave it for the admin to resolve.
-                  </Text>
-                </View>
-              )}
-              {mode === 'reconcile' && diffGameIndexes.length === 0 && (
-                <Text style={{ color: S.WHITE_60, fontSize: 13, marginBottom: 4 }}>
-                  Both submissions match — this should confirm automatically any moment.
-                </Text>
-              )}
-              {mode === 'review' && (
-                <Text style={{ color: S.WHITE_60, fontSize: 13, marginBottom: 4 }}>
-                  The other team has submitted a result. Review it below — anything you don't flag is treated as agreed.
-                </Text>
-              )}
-              {mode === 'waiting' && (
-                <Text style={{ color: S.WHITE_60, fontSize: 13, marginBottom: 4 }}>
-                  You have a saved draft/submission for this match. Waiting on the other team to submit theirs.
-                </Text>
-              )}
-            </View>
-          </BlurView>
-          <TouchableOpacity
-            onPress={() => setEditing(true)}
-            style={S.primaryButton}
-            activeOpacity={0.8}
-          >
-            <Text style={S.primaryButtonText}>
-              {mode === 'review' ? 'Review Result' : mode === 'reconcile' ? 'Resolve Differences' : mode === 'waiting' ? 'Edit Result' : 'Enter Result'}
-            </Text>
-          </TouchableOpacity>
+          <Card className="mb-5">
+            <Heading className="mb-1.5">{homeTeamName} vs {awayTeamName}</Heading>
+            <Body size="sm" className="mb-4">7 games · 5 singles, 2 pairs · enter the legs score for each</Body>
+            {mode === 'reconcile' && diffGameIndexes.length > 0 && (
+              <Card tone="coral" padded={false} className="mb-1">
+                <Body tone="coral" size="sm" className="p-3">
+                  {diffGameIndexes.length} game{diffGameIndexes.length > 1 ? 's' : ''} don't match the other team's submission.
+                  Check each one — adopt their version if they're right, or leave it for the admin to resolve.
+                </Body>
+              </Card>
+            )}
+            {mode === 'reconcile' && diffGameIndexes.length === 0 && (
+              <Body size="sm" className="mb-1">Both submissions match — this should confirm automatically any moment.</Body>
+            )}
+            {mode === 'review' && (
+              <Body size="sm" className="mb-1">
+                The other team has submitted a result. Review it below — anything you don't flag is treated as agreed.
+              </Body>
+            )}
+            {mode === 'waiting' && (
+              <Body size="sm" className="mb-1">
+                You have a saved draft/submission for this match. Waiting on the other team to submit theirs.
+              </Body>
+            )}
+          </Card>
+          <Button onPress={() => setEditing(true)}>
+            {mode === 'review' ? 'Review Result' : mode === 'reconcile' ? 'Resolve Differences' : mode === 'waiting' ? 'Edit Result' : 'Enter Result'}
+          </Button>
         </ScrollView>
       ) : mode === 'reconcile' ? (
         <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 8 }}>
-          <TouchableOpacity onPress={() => setEditing(false)} style={{ marginBottom: 12 }}>
-            <Text style={{ color: S.WHITE_50, fontSize: 13 }}>‹ Back to summary</Text>
+          <TouchableOpacity activeOpacity={0.7} onPress={() => setEditing(false)} className="mb-3">
+            <Body size="sm">‹ Back to summary</Body>
           </TouchableOpacity>
-          <Text style={{ color: S.WHITE, fontSize: 15, marginBottom: 16 }}>
-            {homeTeamName} vs {awayTeamName}
-          </Text>
+          <Body tone="strong" className="mb-4">{homeTeamName} vs {awayTeamName}</Body>
           {diffGameIndexes.length === 0 ? (
-            <Text style={{ color: S.WHITE_60 }}>Everything matches — this should confirm automatically any moment.</Text>
+            <Body>Everything matches — this should confirm automatically any moment.</Body>
           ) : (
             diffGameIndexes.map((gameIndex) => {
               const mine = toDraft([mySubmission![gameIndex]])[0];
               const theirs = toDraft([otherSubmission![gameIndex]])[0];
               return (
-                <View
-                  key={gameIndex}
-                  style={{
-                    padding: 14, borderRadius: 12, marginBottom: 14,
-                    backgroundColor: 'rgba(255,59,48,0.06)',
-                    borderWidth: 1, borderColor: 'rgba(255,59,48,0.3)',
-                  }}
-                >
-                  <Text style={{ color: S.WHITE_50, fontSize: 11, fontWeight: '700', marginBottom: 10 }}>
-                    GAME {gameIndex + 1} · {mine.type === 'singles' ? 'SINGLES' : 'PAIRS'}
-                  </Text>
-                  {[{ label: 'YOUR VERSION', g: mine }, { label: 'THEIR VERSION', g: theirs }].map(({ label, g }) => (
-                    <View key={label} style={{ padding: 10, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.05)', marginBottom: 8 }}>
-                      <Text style={{ color: S.WHITE_50, fontSize: 10, fontWeight: '700', marginBottom: 4 }}>{label}</Text>
-                      <Text style={{ color: S.WHITE, fontSize: 13, marginBottom: 2 }}>
+                <Card key={gameIndex} tone="coral" className="mb-3.5">
+                  <Caption className="mb-2.5">Game {gameIndex + 1} · {mine.type === 'singles' ? 'Singles' : 'Pairs'}</Caption>
+                  {[{ label: 'Your version', g: mine }, { label: 'Their version', g: theirs }].map(({ label, g }) => (
+                    <View key={label} className="p-2.5 rounded-lg mb-2 bg-surface-2 dark:bg-surface-2-dark">
+                      <Caption className="mb-1">{label}</Caption>
+                      <Body tone="strong" size="sm" className="mb-0.5">
                         {g.homePlayerIds.map(playerName).join(' & ') || '—'} vs {g.awayPlayerIds.map(playerName).join(' & ') || '—'}
-                      </Text>
-                      <Text style={{ color: S.WHITE_60, fontSize: 12 }}>
+                      </Body>
+                      <Body size="sm">
                         Legs: {g.score ? `${g.score.home}-${g.score.away}` : '—'}
                         {g.oneEighties.length ? ` · 180s: ${g.oneEighties.map(playerName).join(', ')}` : ''}
                         {g.highCheckouts.length ? ` · Checkouts: ${g.highCheckouts.map((hc) => `${playerName(hc.playerId)} ${hc.value}`).join(', ')}` : ''}
-                      </Text>
+                      </Body>
                     </View>
                   ))}
-                  <TouchableOpacity
-                    onPress={() => adoptTheirVersion(gameIndex)}
-                    style={[S.primaryButton, { paddingVertical: 10 }]}
-                  >
-                    <Text style={S.primaryButtonText}>Adopt Their Version</Text>
-                  </TouchableOpacity>
-                </View>
+                  <Button variant="good" size="sm" onPress={() => adoptTheirVersion(gameIndex)}>Adopt Their Version</Button>
+                </Card>
               );
             })
           )}
@@ -496,155 +536,115 @@ export default function ResultsEntryScreen() {
       ) : (
         <>
           <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 8 }}>
-            <Text style={{ color: S.WHITE, fontSize: 15, marginBottom: 16 }}>
-              {homeTeamName} vs {awayTeamName}
-            </Text>
+            <Body tone="strong" className="mb-4">{homeTeamName} vs {awayTeamName}</Body>
 
             {games.map((game, gameIndex) => {
               const participants = [...game.homePlayerIds, ...game.awayPlayerIds];
 
               if (mode === 'review' && !editedGameIndexes.has(gameIndex)) {
                 return (
-                  <View
-                    key={gameIndex}
-                    style={{
-                      padding: 14, borderRadius: 12, marginBottom: 14,
-                      backgroundColor: 'rgba(52,199,89,0.05)',
-                      borderWidth: 1, borderColor: 'rgba(52,199,89,0.3)',
-                    }}
-                  >
-                    <Text style={{ color: S.WHITE_50, fontSize: 11, fontWeight: '700', marginBottom: 8 }}>
-                      GAME {gameIndex + 1} · {game.type === 'singles' ? 'SINGLES' : 'PAIRS'}
-                    </Text>
-                    <Text style={{ color: S.WHITE, fontSize: 14, marginBottom: 2 }}>
+                  <Card key={gameIndex} tone="sage" className="mb-3.5">
+                    <Caption className="mb-2">Game {gameIndex + 1} · {game.type === 'singles' ? 'Singles' : 'Pairs'}</Caption>
+                    <Body tone="strong" className="mb-0.5">
                       {game.homePlayerIds.map(playerName).join(' & ') || '—'} vs {game.awayPlayerIds.map(playerName).join(' & ') || '—'}
-                    </Text>
-                    <Text style={{ color: S.WHITE_80, fontSize: 13, marginBottom: 14 }}>
+                    </Body>
+                    <Body size="sm" className="mb-3.5">
                       Legs: {game.score ? `${game.score.home}-${game.score.away}` : '—'}
                       {game.oneEighties.length ? ` · 180s: ${game.oneEighties.map(playerName).join(', ')}` : ''}
                       {game.highCheckouts.length ? ` · Checkouts: ${game.highCheckouts.map((hc) => `${playerName(hc.playerId)} ${hc.value}`).join(', ')}` : ''}
-                    </Text>
-                    <TouchableOpacity
-                      onPress={() => setEditedGameIndexes((prev) => new Set(prev).add(gameIndex))}
-                      style={{
-                        alignSelf: 'flex-start', paddingHorizontal: 14, minHeight: 44, justifyContent: 'center',
-                        borderRadius: 10, borderWidth: 1.5, borderColor: S.RED, backgroundColor: 'rgba(255,107,107,0.12)',
-                      }}
-                    >
-                      <Text style={{ color: S.RED, fontSize: 13, fontWeight: '700' }}>This isn't right — edit this game</Text>
-                    </TouchableOpacity>
-                  </View>
+                    </Body>
+                    <Button variant="danger" size="sm" onPress={() => setEditedGameIndexes((prev) => new Set(prev).add(gameIndex))}>
+                      This isn't right — edit this game
+                    </Button>
+                  </Card>
                 );
               }
 
               return (
-                <View
-                  key={gameIndex}
-                  style={{
-                    padding: 14, borderRadius: 12, marginBottom: 14,
-                    backgroundColor: 'rgba(255,255,255,0.05)',
-                    borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)',
-                  }}
-                >
-                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
-                    <Text style={{ color: S.WHITE_50, fontSize: 11, fontWeight: '700', flex: 1 }}>
-                      GAME {gameIndex + 1} · {game.type === 'singles' ? 'SINGLES' : 'PAIRS'}
-                    </Text>
+                <Card key={gameIndex} className="mb-3.5">
+                  <View className="flex-row items-center mb-2.5">
+                    <Caption className="flex-1">Game {gameIndex + 1} · {game.type === 'singles' ? 'Singles' : 'Pairs'}</Caption>
                     {mode === 'review' && editedGameIndexes.has(gameIndex) && (
-                      <TouchableOpacity
+                      <TouchableOpacity activeOpacity={0.7}
                         onPress={() => revertGame(gameIndex)}
-                        style={{ paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.08)' }}
+                        className="px-3 py-2 rounded-lg bg-surface-2 dark:bg-surface-2-dark"
                       >
-                        <Text style={{ color: S.WHITE_80, fontSize: 12, fontWeight: '600' }}>Undo</Text>
+                        <Body size="xs" weight="semibold">Undo</Body>
                       </TouchableOpacity>
                     )}
                   </View>
 
                   {/* Lineup: boxed, clearly tappable name pickers */}
-                  <View style={{ flexDirection: 'row', gap: 10, marginBottom: 12 }}>
-                    <TouchableOpacity
+                  <View className="flex-row gap-2.5 mb-3">
+                    <TouchableOpacity activeOpacity={0.7}
                       onPress={() => setPicker({ gameIndex, side: 'home' })}
-                      style={[S.tapBox, { flex: 1, alignItems: 'flex-start', paddingHorizontal: 12, paddingVertical: 10 }]}
+                      className="flex-1 items-start px-3 py-2.5 rounded-xl border border-border dark:border-border-dark bg-surface-2 dark:bg-surface-2-dark"
                     >
-                      <Text style={{ color: S.WHITE_60, fontSize: 11, fontWeight: '700', marginBottom: 4 }}>HOME</Text>
+                      <Caption className="mb-1">Home</Caption>
                       {game.homePlayerIds.length === 0 ? (
-                        <Text style={{ color: S.WHITE_80, fontSize: 14 }}>Tap to pick</Text>
+                        <Body size="sm">Tap to pick</Body>
                       ) : (
                         game.homePlayerIds.map((id) => (
-                          <Text key={id} style={{ color: S.WHITE, fontSize: 14, fontWeight: '600' }}>{playerName(id)}</Text>
+                          <Body key={id} tone="strong" weight="semibold">{playerName(id)}</Body>
                         ))
                       )}
                     </TouchableOpacity>
 
-                    <TouchableOpacity
+                    <TouchableOpacity activeOpacity={0.7}
                       onPress={() => setPicker({ gameIndex, side: 'away' })}
-                      style={[S.tapBox, { flex: 1, alignItems: 'flex-start', paddingHorizontal: 12, paddingVertical: 10 }]}
+                      className="flex-1 items-start px-3 py-2.5 rounded-xl border border-border dark:border-border-dark bg-surface-2 dark:bg-surface-2-dark"
                     >
-                      <Text style={{ color: S.WHITE_60, fontSize: 11, fontWeight: '700', marginBottom: 4 }}>AWAY</Text>
+                      <Caption className="mb-1">Away</Caption>
                       {game.awayPlayerIds.length === 0 ? (
-                        <Text style={{ color: S.WHITE_80, fontSize: 14 }}>Tap to pick</Text>
+                        <Body size="sm">Tap to pick</Body>
                       ) : (
                         game.awayPlayerIds.map((id) => (
-                          <Text key={id} style={{ color: S.WHITE, fontSize: 14, fontWeight: '600' }}>{playerName(id)}</Text>
+                          <Body key={id} tone="strong" weight="semibold">{playerName(id)}</Body>
                         ))
                       )}
                     </TouchableOpacity>
                   </View>
 
                   {/* Score: big, high-contrast tap boxes */}
-                  <Text style={{ color: S.WHITE_60, fontSize: 11, fontWeight: '700', marginBottom: 6 }}>LEGS (TAP TO CHANGE)</Text>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 14 }}>
-                    <TouchableOpacity
-                      onPress={() => cycleScore(gameIndex, 'home')}
-                      style={[S.tapBox, { width: 56, height: 48 }, !!game.score && { borderColor: S.GREEN, backgroundColor: 'rgba(52,199,89,0.18)' }]}
-                    >
-                      <Text style={{ color: game.score ? S.GREEN : S.WHITE_80, fontWeight: '700', fontSize: 20 }}>
-                        {game.score ? game.score.home : '–'}
-                      </Text>
-                    </TouchableOpacity>
-                    <Text style={{ color: S.WHITE_50, marginHorizontal: 10, fontSize: 16 }}>–</Text>
-                    <TouchableOpacity
-                      onPress={() => cycleScore(gameIndex, 'away')}
-                      style={[S.tapBox, { width: 56, height: 48 }, !!game.score && { borderColor: S.GREEN, backgroundColor: 'rgba(52,199,89,0.18)' }]}
-                    >
-                      <Text style={{ color: game.score ? S.GREEN : S.WHITE_80, fontWeight: '700', fontSize: 20 }}>
-                        {game.score ? game.score.away : '–'}
-                      </Text>
-                    </TouchableOpacity>
+                  <Caption className="mb-1.5">Legs (tap to change)</Caption>
+                  <View className="flex-row items-center mb-3.5">
+                    <Chip selected={!!game.score} tone="sage" onPress={() => cycleScore(gameIndex, 'home')} className="w-14 h-12">
+                      <Stat size="md" tone={game.score ? 'sage' : undefined}>{game.score ? game.score.home : '–'}</Stat>
+                    </Chip>
+                    <Body className="mx-2.5">–</Body>
+                    <Chip selected={!!game.score} tone="sage" onPress={() => cycleScore(gameIndex, 'away')} className="w-14 h-12">
+                      <Stat size="md" tone={game.score ? 'sage' : undefined}>{game.score ? game.score.away : '–'}</Stat>
+                    </Chip>
                   </View>
 
                   {/* 180s */}
                   {participants.length > 0 && (
                     <>
-                      <Text style={{ color: S.WHITE_60, fontSize: 11, fontWeight: '700', marginBottom: 6 }}>180s (tap to add, tap − to remove)</Text>
-                      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 14 }}>
+                      <Caption className="mb-1.5">180s (tap to add, tap − to remove)</Caption>
+                      <View className="flex-row flex-wrap gap-2 mb-3.5">
                         {participants.map((id) => {
                           const count = game.oneEighties.filter((x) => x === id).length;
                           const active = count > 0;
                           return (
                             <View
                               key={id}
-                              style={[
-                                S.tapBox,
-                                { flexDirection: 'row', minHeight: 44, paddingLeft: 4 },
-                                active && S.tapBoxSelected,
-                              ]}
+                              className={[
+                                'flex-row min-h-[44px] rounded-full items-center pl-1',
+                                active ? 'bg-butter-fill dark:bg-butter-fill-dark' : 'bg-surface-2 dark:bg-surface-2-dark',
+                              ].join(' ')}
                             >
-                              <TouchableOpacity
-                                onPress={() => addOneEighty(gameIndex, id)}
-                                style={{ paddingHorizontal: 10, paddingVertical: 10 }}
-                              >
-                                <Text style={{ color: active ? S.WHITE : S.WHITE_80, fontSize: 13, fontWeight: '600' }}>
+                              <TouchableOpacity activeOpacity={0.7} onPress={() => addOneEighty(gameIndex, id)} className="px-2.5 py-2.5">
+                                <Body size="sm" tone={active ? 'butter' : 'dim'} weight="semibold">
                                   {playerName(id)}{active ? ` × ${count}` : ''}
-                                </Text>
+                                </Body>
                               </TouchableOpacity>
                               {active && (
-                                <TouchableOpacity
+                                <TouchableOpacity activeOpacity={0.7}
                                   onPress={() => removeOneEighty(gameIndex, id)}
                                   hitSlop={8}
-                                  style={{ paddingHorizontal: 12, paddingVertical: 10, borderLeftWidth: 1, borderLeftColor: 'rgba(255,255,255,0.2)' }}
+                                  className="px-3 py-2.5 border-l border-border dark:border-border-dark"
                                 >
-                                  <Text style={{ color: S.WHITE, fontSize: 14, fontWeight: '700' }}>−</Text>
+                                  <Body tone="butter" weight="bold">−</Body>
                                 </TouchableOpacity>
                               )}
                             </View>
@@ -655,167 +655,131 @@ export default function ResultsEntryScreen() {
                   )}
 
                   {/* High checkouts */}
-                  <Text style={{ color: S.WHITE_60, fontSize: 11, fontWeight: '700', marginBottom: 6 }}>HIGH CHECKOUTS</Text>
-                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                  <Caption className="mb-1.5">High checkouts</Caption>
+                  <View className="flex-row flex-wrap gap-2">
                     {game.highCheckouts.map((hc, i) => (
-                      <TouchableOpacity
+                      <Chip
                         key={i}
+                        tone="butter"
+                        selected
                         onPress={() => openEditCheckout(gameIndex, i)}
-                        style={[S.tapBox, { paddingHorizontal: 12, borderColor: S.ORANGE, backgroundColor: 'rgba(255,149,0,0.16)' }]}
-                      >
-                        <Text style={{ color: S.ORANGE, fontSize: 13, fontWeight: '600' }}>
-                          {playerName(hc.playerId)} — {hc.value}
-                        </Text>
-                      </TouchableOpacity>
+                        label={`${playerName(hc.playerId)} — ${hc.value}`}
+                      />
                     ))}
                     {participants.length > 0 && game.highCheckouts.length < 3 && (
-                      <TouchableOpacity
-                        onPress={() => openAddCheckout(gameIndex)}
-                        style={[S.tapBox, { paddingHorizontal: 12 }]}
-                      >
-                        <Text style={{ color: S.WHITE_80, fontSize: 13, fontWeight: '600' }}>+ Add high checkout</Text>
-                      </TouchableOpacity>
+                      <Chip onPress={() => openAddCheckout(gameIndex)} label="+ Add high checkout" />
                     )}
                   </View>
-                </View>
+                </Card>
               );
             })}
           </ScrollView>
 
           {/* Bottom bar */}
-          <View style={{ flexDirection: 'row', gap: 10, padding: 20, paddingTop: 8 }}>
-            <TouchableOpacity
-              onPress={() => setEditing(false)}
-              style={{
-                flex: 1, padding: 14, borderRadius: 12, alignItems: 'center',
-                backgroundColor: 'rgba(255,255,255,0.08)', borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.25)',
-              }}
-            >
-              <Text style={{ color: S.WHITE_80, fontWeight: '600' }}>Cancel</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={submit}
+          <View className="flex-row gap-2.5 p-5 pt-2">
+            <Button variant="ghost" className="flex-1" onPress={() => { setEditing(false); setAdminCorrecting(false); }}>Cancel</Button>
+            <Button
+              className="flex-1"
               disabled={!allComplete || isSubmitting}
-              style={[allComplete && !isSubmitting ? S.primaryButton : S.primaryButtonDisabled, { flex: 1 }]}
+              loading={isSubmitting}
+              onPress={adminCorrecting ? saveAdminCorrection : submit}
             >
-              {isSubmitting ? <ActivityIndicator color={S.WHITE} /> : <Text style={S.primaryButtonText}>Submit Result</Text>}
-            </TouchableOpacity>
+              {adminCorrecting ? 'Save Correction' : 'Submit Result'}
+            </Button>
           </View>
         </>
       )}
 
       {/* Player picker modal */}
-      <Modal visible={!!picker} transparent animationType="fade">
-        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.75)', justifyContent: 'center', padding: 24 }}>
-          <BlurView intensity={30} tint="dark" style={{ borderRadius: 20, overflow: 'hidden', maxHeight: '75%' }}>
-            <View style={S.glassCard}>
-              <Text style={{ color: S.WHITE, fontSize: 18, fontWeight: '700', marginBottom: 4 }}>
-                {picker?.side === 'home' ? homeTeamName : awayTeamName}
-              </Text>
-              <Text style={{ color: S.WHITE_50, fontSize: 12, marginBottom: 16 }}>
-                {picker && games[picker.gameIndex].type === 'singles' ? 'Pick 1 player' : 'Pick 2 players'}
-              </Text>
-              <ScrollView style={{ maxHeight: 320 }}>
-                {picker && (picker.side === 'home' ? homePlayers : awayPlayers).map((p) => {
-                  const game = games[picker.gameIndex];
-                  const selected = (picker.side === 'home' ? game.homePlayerIds : game.awayPlayerIds).includes(p.id);
-                  const lockedInGame = !selected && game.type === 'singles'
-                    ? singlesGameIndexFor(picker.side, p.id, picker.gameIndex)
-                    : -1;
-                  const disabled = lockedInGame !== -1;
-                  return (
-                    <TouchableOpacity
-                      key={p.id}
-                      onPress={() => togglePlayer(picker.gameIndex, picker.side, p.id)}
-                      disabled={disabled}
-                      style={{
-                        flexDirection: 'row', alignItems: 'center', minHeight: 48, padding: 14, borderRadius: 10, marginBottom: 8,
-                        backgroundColor: selected ? 'rgba(0,122,255,0.2)' : 'rgba(255,255,255,0.08)',
-                        borderWidth: 1.5, borderColor: selected ? S.BLUE : 'rgba(255,255,255,0.22)',
-                        opacity: disabled ? 0.4 : 1,
-                      }}
-                    >
-                      <Text style={{ color: S.WHITE, fontWeight: '600', fontSize: 15, flex: 1 }}>{p.name}</Text>
-                      {disabled && (
-                        <Text style={{ color: S.WHITE_50, fontSize: 11 }}>Playing Game {lockedInGame + 1}</Text>
-                      )}
-                    </TouchableOpacity>
-                  );
-                })}
-              </ScrollView>
-              <TouchableOpacity
-                onPress={() => setPicker(null)}
-                style={[S.primaryButton, { marginTop: 16 }]}
+      <Sheet visible={!!picker} onClose={() => setPicker(null)}>
+        <Heading className="mb-1">{picker?.side === 'home' ? homeTeamName : awayTeamName}</Heading>
+        <Body size="sm" className="mb-4">
+          {picker && games[picker.gameIndex].type === 'singles' ? 'Pick 1 player' : 'Pick 2 players'}
+        </Body>
+        <ScrollView style={{ maxHeight: 320 }}>
+          {picker && (picker.side === 'home' ? homePlayers : awayPlayers).map((p) => {
+            const game = games[picker.gameIndex];
+            const selected = (picker.side === 'home' ? game.homePlayerIds : game.awayPlayerIds).includes(p.id);
+            const lockedInGame = !selected && game.type === 'singles'
+              ? singlesGameIndexFor(picker.side, p.id, picker.gameIndex)
+              : -1;
+            const disabled = lockedInGame !== -1;
+            return (
+              <TouchableOpacity activeOpacity={0.7}
+                key={p.id}
+                onPress={() => togglePlayer(picker.gameIndex, picker.side, p.id)}
+                disabled={disabled}
+                className={[
+                  'flex-row items-center min-h-[48px] p-3.5 rounded-xl mb-2',
+                  selected ? 'bg-brand-fill dark:bg-brand-fill-dark' : 'bg-surface-2 dark:bg-surface-2-dark',
+                  disabled ? 'opacity-40' : '',
+                ].join(' ')}
               >
-                <Text style={S.primaryButtonText}>Done</Text>
+                <Body tone={selected ? 'brand' : 'strong'} weight="semibold" className="flex-1">{p.name}</Body>
+                {disabled && <Body size="xs">Playing Game {lockedInGame + 1}</Body>}
               </TouchableOpacity>
-            </View>
-          </BlurView>
-        </View>
-      </Modal>
+            );
+          })}
+        </ScrollView>
+        <Button className="mt-4" onPress={() => setPicker(null)}>Done</Button>
+      </Sheet>
 
       {/* High checkout modal */}
-      <Modal visible={!!checkoutModal} transparent animationType="fade">
-        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.75)', justifyContent: 'center', padding: 24 }}>
-          <BlurView intensity={30} tint="dark" style={{ borderRadius: 20, overflow: 'hidden' }}>
-            <View style={S.glassCard}>
-              <Text style={{ color: S.WHITE, fontSize: 18, fontWeight: '700', marginBottom: 16 }}>High Checkout</Text>
-              <Text style={S.label}>PLAYER</Text>
-              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 16 }}>
-                {checkoutModal && [...games[checkoutModal.gameIndex].homePlayerIds, ...games[checkoutModal.gameIndex].awayPlayerIds].map((id) => {
-                  const selected = checkoutPlayerId === id;
-                  return (
-                    <TouchableOpacity
-                      key={id}
-                      onPress={() => setCheckoutPlayerId(id)}
-                      style={[S.tapBox, { paddingHorizontal: 14 }, selected && S.tapBoxSelected]}
-                    >
-                      <Text style={{ color: selected ? S.WHITE : S.WHITE_80, fontWeight: '600', fontSize: 14 }}>
-                        {playerName(id)}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-              <Text style={S.label}>CHECKOUT (FREE TEXT, E.G. "121")</Text>
-              <TextInput
-                value={checkoutValue}
-                onChangeText={setCheckoutValue}
-                placeholder="e.g. 121"
-                placeholderTextColor={S.WHITE_30}
-                autoFocus
-                style={[S.input, { marginBottom: 20 }]}
-              />
-              <View style={{ flexDirection: 'row', gap: 10 }}>
-                <TouchableOpacity
-                  onPress={() => setCheckoutModal(null)}
-                  style={{
-                    flex: 1, padding: 14, borderRadius: 12, alignItems: 'center',
-                    backgroundColor: 'rgba(255,255,255,0.08)', borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.25)',
-                  }}
-                >
-                  <Text style={{ color: S.WHITE_80, fontWeight: '600' }}>Cancel</Text>
-                </TouchableOpacity>
-                {checkoutModal?.editIndex !== null && (
-                  <TouchableOpacity
-                    onPress={removeCheckout}
-                    style={{ flex: 1, padding: 14, borderRadius: 12, backgroundColor: 'rgba(255,59,48,0.15)', alignItems: 'center', borderWidth: 1, borderColor: 'rgba(255,59,48,0.4)' }}
-                  >
-                    <Text style={{ color: S.RED }}>Remove</Text>
-                  </TouchableOpacity>
-                )}
-                <TouchableOpacity
-                  onPress={saveCheckout}
-                  disabled={!checkoutPlayerId || !checkoutValue.trim()}
-                  style={[checkoutPlayerId && checkoutValue.trim() ? S.primaryButton : S.primaryButtonDisabled, { flex: 1 }]}
-                >
-                  <Text style={S.primaryButtonText}>Save</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          </BlurView>
+      <Sheet visible={!!checkoutModal} onClose={() => setCheckoutModal(null)}>
+        <Heading className="mb-4">High Checkout</Heading>
+        <Label>Player</Label>
+        <View className="flex-row flex-wrap gap-1.5 mb-4">
+          {checkoutModal && [...games[checkoutModal.gameIndex].homePlayerIds, ...games[checkoutModal.gameIndex].awayPlayerIds].map((id) => (
+            <Chip
+              key={id}
+              label={playerName(id)}
+              selected={checkoutPlayerId === id}
+              onPress={() => setCheckoutPlayerId(id)}
+            />
+          ))}
         </View>
-      </Modal>
-    </LinearGradient>
+        {!checkoutPlayerId && (
+          <Body size="sm" tone="dim" className="mb-3 -mt-2">Pick who hit this checkout before saving.</Body>
+        )}
+        <Label>Checkout (free text, e.g. "121")</Label>
+        <Input
+          value={checkoutValue}
+          onChangeText={setCheckoutValue}
+          placeholder="e.g. 121"
+          className="mb-5"
+        />
+        <View className="flex-row gap-2.5">
+          <Button variant="ghost" className="flex-1" onPress={() => setCheckoutModal(null)}>Cancel</Button>
+          {checkoutModal?.editIndex !== null && (
+            <Button variant="danger" className="flex-1" onPress={removeCheckout}>Remove</Button>
+          )}
+          <Button className="flex-1" disabled={!checkoutPlayerId || !checkoutValue.trim()} onPress={saveCheckout}>Save</Button>
+        </View>
+      </Sheet>
+    </>
+  );
+
+  if (isAdmin && isDesktop) {
+    return (
+      <>
+        <Stack.Screen options={{ headerShown: false }} />
+        <AdminShell
+          title={title}
+          breadcrumb={[
+            { label: 'Dashboard', path: '/(protected)/(tabs)/admin' },
+            { label: 'Results' },
+          ]}
+        >
+          <View style={{ maxWidth: 900 }}>{body}</View>
+        </AdminShell>
+      </>
+    );
+  }
+
+  return (
+    <Screen scroll={false} header={<AppBar title={title} />}>
+      <Stack.Screen options={{ headerShown: false }} />
+      {body}
+    </Screen>
   );
 }

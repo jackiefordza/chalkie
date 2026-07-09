@@ -72,12 +72,12 @@ export async function seedTestLeague(leagueId: string): Promise<void> {
   await Promise.all([
     setDoc(doc(db, 'teams', HOME_TEAM_ID), {
       leagueId, seasonId: SEASON_ID, divisionId: DIVISION_ID, name: 'Test Home Tigers',
-      captainUserId: null, viceCaptainUserId: null, playerInviteCode: null, address: null,
+      captainUserId: null, viceCaptainUserId: null, address: null, venuePhone: null,
       createdAt: serverTimestamp(),
     }, { merge: true }),
     setDoc(doc(db, 'teams', AWAY_TEAM_ID), {
       leagueId, seasonId: SEASON_ID, divisionId: DIVISION_ID, name: 'Test Away Eagles',
-      captainUserId: null, viceCaptainUserId: null, playerInviteCode: null, address: null,
+      captainUserId: null, viceCaptainUserId: null, address: null, venuePhone: null,
       createdAt: serverTimestamp(),
     }, { merge: true }),
     ...HOME_PLAYER_NAMES.map((name, i) => setDoc(doc(db, 'players', homePlayerId(i + 1)), {
@@ -99,11 +99,11 @@ export async function seedTestLeague(leagueId: string): Promise<void> {
     setDoc(doc(db, 'players', homePlayerId(1)), { claimedByUserId: homeUid, claimedAt: serverTimestamp() }, { merge: true }),
     setDoc(doc(db, 'players', awayPlayerId(1)), { claimedByUserId: awayUid, claimedAt: serverTimestamp() }, { merge: true }),
     setDoc(doc(db, 'users', homeUid), {
-      role: 'captain', leagueId, teamId: HOME_TEAM_ID, divisionId: DIVISION_ID, playerId: homePlayerId(1),
+      role: 'captain', leagueId, seasonId: SEASON_ID, teamId: HOME_TEAM_ID, divisionId: DIVISION_ID, playerId: homePlayerId(1),
       pendingRequestType: null, pendingRequestId: null,
     }, { merge: true }),
     setDoc(doc(db, 'users', awayUid), {
-      role: 'captain', leagueId, teamId: AWAY_TEAM_ID, divisionId: DIVISION_ID, playerId: awayPlayerId(1),
+      role: 'captain', leagueId, seasonId: SEASON_ID, teamId: AWAY_TEAM_ID, divisionId: DIVISION_ID, playerId: awayPlayerId(1),
       pendingRequestType: null, pendingRequestId: null,
     }, { merge: true }),
     setDoc(doc(db, 'teams', HOME_TEAM_ID), { captainUserId: homeUid }, { merge: true }),
