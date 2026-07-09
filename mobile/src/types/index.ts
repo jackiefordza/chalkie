@@ -2,7 +2,7 @@ export type UserRole = 'admin' | 'captain' | 'viceCaptain' | 'player' | 'pending
 
 export type PhoneVisibility = 'private' | 'captains' | 'public';
 
-export type PendingRequestType = 'team' | 'join';
+export type PendingRequestType = 'join' | 'claim' | 'captainRole';
 
 export interface AppUser {
   uid: string;
@@ -25,7 +25,6 @@ export interface League {
   id: string;
   name: string;
   adminUserId: string;
-  captainInviteCode: string | null;
   createdAt: Date;
 }
 
@@ -56,8 +55,8 @@ export interface Team {
   name: string;
   captainUserId: string | null;
   viceCaptainUserId: string | null;
-  playerInviteCode: string | null;
   address: string | null;
+  venuePhone: string | null;
   createdAt: Date;
 }
 
@@ -74,27 +73,28 @@ export interface Player {
   createdAt: Date;
 }
 
-export interface JoinCode {
-  id: string;
-  leagueId: string;
-  seasonId: string | null;
-  divisionId: string | null;
-  teamId: string;
-  role: UserRole;
-  createdByUserId: string;
-  usedByUserId: string | null;
-  usedAt: Date | null;
-  createdAt: Date;
-}
+export type JoinRequestStatus = 'pending' | 'approved' | 'rejected';
 
-export interface ClaimCode {
+// A single request-and-approve model covers everyone joining a league after
+// admin has created the team: a plain new player, a player claiming a
+// placeholder record their captain already added ('claim'), or someone
+// asking to become a team's captain/VC ('captainRole'). Who approves depends
+// on requestType — see firestore.rules and the Roles & Permissions section
+// of PLAN.md: 'join'/'claim' → that team's captain/VC; 'captainRole' with
+// requestedRole 'captain' (or 'viceCaptain' when the team has no captain yet)
+// → league admin; 'captainRole' with requestedRole 'viceCaptain' on a team
+// that already has a captain → that captain specifically, not just any VC.
+export interface JoinRequest {
   id: string;
   leagueId: string;
   teamId: string;
-  playerId: string;
-  createdByUserId: string;
-  usedByUserId: string | null;
-  usedAt: Date | null;
+  teamName: string;
+  userId: string;
+  displayName: string;
+  requestType: 'join' | 'claim' | 'captainRole';
+  claimPlayerId: string | null; // set when requestType === 'claim'
+  requestedRole: 'captain' | 'viceCaptain' | null; // set when requestType === 'captainRole'
+  status: JoinRequestStatus;
   createdAt: Date;
 }
 

@@ -1,18 +1,16 @@
 import { useState, useEffect, useMemo } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, ActivityIndicator, Modal, TextInput, Alert } from 'react-native';
+import { View, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
 import { Stack, useLocalSearchParams } from 'expo-router';
-import { LinearGradient } from 'expo-linear-gradient';
-import { BlurView } from 'expo-blur';
 import {
   collection, doc, onSnapshot, query, where, orderBy,
   getDocs, writeBatch, updateDoc, deleteDoc, serverTimestamp,
 } from 'firebase/firestore';
 import { db } from '@/config/firebase';
-import { goBack } from '@/lib/navigation';
 import { useAuthStore } from '@/stores/authStore';
 import { generateRoundRobinFixtures } from '@/lib/fixtures';
+import { RAW } from '@/lib/theme';
+import { Screen, Heading, Body, Caption, Button, Card, ListRow, Input, Label, Sheet, AppBar } from '@/components/ui';
 import type { Match } from '@/types';
-import * as S from '@/styles/common';
 
 interface TeamInfo { id: string; name: string; address: string | null }
 
@@ -212,189 +210,89 @@ export default function AdminFixturesScreen() {
   const showGenerator = !isLoading && (matches.length === 0 || isRegenerating);
 
   return (
-    <LinearGradient colors={S.GRADIENT} style={{ flex: 1 }}>
-      <Stack.Screen
-        options={{
-          title: divisionName ? `${divisionName} Fixtures` : 'Fixtures',
-          headerLeft: () => (
-            <TouchableOpacity onPress={() => goBack()} hitSlop={12} style={{ paddingRight: 12 }}>
-              <Text style={{ color: S.WHITE, fontSize: 16 }}>‹ Back</Text>
-            </TouchableOpacity>
-          ),
-        }}
-      />
-      <ScrollView contentContainerStyle={{ padding: 20 }}>
-        {loadError ? (
-          <View style={S.errorBox}>
-            <Text style={{ color: S.RED, fontWeight: '600', marginBottom: 4 }}>Couldn't load fixtures</Text>
-            <Text style={{ color: S.RED, fontSize: 13 }}>{loadError}</Text>
-          </View>
-        ) : isLoading ? (
-          <ActivityIndicator color={S.BLUE} style={{ marginTop: 40 }} />
-        ) : showGenerator ? (
-          <BlurView intensity={20} tint="dark" style={{ borderRadius: 20, overflow: 'hidden' }}>
-            <View style={S.glassCard}>
-              <Text style={{ color: S.WHITE, fontSize: 20, fontWeight: '700', marginBottom: 6 }}>
-                Generate Fixtures
-              </Text>
-              <Text style={{ color: S.WHITE_50, fontSize: 13, marginBottom: 20 }}>
-                {teams.length} teams — every team plays every other team twice (home & away).
-                {teams.length > 0 ? ` That's ${teams.length * (teams.length - 1)} matches.` : ''}
-              </Text>
+    <Screen header={<AppBar title={divisionName ? `${divisionName} Fixtures` : 'Fixtures'} />}>
+      <Stack.Screen options={{ headerShown: false }} />
+      {loadError ? (
+        <Card tone="coral">
+          <Body tone="coral" weight="semibold" className="mb-1">Couldn't load fixtures</Body>
+          <Body tone="coral" size="sm">{loadError}</Body>
+        </Card>
+      ) : isLoading ? (
+        <ActivityIndicator color={RAW.brand} style={{ marginTop: 40 }} />
+      ) : showGenerator ? (
+        <Card>
+          <Heading size="lg" className="mb-1.5">Generate Fixtures</Heading>
+          <Body size="sm" className="mb-5">
+            {teams.length} teams — every team plays every other team twice (home & away).
+            {teams.length > 0 ? ` That's ${teams.length * (teams.length - 1)} matches.` : ''}
+          </Body>
 
-              {genError ? (
-                <View style={S.errorBox}>
-                  <Text style={{ color: S.RED }}>{genError}</Text>
-                </View>
-              ) : null}
+          {genError ? (
+            <Card tone="coral" className="mb-4" padded={false}>
+              <Body tone="coral" className="p-3">{genError}</Body>
+            </Card>
+          ) : null}
 
-              <Text style={S.label}>FIRST ROUND DATE (YYYY-MM-DD)</Text>
-              <TextInput
-                value={startDateText}
-                onChangeText={setStartDateText}
-                placeholder="e.g. 2026-09-10"
-                placeholderTextColor={S.WHITE_30}
-                autoCapitalize="none"
-                autoCorrect={false}
-                style={[S.input, { marginBottom: 16 }]}
-              />
+          <Label>First round date (YYYY-MM-DD)</Label>
+          <Input value={startDateText} onChangeText={setStartDateText} placeholder="e.g. 2026-09-10" autoCapitalize="none" autoCorrect={false} className="mb-4" />
 
-              <Text style={S.label}>DAYS BETWEEN ROUNDS</Text>
-              <TextInput
-                value={intervalDays}
-                onChangeText={setIntervalDays}
-                placeholder="7"
-                placeholderTextColor={S.WHITE_30}
-                keyboardType="number-pad"
-                style={[S.input, { marginBottom: 24 }]}
-              />
+          <Label>Days between rounds</Label>
+          <Input value={intervalDays} onChangeText={setIntervalDays} placeholder="7" keyboardType="number-pad" className="mb-6" />
 
-              <TouchableOpacity
-                onPress={generateFixtures}
-                disabled={isGenerating || teams.length < 2}
-                style={isGenerating || teams.length < 2 ? S.primaryButtonDisabled : S.primaryButton}
-                activeOpacity={0.8}
-              >
-                {isGenerating
-                  ? <ActivityIndicator color={S.WHITE} />
-                  : <Text style={S.primaryButtonText}>Generate Fixtures</Text>
-                }
-              </TouchableOpacity>
+          <Button onPress={generateFixtures} disabled={isGenerating || teams.length < 2} loading={isGenerating}>
+            Generate Fixtures
+          </Button>
 
-              {isRegenerating && (
-                <TouchableOpacity
-                  onPress={() => setIsRegenerating(false)}
-                  style={{ marginTop: 14, minHeight: 44, justifyContent: 'center', alignItems: 'center', borderRadius: 12, borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.25)' }}
-                >
-                  <Text style={{ color: S.WHITE_80, fontWeight: '600' }}>Cancel</Text>
-                </TouchableOpacity>
-              )}
-            </View>
-          </BlurView>
-        ) : (
-          <>
-            <TouchableOpacity
-              onPress={deleteAllFixtures}
-              style={{
-                alignSelf: 'flex-end', marginBottom: 12, minHeight: 40, justifyContent: 'center',
-                paddingHorizontal: 12, borderRadius: 8, borderWidth: 1.5, borderColor: 'rgba(255,107,107,0.4)', backgroundColor: 'rgba(255,59,48,0.1)',
-              }}
-              activeOpacity={0.7}
-            >
-              <Text style={{ color: S.RED, fontSize: 13, fontWeight: '600' }}>Delete all & regenerate</Text>
-            </TouchableOpacity>
+          {isRegenerating && (
+            <Button variant="ghost" className="mt-3.5" onPress={() => setIsRegenerating(false)}>Cancel</Button>
+          )}
+        </Card>
+      ) : (
+        <>
+          <Button variant="danger" size="sm" className="self-end mb-3" onPress={deleteAllFixtures}>
+            Delete all & regenerate
+          </Button>
 
-            {rounds.map(([round, roundMatches]) => (
-              <View key={round} style={{ marginBottom: 20 }}>
-                <Text style={{ color: S.WHITE_50, fontSize: 12, fontWeight: '700', marginBottom: 8 }}>
-                  ROUND {round} · {formatDate(roundMatches[0].scheduledDate)}
-                </Text>
+          {rounds.map(([round, roundMatches]) => (
+            <View key={round} className="mb-5">
+              <Caption className="mb-2">Round {round} · {formatDate(roundMatches[0].scheduledDate)}</Caption>
+              <View className="gap-2">
                 {roundMatches.map((match) => (
-                  <TouchableOpacity
+                  <ListRow
                     key={match.id}
+                    title={`${teamName(match.homeTeamId)} vs ${teamName(match.awayTeamId)}`}
+                    subtitle={`${match.venue ?? 'No venue set'}${match.status !== 'scheduled' ? ` · ${match.status}` : ''}`}
                     onPress={() => openEdit(match)}
-                    activeOpacity={0.7}
-                    style={{
-                      padding: 14, borderRadius: 12, marginBottom: 8,
-                      backgroundColor: 'rgba(255,255,255,0.07)',
-                      borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.22)',
-                    }}
-                  >
-                    <Text style={{ color: S.WHITE, fontWeight: '600' }}>
-                      {teamName(match.homeTeamId)} <Text style={{ color: S.WHITE_50 }}>vs</Text> {teamName(match.awayTeamId)}
-                    </Text>
-                    <Text style={{ color: S.WHITE_50, fontSize: 12, marginTop: 2 }}>
-                      {match.venue ?? 'No venue set'}
-                      {match.status !== 'scheduled' ? ` · ${match.status}` : ''}
-                    </Text>
-                  </TouchableOpacity>
+                  />
                 ))}
               </View>
-            ))}
-          </>
-        )}
-      </ScrollView>
+            </View>
+          ))}
+        </>
+      )}
 
       {/* Edit fixture modal */}
-      <Modal visible={!!editTarget} transparent animationType="fade">
-        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.75)', justifyContent: 'center', padding: 24 }}>
-          <BlurView intensity={30} tint="dark" style={{ borderRadius: 20, overflow: 'hidden' }}>
-            <View style={S.glassCard}>
-              <Text style={{ color: S.WHITE, fontSize: 20, fontWeight: '700', marginBottom: 4 }}>
-                Edit Fixture
-              </Text>
-              <Text style={{ color: S.WHITE_50, fontSize: 13, marginBottom: 20 }}>
-                {editTarget ? `${teamName(editTarget.homeTeamId)} vs ${teamName(editTarget.awayTeamId)}` : ''}
-              </Text>
+      <Sheet visible={!!editTarget} onClose={() => setEditTarget(null)}>
+        <Heading size="lg" className="mb-1">Edit Fixture</Heading>
+        <Body size="sm" className="mb-5">
+          {editTarget ? `${teamName(editTarget.homeTeamId)} vs ${teamName(editTarget.awayTeamId)}` : ''}
+        </Body>
 
-              <Text style={S.label}>DATE (YYYY-MM-DD)</Text>
-              <TextInput
-                value={editDateText}
-                onChangeText={setEditDateText}
-                placeholderTextColor={S.WHITE_30}
-                autoCapitalize="none"
-                autoCorrect={false}
-                style={[S.input, { marginBottom: 16 }]}
-              />
+        <Label>Date (YYYY-MM-DD)</Label>
+        <Input value={editDateText} onChangeText={setEditDateText} autoCapitalize="none" autoCorrect={false} className="mb-4" />
 
-              <Text style={S.label}>VENUE</Text>
-              <TextInput
-                value={editVenue}
-                onChangeText={setEditVenue}
-                placeholder="e.g. The Red Lion, 12 High St"
-                placeholderTextColor={S.WHITE_30}
-                autoCapitalize="words"
-                style={[S.input, { marginBottom: 24 }]}
-              />
+        <Label>Venue</Label>
+        <Input value={editVenue} onChangeText={setEditVenue} placeholder="e.g. The Red Lion, 12 High St" autoCapitalize="words" className="mb-6" />
 
-              <View style={{ flexDirection: 'row', gap: 10, marginBottom: 12 }}>
-                <TouchableOpacity
-                  onPress={() => setEditTarget(null)}
-                  style={{ flex: 1, padding: 14, borderRadius: 12, alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.08)', borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.25)' }}
-                >
-                  <Text style={{ color: S.WHITE_80, fontWeight: '600' }}>Cancel</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  onPress={saveEdit}
-                  disabled={isSavingEdit}
-                  style={[isSavingEdit ? S.primaryButtonDisabled : S.primaryButton, { flex: 1 }]}
-                >
-                  {isSavingEdit ? <ActivityIndicator color={S.WHITE} /> : <Text style={S.primaryButtonText}>Save</Text>}
-                </TouchableOpacity>
-              </View>
-
-              {editTarget?.status === 'scheduled' && (
-                <TouchableOpacity
-                  onPress={deleteFixture}
-                  style={{ minHeight: 44, justifyContent: 'center', alignItems: 'center', borderRadius: 10, borderWidth: 1.5, borderColor: 'rgba(255,107,107,0.4)' }}
-                >
-                  <Text style={{ color: S.RED, fontSize: 13, fontWeight: '600' }}>Delete this fixture</Text>
-                </TouchableOpacity>
-              )}
-            </View>
-          </BlurView>
+        <View className="flex-row gap-2.5 mb-3">
+          <Button variant="ghost" className="flex-1" onPress={() => setEditTarget(null)}>Cancel</Button>
+          <Button className="flex-1" disabled={isSavingEdit} loading={isSavingEdit} onPress={saveEdit}>Save</Button>
         </View>
-      </Modal>
-    </LinearGradient>
+
+        {editTarget?.status === 'scheduled' && (
+          <Button variant="danger" onPress={deleteFixture}>Delete this fixture</Button>
+        )}
+      </Sheet>
+    </Screen>
   );
 }

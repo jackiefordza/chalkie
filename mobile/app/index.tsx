@@ -18,14 +18,14 @@ export default function IndexScreen() {
 
     switch (appUser.role) {
       case 'admin':
-        router.replace('/(protected)/admin');
+        router.replace('/(protected)/(tabs)/admin');
         break;
       case 'captain':
       case 'viceCaptain':
-        router.replace('/(protected)/captain');
+        router.replace('/(protected)/(tabs)/captain');
         break;
       case 'player':
-        router.replace('/(protected)/home');
+        router.replace('/(protected)/(tabs)/home');
         break;
       case 'pending':
         // Already submitted a request — go to waiting screen

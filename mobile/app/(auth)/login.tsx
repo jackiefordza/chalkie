@@ -1,19 +1,12 @@
 import { useState } from 'react';
-import {
-  View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  KeyboardAvoidingView,
-  Platform,
-  ScrollView,
-  ActivityIndicator,
-} from 'react-native';
+import { View, Text, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
 import { router } from 'expo-router';
-import { LinearGradient } from 'expo-linear-gradient';
-import { BlurView } from 'expo-blur';
+import { useColorScheme } from 'nativewind';
 import { useAuthStore } from '@/stores/authStore';
 import { TEST_HOME_EMAIL, TEST_AWAY_EMAIL, TEST_PASSWORD } from '@/lib/testData';
+import { FONT_DISPLAY } from '@/styles/typography';
+import { RAW } from '@/lib/theme';
+import { Heading, Body, Caption, Button, Card, Input, Label, AppIcon } from '@/components/ui';
 
 export default function LoginScreen() {
   const [email, setEmail] = useState('');
@@ -22,6 +15,8 @@ export default function LoginScreen() {
   const [quickSigningIn, setQuickSigningIn] = useState<'home' | 'away' | null>(null);
 
   const { signIn, error, clearError } = useAuthStore();
+  const { colorScheme } = useColorScheme();
+  const isDark = colorScheme === 'dark';
 
   async function handleSignIn() {
     if (!email.trim() || !password) return;
@@ -51,200 +46,104 @@ export default function LoginScreen() {
   }
 
   return (
-    <LinearGradient
-      colors={['#0f0c29', '#302b63', '#24243e']}
-      style={{ flex: 1 }}
-    >
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={{ flex: 1 }}
-      >
+    <View className="flex-1 bg-bg dark:bg-bg-dark">
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
         <ScrollView
           contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', paddingHorizontal: 24 }}
           keyboardShouldPersistTaps="handled"
         >
           {/* Logo / Title */}
           <View className="items-center mb-10">
-            <Text style={{ fontSize: 52, marginBottom: 8 }}>🎯</Text>
+            <View className="w-20 h-20 rounded-full items-center justify-center bg-brand-fill dark:bg-brand-fill-dark mb-3">
+              <AppIcon name="target" size={40} color={isDark ? RAW.brandInkDark : RAW.brandInk} />
+            </View>
             <Text
-              style={{
-                fontSize: 36,
-                fontWeight: '700',
-                color: '#FFFFFF',
-                letterSpacing: -0.5,
-              }}
+              className="text-text dark:text-text-dark"
+              style={{ fontFamily: FONT_DISPLAY, fontSize: 36, fontWeight: '700', letterSpacing: -0.5 }}
             >
               Chalkie
             </Text>
-            <Text style={{ fontSize: 15, color: 'rgba(255,255,255,0.55)', marginTop: 4 }}>
-              Darts League Management
-            </Text>
+            <Body className="mt-1">Darts League Management</Body>
           </View>
 
-          {/* Frosted glass card */}
-          <BlurView intensity={25} tint="dark" style={{ borderRadius: 24, overflow: 'hidden' }}>
-            <View
-              style={{
-                padding: 28,
-                backgroundColor: 'rgba(255,255,255,0.08)',
-                borderWidth: 1,
-                borderColor: 'rgba(255,255,255,0.15)',
-                borderRadius: 24,
-              }}
-            >
-              <Text
-                style={{
-                  fontSize: 22,
-                  fontWeight: '600',
-                  color: '#FFFFFF',
-                  marginBottom: 24,
-                }}
-              >
-                Sign In
-              </Text>
+          <Card>
+            <Heading size="lg" className="mb-6">Sign In</Heading>
 
-              {/* Error banner */}
-              {error ? (
-                <View
-                  style={{
-                    backgroundColor: 'rgba(255,59,48,0.15)',
-                    borderWidth: 1,
-                    borderColor: 'rgba(255,59,48,0.4)',
-                    borderRadius: 12,
-                    padding: 12,
-                    marginBottom: 16,
-                  }}
-                >
-                  <Text style={{ color: '#FF6B6B', fontSize: 14 }}>{error}</Text>
-                </View>
-              ) : null}
+            {error ? (
+              <Card tone="coral" className="mb-4" padded={false}>
+                <Body tone="coral" className="p-3">{error}</Body>
+              </Card>
+            ) : null}
 
-              {/* Email field */}
-              <View style={{ marginBottom: 14 }}>
-                <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 13, marginBottom: 8, fontWeight: '500' }}>
-                  EMAIL
-                </Text>
-                <TextInput
-                  value={email}
-                  onChangeText={setEmail}
-                  placeholder="you@example.com"
-                  placeholderTextColor="rgba(255,255,255,0.3)"
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  keyboardType="email-address"
-                  returnKeyType="next"
-                  style={{
-                    backgroundColor: 'rgba(255,255,255,0.1)',
-                    borderWidth: 1,
-                    borderColor: 'rgba(255,255,255,0.3)',
-                    borderRadius: 12,
-                    padding: 14,
-                    fontSize: 16,
-                    color: '#FFFFFF',
-                  }}
-                />
-              </View>
-
-              {/* Password field */}
-              <View style={{ marginBottom: 24 }}>
-                <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 13, marginBottom: 8, fontWeight: '500' }}>
-                  PASSWORD
-                </Text>
-                <TextInput
-                  value={password}
-                  onChangeText={setPassword}
-                  placeholder="••••••••"
-                  placeholderTextColor="rgba(255,255,255,0.3)"
-                  secureTextEntry
-                  returnKeyType="done"
-                  onSubmitEditing={handleSignIn}
-                  style={{
-                    backgroundColor: 'rgba(255,255,255,0.1)',
-                    borderWidth: 1,
-                    borderColor: 'rgba(255,255,255,0.3)',
-                    borderRadius: 12,
-                    padding: 14,
-                    fontSize: 16,
-                    color: '#FFFFFF',
-                  }}
-                />
-              </View>
-
-              {/* Sign In button */}
-              <TouchableOpacity
-                onPress={handleSignIn}
-                disabled={isSubmitting || !email.trim() || !password}
-                style={{
-                  backgroundColor: isSubmitting || !email.trim() || !password
-                    ? 'rgba(0,122,255,0.4)'
-                    : '#007AFF',
-                  borderRadius: 14,
-                  paddingVertical: 16,
-                  alignItems: 'center',
-                }}
-                activeOpacity={0.8}
-              >
-                {isSubmitting ? (
-                  <ActivityIndicator color="#FFFFFF" />
-                ) : (
-                  <Text style={{ color: '#FFFFFF', fontSize: 17, fontWeight: '600' }}>
-                    Sign In
-                  </Text>
-                )}
-              </TouchableOpacity>
+            <View className="mb-3.5">
+              <Label>Email</Label>
+              <Input
+                value={email}
+                onChangeText={setEmail}
+                placeholder="you@example.com"
+                autoCapitalize="none"
+                autoCorrect={false}
+                keyboardType="email-address"
+                returnKeyType="next"
+              />
             </View>
-          </BlurView>
+
+            <View className="mb-6">
+              <Label>Password</Label>
+              <Input
+                value={password}
+                onChangeText={setPassword}
+                placeholder="••••••••"
+                secureTextEntry
+                returnKeyType="done"
+                onSubmitEditing={handleSignIn}
+              />
+            </View>
+
+            <Button
+              onPress={handleSignIn}
+              disabled={isSubmitting || !email.trim() || !password}
+              loading={isSubmitting}
+            >
+              Sign In
+            </Button>
+          </Card>
 
           {/* Register link */}
-          <TouchableOpacity
-            onPress={() => router.push('/(auth)/register')}
-            style={{ alignItems: 'center', marginTop: 24 }}
-            activeOpacity={0.7}
-          >
-            <Text style={{ color: 'rgba(255,255,255,0.55)', fontSize: 15 }}>
-              New to Chalkie?{' '}
-              <Text style={{ color: '#007AFF', fontWeight: '600' }}>Create Account</Text>
-            </Text>
-          </TouchableOpacity>
+          <View className="items-center mt-6">
+            <Body onPress={() => router.push('/(auth)/register')} suppressHighlighting>
+              New to Chalkie? <Body tone="brand" weight="semibold">Create Account</Body>
+            </Body>
+          </View>
 
           {/* Dev-only: instant sign-in as the seeded test captains */}
           {__DEV__ && (
-            <View style={{ marginTop: 28, alignItems: 'center' }}>
-              <Text style={{ color: 'rgba(255,255,255,0.35)', fontSize: 12, marginBottom: 10 }}>
-                🧪 DEV QUICK SIGN-IN
-              </Text>
-              <View style={{ flexDirection: 'row', gap: 10 }}>
-                <TouchableOpacity
+            <View className="mt-7 items-center">
+              <Caption className="mb-2.5">Dev quick sign-in</Caption>
+              <View className="flex-row gap-2.5">
+                <Button
+                  variant="secondary"
+                  size="sm"
                   onPress={() => handleQuickSignIn('home')}
                   disabled={quickSigningIn !== null}
-                  style={{
-                    paddingHorizontal: 16, minHeight: 44, justifyContent: 'center', borderRadius: 10,
-                    backgroundColor: 'rgba(255,255,255,0.12)', borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.3)',
-                  }}
+                  loading={quickSigningIn === 'home'}
                 >
-                  {quickSigningIn === 'home'
-                    ? <ActivityIndicator color="#FFFFFF" size="small" />
-                    : <Text style={{ color: 'rgba(255,255,255,0.9)', fontSize: 13, fontWeight: '600' }}>Test Home Captain</Text>
-                  }
-                </TouchableOpacity>
-                <TouchableOpacity
+                  Test Home Captain
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
                   onPress={() => handleQuickSignIn('away')}
                   disabled={quickSigningIn !== null}
-                  style={{
-                    paddingHorizontal: 16, minHeight: 44, justifyContent: 'center', borderRadius: 10,
-                    backgroundColor: 'rgba(255,255,255,0.12)', borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.3)',
-                  }}
+                  loading={quickSigningIn === 'away'}
                 >
-                  {quickSigningIn === 'away'
-                    ? <ActivityIndicator color="#FFFFFF" size="small" />
-                    : <Text style={{ color: 'rgba(255,255,255,0.9)', fontSize: 13, fontWeight: '600' }}>Test Away Captain</Text>
-                  }
-                </TouchableOpacity>
+                  Test Away Captain
+                </Button>
               </View>
             </View>
           )}
         </ScrollView>
       </KeyboardAvoidingView>
-    </LinearGradient>
+    </View>
   );
 }
