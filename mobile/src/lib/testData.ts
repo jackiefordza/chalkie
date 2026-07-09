@@ -99,11 +99,11 @@ export async function seedTestLeague(leagueId: string): Promise<void> {
     setDoc(doc(db, 'players', homePlayerId(1)), { claimedByUserId: homeUid, claimedAt: serverTimestamp() }, { merge: true }),
     setDoc(doc(db, 'players', awayPlayerId(1)), { claimedByUserId: awayUid, claimedAt: serverTimestamp() }, { merge: true }),
     setDoc(doc(db, 'users', homeUid), {
-      role: 'captain', leagueId, teamId: HOME_TEAM_ID, divisionId: DIVISION_ID, playerId: homePlayerId(1),
+      role: 'captain', leagueId, seasonId: SEASON_ID, teamId: HOME_TEAM_ID, divisionId: DIVISION_ID, playerId: homePlayerId(1),
       pendingRequestType: null, pendingRequestId: null,
     }, { merge: true }),
     setDoc(doc(db, 'users', awayUid), {
-      role: 'captain', leagueId, teamId: AWAY_TEAM_ID, divisionId: DIVISION_ID, playerId: awayPlayerId(1),
+      role: 'captain', leagueId, seasonId: SEASON_ID, teamId: AWAY_TEAM_ID, divisionId: DIVISION_ID, playerId: awayPlayerId(1),
       pendingRequestType: null, pendingRequestId: null,
     }, { merge: true }),
     setDoc(doc(db, 'teams', HOME_TEAM_ID), { captainUserId: homeUid }, { merge: true }),

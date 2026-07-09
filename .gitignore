@@ -25,3 +25,6 @@ migrate_working_dir/
 
 # Secret keys
 service-account.json
+
+# Firebase CLI local deploy cache
+.firebase/

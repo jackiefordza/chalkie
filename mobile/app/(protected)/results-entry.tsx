@@ -368,10 +368,13 @@ export default function ResultsEntryScreen() {
     }
   }
 
-  const canEnterResult = (isHome || isAway) && match && match.status !== 'confirmed';
+  // Anyone on either team can view a confirmed match's score card; only
+  // captains/VCs on an unconfirmed one can actually enter/edit a result.
+  const canView = (isHome || isAway) && !!match;
+  const canEnterResult = canView && match!.status !== 'confirmed';
 
   return (
-    <Screen scroll={false} header={<AppBar title="Enter Result" />}>
+    <Screen scroll={false} header={<AppBar title={match?.status === 'confirmed' ? 'Result' : 'Enter Result'} />}>
       <Stack.Screen options={{ headerShown: false }} />
 
       {loadError ? (
@@ -380,14 +383,34 @@ export default function ResultsEntryScreen() {
         </View>
       ) : isLoading ? (
         <ActivityIndicator color={RAW.brand} style={{ marginTop: 60 }} />
-      ) : !canEnterResult ? (
+      ) : !canView ? (
         <View className="p-5">
           <Card className="items-center py-8">
-            <Body tone="strong" weight="semibold">
-              {match?.status === 'confirmed' ? 'Result already confirmed' : "You can't submit this result"}
-            </Body>
+            <Body tone="strong" weight="semibold">You can't view this result</Body>
           </Card>
         </View>
+      ) : match!.status === 'confirmed' ? (
+        <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 8 }}>
+          <Card className="mb-4">
+            <Heading className="mb-1">{homeTeamName} vs {awayTeamName}</Heading>
+            <Body size="sm">
+              {match!.homeLegsWon} - {match!.awayLegsWon} legs · {match!.homeGamesWon} - {match!.awayGamesWon} games
+            </Body>
+          </Card>
+          {toDraft(match!.games ?? []).map((game, gameIndex) => (
+            <Card key={gameIndex} tone="sage" className="mb-3.5">
+              <Caption className="mb-2">Game {gameIndex + 1} · {game.type === 'singles' ? 'Singles' : 'Pairs'}</Caption>
+              <Body tone="strong" className="mb-0.5">
+                {game.homePlayerIds.map(playerName).join(' & ') || '—'} vs {game.awayPlayerIds.map(playerName).join(' & ') || '—'}
+              </Body>
+              <Body size="sm">
+                Legs: {game.score ? `${game.score.home}-${game.score.away}` : '—'}
+                {game.oneEighties.length ? ` · 180s: ${game.oneEighties.map(playerName).join(', ')}` : ''}
+                {game.highCheckouts.length ? ` · Checkouts: ${game.highCheckouts.map((hc) => `${playerName(hc.playerId)} ${hc.value}`).join(', ')}` : ''}
+              </Body>
+            </Card>
+          ))}
+        </ScrollView>
       ) : !editing ? (
         <ScrollView contentContainerStyle={{ padding: 20 }}>
           <Card className="mb-5">
@@ -653,12 +676,14 @@ export default function ResultsEntryScreen() {
             />
           ))}
         </View>
+        {!checkoutPlayerId && (
+          <Body size="sm" tone="dim" className="mb-3 -mt-2">Pick who hit this checkout before saving.</Body>
+        )}
         <Label>Checkout (free text, e.g. "121")</Label>
         <Input
           value={checkoutValue}
           onChangeText={setCheckoutValue}
           placeholder="e.g. 121"
-          autoFocus
           className="mb-5"
         />
         <View className="flex-row gap-2.5">

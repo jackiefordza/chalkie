@@ -46,6 +46,7 @@ export default function CaptainsScreen() {
   const [tab, setTab] = useState<'team' | 'inbox'>('team');
 
   const [teamName, setTeamName] = useState('');
+  const [teamSeasonId, setTeamSeasonId] = useState<string | null>(null);
   const [captainUserId, setCaptainUserId] = useState<string | null>(null);
   const [vcUserId, setVcUserId] = useState<string | null>(null);
   const [players, setPlayers] = useState<Player[]>([]);
@@ -85,6 +86,7 @@ export default function CaptainsScreen() {
       if (snap.exists()) {
         const data = snap.data();
         setTeamName(data.name ?? '');
+        setTeamSeasonId(data.seasonId ?? null);
         setTeamAddress(data.address ?? null);
         setTeamVenuePhone(data.venuePhone ?? null);
         setCaptainUserId(data.captainUserId ?? null);
@@ -247,7 +249,7 @@ export default function CaptainsScreen() {
           teamId: appUser.teamId,
           leagueId: appUser.leagueId,
           divisionId: appUser.divisionId,
-          seasonId: appUser.seasonId,
+          seasonId: teamSeasonId,
           playerId: req.claimPlayerId,
           pendingRequestType: null,
           pendingRequestId: null,
@@ -274,7 +276,7 @@ export default function CaptainsScreen() {
           teamId: appUser.teamId,
           leagueId: appUser.leagueId,
           divisionId: appUser.divisionId,
-          seasonId: appUser.seasonId,
+          seasonId: teamSeasonId,
           playerId: playerRef.id,
           pendingRequestType: null,
           pendingRequestId: null,

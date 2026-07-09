@@ -19,6 +19,7 @@ const FEATHER_ICONS = {
   moon: 'moon',
   monitor: 'monitor',
   users: 'users',
+  edit: 'edit-3',
 } as const;
 
 const IONICONS_ICONS = {

@@ -49,14 +49,14 @@ interface FixtureCardProps {
   opponentName: string;
   caption: string;
   tableRow: DivisionTable | null;
-  recentForm: ('W' | 'L')[];
   showTeamStatus: boolean;
 }
 
-function FixtureCard({ match, teamId, opponentName, caption, tableRow, recentForm, showTeamStatus }: FixtureCardProps) {
+function FixtureCard({ match, teamId, opponentName, caption, tableRow, showTeamStatus }: FixtureCardProps) {
   const { appUser } = useAuthStore();
   const [opponentContact, setOpponentContact] = useState<OpponentContact | null>(null);
   const [venuePhone, setVenuePhone] = useState<string | null>(null);
+  const [opponentForm, setOpponentForm] = useState<('W' | 'L')[]>([]);
 
   const opponentId = match.homeTeamId === teamId ? match.awayTeamId : match.homeTeamId;
   const isHome = match.homeTeamId === teamId;
@@ -80,6 +80,38 @@ function FixtureCard({ match, teamId, opponentName, caption, tableRow, recentFor
       }
     })();
   }, [opponentId, appUser?.role]);
+
+  // How the *opponent* has been getting on lately — more useful ahead of a
+  // fixture than your own form, which you already know. Only fetched for the
+  // primary card (showTeamStatus) to avoid an extra query per fixture shown.
+  useEffect(() => {
+    if (!showTeamStatus || !appUser?.leagueId) { setOpponentForm([]); return; }
+    const unsub = onSnapshot(
+      query(
+        collection(db, 'matches'),
+        and(
+          where('leagueId', '==', appUser.leagueId),
+          or(where('homeTeamId', '==', opponentId), where('awayTeamId', '==', opponentId)),
+        ),
+        orderBy('scheduledDate', 'asc'),
+      ),
+      (snap) => {
+        const form = snap.docs
+          .map((d) => d.data())
+          .filter((m) => m.status === 'confirmed')
+          .slice(-3)
+          .map((m): 'W' | 'L' => {
+            const oppIsHome = m.homeTeamId === opponentId;
+            const won = oppIsHome
+              ? (m.homeGamesWon ?? 0) > (m.awayGamesWon ?? 0)
+              : (m.awayGamesWon ?? 0) > (m.homeGamesWon ?? 0);
+            return won ? 'W' : 'L';
+          });
+        setOpponentForm(form);
+      },
+    );
+    return unsub;
+  }, [opponentId, showTeamStatus, appUser?.leagueId]);
 
   return (
     <Card className="mb-3">
@@ -116,11 +148,11 @@ function FixtureCard({ match, teamId, opponentName, caption, tableRow, recentFor
         </View>
       )}
 
-      {showTeamStatus && recentForm.length > 0 && (
+      {showTeamStatus && opponentForm.length > 0 && (
         <View className="flex-row items-center gap-2 pt-3 mt-1 border-t border-border dark:border-border-dark">
-          <Caption>Form</Caption>
+          <Caption>{opponentName}'s Form</Caption>
           <View className="flex-row gap-1.5">
-            {recentForm.map((result, i) => <FormBadge key={i} result={result} />)}
+            {opponentForm.map((result, i) => <FormBadge key={i} result={result} />)}
           </View>
         </View>
       )}
@@ -197,7 +229,7 @@ export function NextFixtureTile({ teamId, count = 2 }: { teamId: string; count?:
         <Body size="sm" className={recentForm.length > 0 ? 'mb-3' : ''}>No upcoming fixture scheduled</Body>
         {recentForm.length > 0 && (
           <View className="flex-row items-center gap-2 pt-3 border-t border-border dark:border-border-dark">
-            <Caption>Form</Caption>
+            <Caption>Your Form</Caption>
             <View className="flex-row gap-1.5">
               {recentForm.map((result, i) => <FormBadge key={i} result={result} />)}
             </View>
@@ -219,7 +251,6 @@ export function NextFixtureTile({ teamId, count = 2 }: { teamId: string; count?:
             opponentName={teamNames[opponentId] ?? '…'}
             caption={CARD_CAPTION[i] ?? 'Fixture'}
             tableRow={tableRow}
-            recentForm={recentForm}
             showTeamStatus={i === 0}
           />
         );

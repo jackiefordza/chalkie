@@ -11,7 +11,7 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
     }
     function isAdmin() {
-      return isSignedIn() && me().role == 'admin';
+      return isSignedIn() && me().isLeagueAdmin == true;
     }
 
     function isCaptainOrVC() {
@@ -23,7 +23,7 @@ service cloud.firestore {
       // Any signed-in user can search leagues (needed for find-league screen)
       allow read: if isSignedIn();
       // Admin can create a league even before leagueId is set on their user doc
-      allow create: if isSignedIn() && me().role == 'admin';
+      allow create: if isAdmin();
       allow update: if isAdmin() && me().leagueId == leagueId;
       allow delete: if isAdmin() && me().leagueId == leagueId;
     }
@@ -124,27 +124,35 @@ service cloud.firestore {
         && request.resource.data.role == 'pending'
         && request.resource.data.leagueId == null
         && request.resource.data.teamId == null
-        && request.resource.data.playerId == null;
+        && request.resource.data.playerId == null
+        && request.resource.data.isLeagueAdmin == false;
 
       allow update: if
-        // User updates own safe fields (display name, etc) — role/league/team unchanged
+        // User updates own safe fields (display name, etc) — role/league/team/
+        // admin-status unchanged. isLeagueAdmin is deliberately never in this
+        // list — nobody can self-grant it, only an existing admin (or a
+        // manual Console edit) can, via the isAdmin() branch below.
         (request.auth.uid == userId
           && request.resource.data.role == resource.data.role
           && request.resource.data.leagueId == resource.data.leagueId
           && request.resource.data.teamId == resource.data.teamId
           && request.resource.data.divisionId == resource.data.divisionId
-          && request.resource.data.playerId == resource.data.playerId)
+          && request.resource.data.playerId == resource.data.playerId
+          && request.resource.data.isLeagueAdmin == resource.data.isLeagueAdmin)
         // Admin can update any user — covers approving any joinRequest, including
         // granting the 'captain' role, which only admin may ever grant
         || isAdmin()
         // Captain/VC approving a pending user into their OWN team: a plain join or
         // claim request always qualifies; a viceCaptain request only if the approver
         // is that team's actual captain (not just any VC) — captaincy itself is
-        // never grantable here, only admin grants it (see clause above).
+        // never grantable here, only admin grants it (see clause above). Admin
+        // status is likewise never grantable here — isLeagueAdmin must stay
+        // unchanged, same reasoning as the safe-fields branch above.
         || (isCaptainOrVC()
             && resource.data.role == 'pending'
             && resource.data.pendingRequestType in ['join', 'claim', 'captainRole']
             && request.resource.data.teamId == me().teamId
+            && request.resource.data.isLeagueAdmin == resource.data.isLeagueAdmin
             && (
               request.resource.data.role == 'player'
               || (request.resource.data.role == 'viceCaptain'

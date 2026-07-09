@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { View, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
+import { View, TouchableOpacity, ActivityIndicator, Alert, useWindowDimensions } from 'react-native';
 import { Stack, useLocalSearchParams } from 'expo-router';
 import {
   collection, doc, onSnapshot, query, where, orderBy,
@@ -8,9 +8,15 @@ import {
 import { db } from '@/config/firebase';
 import { useAuthStore } from '@/stores/authStore';
 import { generateRoundRobinFixtures } from '@/lib/fixtures';
-import { RAW } from '@/lib/theme';
-import { Screen, Heading, Body, Caption, Button, Card, ListRow, Input, Label, Sheet, AppBar } from '@/components/ui';
+import { RAW, type SemanticTone } from '@/lib/theme';
+import { Screen, Heading, Body, Caption, Badge, Button, Card, ListRow, Input, Label, Sheet, AppBar } from '@/components/ui';
 import type { Match } from '@/types';
+
+// Desktop-vs-mobile is a viewport-width call, not Platform.OS — a wide
+// browser window gets the table/wide-panel treatment, a narrow one (phone,
+// or a browser window sized down) keeps the existing card-list layout. All
+// state/handlers above are shared; only the JSX below this point branches.
+const DESKTOP_BREAKPOINT = 768;
 
 interface TeamInfo { id: string; name: string; address: string | null }
 
@@ -27,9 +33,70 @@ function formatDate(date: Date): string {
   return date.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
 }
 
+const STATUS_TONE: Record<Match['status'], SemanticTone | null> = {
+  scheduled: null,
+  awaiting_confirmation: 'butter',
+  disputed: 'coral',
+  confirmed: 'sage',
+};
+
+// One continuous table (not grouped per-round like the mobile card list) —
+// at desktop width a full season reads better as a single scannable grid
+// than as repeated per-round sections.
+function DesktopFixtureTable({
+  matches, teamName, onEdit, onDeleteAll,
+}: {
+  matches: Match[];
+  teamName: (id: string) => string;
+  onEdit: (match: Match) => void;
+  onDeleteAll: () => void;
+}) {
+  return (
+    <Card padded={false}>
+      <View className="flex-row items-center justify-between p-4 border-b border-border dark:border-border-dark">
+        <Heading size="sm">{matches.length} fixtures</Heading>
+        <Button variant="danger" size="sm" onPress={onDeleteAll}>Delete all &amp; regenerate</Button>
+      </View>
+      <View className="flex-row px-4 py-2.5 bg-surface-2 dark:bg-surface-2-dark">
+        <Caption className="w-14">Round</Caption>
+        <Caption className="flex-1">Home</Caption>
+        <Caption className="flex-1">Away</Caption>
+        <Caption className="w-36">Date</Caption>
+        <Caption className="flex-1">Venue</Caption>
+        <Caption className="w-32">Status</Caption>
+      </View>
+      {matches.map((match, i) => {
+        const tone = STATUS_TONE[match.status];
+        return (
+          <TouchableOpacity
+            key={match.id}
+            activeOpacity={0.6}
+            onPress={() => onEdit(match)}
+            className={[
+              'flex-row items-center px-4 py-3',
+              i < matches.length - 1 ? 'border-b border-border dark:border-border-dark' : '',
+            ].join(' ')}
+          >
+            <Body size="sm" className="w-14">{match.round}</Body>
+            <Body size="sm" tone="strong" weight="semibold" className="flex-1" numberOfLines={1}>{teamName(match.homeTeamId)}</Body>
+            <Body size="sm" tone="strong" weight="semibold" className="flex-1" numberOfLines={1}>{teamName(match.awayTeamId)}</Body>
+            <Body size="sm" className="w-36">{formatDate(match.scheduledDate)}</Body>
+            <Body size="sm" className="flex-1" numberOfLines={1}>{match.venue ?? '—'}</Body>
+            <View className="w-32">
+              {tone ? <Badge tone={tone}>{match.status}</Badge> : <Body size="sm">{match.status}</Body>}
+            </View>
+          </TouchableOpacity>
+        );
+      })}
+    </Card>
+  );
+}
+
 export default function AdminFixturesScreen() {
   const { divisionId } = useLocalSearchParams<{ divisionId: string }>();
   const { appUser } = useAuthStore();
+  const { width } = useWindowDimensions();
+  const isDesktop = width >= DESKTOP_BREAKPOINT;
 
   const [divisionName, setDivisionName] = useState('');
   const [seasonId, setSeasonId] = useState<string | null>(null);
@@ -64,7 +131,11 @@ export default function AdminFixturesScreen() {
     );
 
     const unsubTeams = onSnapshot(
-      query(collection(db, 'teams'), where('divisionId', '==', divisionId)),
+      query(
+        collection(db, 'teams'),
+        where('leagueId', '==', appUser.leagueId),
+        where('divisionId', '==', divisionId),
+      ),
       (snap) => {
         setTeams(
           snap.docs
@@ -212,64 +283,83 @@ export default function AdminFixturesScreen() {
   return (
     <Screen header={<AppBar title={divisionName ? `${divisionName} Fixtures` : 'Fixtures'} />}>
       <Stack.Screen options={{ headerShown: false }} />
-      {loadError ? (
-        <Card tone="coral">
-          <Body tone="coral" weight="semibold" className="mb-1">Couldn't load fixtures</Body>
-          <Body tone="coral" size="sm">{loadError}</Body>
-        </Card>
-      ) : isLoading ? (
-        <ActivityIndicator color={RAW.brand} style={{ marginTop: 40 }} />
-      ) : showGenerator ? (
-        <Card>
-          <Heading size="lg" className="mb-1.5">Generate Fixtures</Heading>
-          <Body size="sm" className="mb-5">
-            {teams.length} teams — every team plays every other team twice (home & away).
-            {teams.length > 0 ? ` That's ${teams.length * (teams.length - 1)} matches.` : ''}
-          </Body>
+      <View style={isDesktop ? { maxWidth: 960, width: '100%', alignSelf: 'center' } : undefined}>
+        {loadError ? (
+          <Card tone="coral">
+            <Body tone="coral" weight="semibold" className="mb-1">Couldn't load fixtures</Body>
+            <Body tone="coral" size="sm">{loadError}</Body>
+          </Card>
+        ) : isLoading ? (
+          <ActivityIndicator color={RAW.brand} style={{ marginTop: 40 }} />
+        ) : showGenerator ? (
+          <Card>
+            <Heading size="lg" className="mb-1.5">Generate Fixtures</Heading>
+            <Body size="sm" className="mb-5">
+              {teams.length} teams — every team plays every other team twice (home & away).
+              {teams.length > 0 ? ` That's ${teams.length * (teams.length - 1)} matches.` : ''}
+            </Body>
 
-          {genError ? (
-            <Card tone="coral" className="mb-4" padded={false}>
-              <Body tone="coral" className="p-3">{genError}</Body>
-            </Card>
-          ) : null}
+            {genError ? (
+              <Card tone="coral" className="mb-4" padded={false}>
+                <Body tone="coral" className="p-3">{genError}</Body>
+              </Card>
+            ) : null}
 
-          <Label>First round date (YYYY-MM-DD)</Label>
-          <Input value={startDateText} onChangeText={setStartDateText} placeholder="e.g. 2026-09-10" autoCapitalize="none" autoCorrect={false} className="mb-4" />
-
-          <Label>Days between rounds</Label>
-          <Input value={intervalDays} onChangeText={setIntervalDays} placeholder="7" keyboardType="number-pad" className="mb-6" />
-
-          <Button onPress={generateFixtures} disabled={isGenerating || teams.length < 2} loading={isGenerating}>
-            Generate Fixtures
-          </Button>
-
-          {isRegenerating && (
-            <Button variant="ghost" className="mt-3.5" onPress={() => setIsRegenerating(false)}>Cancel</Button>
-          )}
-        </Card>
-      ) : (
-        <>
-          <Button variant="danger" size="sm" className="self-end mb-3" onPress={deleteAllFixtures}>
-            Delete all & regenerate
-          </Button>
-
-          {rounds.map(([round, roundMatches]) => (
-            <View key={round} className="mb-5">
-              <Caption className="mb-2">Round {round} · {formatDate(roundMatches[0].scheduledDate)}</Caption>
-              <View className="gap-2">
-                {roundMatches.map((match) => (
-                  <ListRow
-                    key={match.id}
-                    title={`${teamName(match.homeTeamId)} vs ${teamName(match.awayTeamId)}`}
-                    subtitle={`${match.venue ?? 'No venue set'}${match.status !== 'scheduled' ? ` · ${match.status}` : ''}`}
-                    onPress={() => openEdit(match)}
-                  />
-                ))}
+            {isDesktop ? (
+              <View className="flex-row gap-4 mb-6">
+                <View className="flex-1">
+                  <Label>First round date (YYYY-MM-DD)</Label>
+                  <Input value={startDateText} onChangeText={setStartDateText} placeholder="e.g. 2026-09-10" autoCapitalize="none" autoCorrect={false} />
+                </View>
+                <View className="flex-1">
+                  <Label>Days between rounds</Label>
+                  <Input value={intervalDays} onChangeText={setIntervalDays} placeholder="7" keyboardType="number-pad" />
+                </View>
               </View>
-            </View>
-          ))}
-        </>
-      )}
+            ) : (
+              <>
+                <Label>First round date (YYYY-MM-DD)</Label>
+                <Input value={startDateText} onChangeText={setStartDateText} placeholder="e.g. 2026-09-10" autoCapitalize="none" autoCorrect={false} className="mb-4" />
+
+                <Label>Days between rounds</Label>
+                <Input value={intervalDays} onChangeText={setIntervalDays} placeholder="7" keyboardType="number-pad" className="mb-6" />
+              </>
+            )}
+
+            <Button onPress={generateFixtures} disabled={isGenerating || teams.length < 2} loading={isGenerating}>
+              Generate Fixtures
+            </Button>
+
+            {isRegenerating && (
+              <Button variant="ghost" className="mt-3.5" onPress={() => setIsRegenerating(false)}>Cancel</Button>
+            )}
+          </Card>
+        ) : isDesktop ? (
+          <DesktopFixtureTable matches={matches} teamName={teamName} onEdit={openEdit} onDeleteAll={deleteAllFixtures} />
+        ) : (
+          <>
+            <Button variant="danger" size="sm" className="self-end mb-3" onPress={deleteAllFixtures}>
+              Delete all & regenerate
+            </Button>
+
+            {rounds.map(([round, roundMatches]) => (
+              <View key={round} className="mb-5">
+                <Caption className="mb-2">Round {round} · {formatDate(roundMatches[0].scheduledDate)}</Caption>
+                <View className="gap-2">
+                  {roundMatches.map((match) => (
+                    <ListRow
+                      key={match.id}
+                      title={`${teamName(match.homeTeamId)} vs ${teamName(match.awayTeamId)}`}
+                      subtitle={`${match.venue ?? 'No venue set'}${match.status !== 'scheduled' ? ` · ${match.status}` : ''}`}
+                      onPress={() => openEdit(match)}
+                    />
+                  ))}
+                </View>
+              </View>
+            ))}
+          </>
+        )}
+      </View>
 
       {/* Edit fixture modal */}
       <Sheet visible={!!editTarget} onClose={() => setEditTarget(null)}>

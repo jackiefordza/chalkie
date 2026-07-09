@@ -25,7 +25,7 @@ interface AuthState {
   signIn: (email: string, password: string) => Promise<void>;
   register: (email: string, password: string, displayName: string) => Promise<void>;
   updateContactDetails: (phone: string, phoneVisibility: PhoneVisibility) => Promise<void>;
-  updateDisplayName: (name: string) => Promise<void>;
+  updateProfileDetails: (name: string, nickname: string | null) => Promise<void>;
   logOut: () => Promise<void>;
   clearError: () => void;
 }
@@ -59,6 +59,7 @@ export const useAuthStore = create<AuthState>((set) => ({
         teamId: null,
         divisionId: null,
         playerId: null,
+        isLeagueAdmin: false,
         pendingRequestType: null,
         createdAt: serverTimestamp(),
       });
@@ -69,7 +70,9 @@ export const useAuthStore = create<AuthState>((set) => ({
           uid: credential.user.uid,
           email,
           displayName,
+          nickname: null,
           role: 'pending',
+          isLeagueAdmin: false,
           leagueId: null,
           seasonId: null,
           teamId: null,
@@ -95,11 +98,11 @@ export const useAuthStore = create<AuthState>((set) => ({
     await updateDoc(doc(db, 'users', currentUser.uid), { phone, phoneVisibility });
   },
 
-  updateDisplayName: async (name: string) => {
+  updateProfileDetails: async (name: string, nickname: string | null) => {
     const currentUser = auth.currentUser;
     if (!currentUser) throw new Error('Not authenticated');
     await updateProfile(currentUser, { displayName: name });
-    await updateDoc(doc(db, 'users', currentUser.uid), { displayName: name });
+    await updateDoc(doc(db, 'users', currentUser.uid), { displayName: name, nickname });
   },
 
   logOut: async () => {
@@ -146,7 +149,9 @@ export function initAuthListener() {
               uid: user.uid,
               email: d.email ?? user.email ?? '',
               displayName: d.displayName ?? user.displayName ?? '',
+              nickname: d.nickname ?? null,
               role: d.role,
+              isLeagueAdmin: d.isLeagueAdmin ?? false,
               leagueId: d.leagueId ?? null,
               seasonId: d.seasonId ?? null,
               teamId: d.teamId ?? null,

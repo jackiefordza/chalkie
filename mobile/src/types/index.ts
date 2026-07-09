@@ -1,4 +1,4 @@
-export type UserRole = 'admin' | 'captain' | 'viceCaptain' | 'player' | 'pending';
+export type UserRole = 'captain' | 'viceCaptain' | 'player' | 'pending';
 
 export type PhoneVisibility = 'private' | 'captains' | 'public';
 
@@ -8,7 +8,9 @@ export interface AppUser {
   uid: string;
   email: string;
   displayName: string;
+  nickname: string | null;
   role: UserRole;
+  isLeagueAdmin: boolean;
   leagueId: string | null;
   seasonId: string | null;
   teamId: string | null;

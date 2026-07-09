@@ -4,6 +4,7 @@ import Animated, { useSharedValue, useAnimatedStyle, withTiming, Easing } from '
 import { BlurView } from 'expo-blur';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useColorScheme } from 'nativewind';
+import { router } from 'expo-router';
 import { doc, onSnapshot } from 'firebase/firestore';
 import * as Haptics from 'expo-haptics';
 import { db } from '@/config/firebase';
@@ -21,7 +22,6 @@ import { Caption, Body } from './Text';
 const PANEL_WIDTH = 288;
 
 const ROLE_LABEL: Record<string, string> = {
-  admin: 'Admin',
   captain: 'Captain',
   viceCaptain: 'Vice Captain',
   player: 'Player',
@@ -91,6 +91,11 @@ export function AccountMenu() {
     await logOut();
   }
 
+  function handleEditProfile() {
+    close();
+    router.push('/(protected)/edit-profile');
+  }
+
   return (
     <Animated.View
       pointerEvents={isOpen ? 'auto' : 'none'}
@@ -114,6 +119,9 @@ export function AccountMenu() {
             >
               {appUser?.displayName ?? ''}
             </Text>
+            {appUser?.nickname && (
+              <Body size="sm" className="mt-0.5 text-center">"{appUser.nickname}"</Body>
+            )}
           </View>
 
           <View className="gap-4 mb-2">
@@ -124,7 +132,14 @@ export function AccountMenu() {
               </View>
             )}
 
-            {appUser?.role && (
+            {appUser?.isLeagueAdmin && (
+              <View>
+                <Caption>Admin</Caption>
+                <Body tone="strong" weight="semibold" className="mt-0.5">League Admin</Body>
+              </View>
+            )}
+
+            {appUser?.role && appUser.role !== 'pending' && (
               <View>
                 <Caption>Role</Caption>
                 <Body tone="strong" weight="semibold" className="mt-0.5">{ROLE_LABEL[appUser.role] ?? appUser.role}</Body>
@@ -175,6 +190,7 @@ export function AccountMenu() {
 
           <View className="h-px bg-border dark:bg-border-dark mb-2" />
 
+          <MenuRow icon="edit" label="Edit Profile" onPress={handleEditProfile} isDark={isDark} />
           <MenuRow icon="log-out" label="Sign Out" onPress={handleSignOut} isDark={isDark} tone="coral" />
         </View>
       </Animated.View>
