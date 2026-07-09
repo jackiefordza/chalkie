@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { View, ActivityIndicator } from 'react-native';
+import { View, TouchableOpacity, ActivityIndicator, useWindowDimensions } from 'react-native';
 import { router } from 'expo-router';
 import { useColorScheme } from 'nativewind';
 import {
@@ -9,7 +9,10 @@ import {
 import { db } from '@/config/firebase';
 import { useAuthStore } from '@/stores/authStore';
 import { RAW, type SemanticTone } from '@/lib/theme';
-import { Screen, Heading, Body, Caption, Button, Card, Badge, ListRow, Input, Label, Sheet, AppIcon } from '@/components/ui';
+import { Screen, Heading, Body, Caption, Button, Card, Badge, ListRow, Input, Label, Sheet, AppIcon, StatTile, type AppIconName } from '@/components/ui';
+import { AdminShell } from '@/components/admin/AdminShell';
+
+const DESKTOP_BREAKPOINT = 768;
 
 interface Season { id: string; name: string; status: string }
 
@@ -19,17 +22,36 @@ const SEASON_STATUS_TONE: Record<string, SemanticTone> = {
   completed: 'brand',
 };
 
+function ActionCard({ icon, label, description, onPress, disabled, isDark }: {
+  icon: AppIconName; label: string; description: string; onPress: () => void; disabled?: boolean; isDark: boolean;
+}) {
+  return (
+    <TouchableOpacity activeOpacity={0.7} onPress={onPress} disabled={disabled} style={{ width: 216 }}>
+      <Card className={disabled ? 'opacity-50' : ''}>
+        <View className="w-9 h-9 rounded-full items-center justify-center bg-brand-fill dark:bg-brand-fill-dark mb-3">
+          <AppIcon name={icon} size={17} color={isDark ? RAW.brandInkDark : RAW.brandInk} />
+        </View>
+        <Body tone="strong" weight="semibold" className="mb-1">{label}</Body>
+        <Body size="xs">{description}</Body>
+      </Card>
+    </TouchableOpacity>
+  );
+}
+
 export default function AdminHomeScreen() {
   const { appUser, isLoading, logOut } = useAuthStore();
   const { colorScheme } = useColorScheme();
   const isDark = colorScheme === 'dark';
   const leagueId = appUser?.leagueId ?? null;
+  const { width } = useWindowDimensions();
+  const isDesktop = width >= DESKTOP_BREAKPOINT;
 
   const [leagueName, setLeagueName] = useState('');
   const [leagueExists, setLeagueExists] = useState<boolean | null>(null); // null = checking
   const [seasons, setSeasons] = useState<Season[]>([]);
   const [pendingCount, setPendingCount] = useState(0);
   const [disputeCount, setDisputeCount] = useState(0);
+  const [teamsCount, setTeamsCount] = useState(0);
 
   // New season modal
   const [showSeasonModal, setShowSeasonModal] = useState(false);
@@ -106,8 +128,12 @@ export default function AdminHomeScreen() {
       query(collection(db, 'matches'), where('leagueId', '==', leagueId), where('status', '==', 'disputed')),
       (snap) => setDisputeCount(snap.size),
     );
+    const unsubTeamsCount = onSnapshot(
+      query(collection(db, 'teams'), where('leagueId', '==', leagueId)),
+      (snap) => setTeamsCount(snap.size),
+    );
 
-    return () => { cancelled = true; unsubSeasons(); unsubReqs(); unsubDisputes(); };
+    return () => { cancelled = true; unsubSeasons(); unsubReqs(); unsubDisputes(); unsubTeamsCount(); };
   }, [leagueId]); // appUser intentionally excluded — new object ref on every onSnapshot would restart subscriptions
 
   async function createSeason() {
@@ -165,6 +191,101 @@ export default function AdminHomeScreen() {
     );
   }
 
+  const seasonsSection = (
+    <>
+      <View className="flex-row items-center mb-3">
+        <Heading size="sm" className="flex-1">Seasons</Heading>
+        {!isDesktop && <Button size="sm" onPress={() => setShowSeasonModal(true)}>+ New Season</Button>}
+      </View>
+
+      {seasons.length === 0 ? (
+        <Body className="text-center py-5">No seasons yet — create one to get started</Body>
+      ) : (
+        <View className="gap-2">
+          {seasons.map((season) => (
+            <ListRow
+              key={season.id}
+              title={season.name}
+              trailing={
+                <View className="flex-row items-center gap-2">
+                  <Badge tone={SEASON_STATUS_TONE[season.status] ?? 'brand'}>{season.status}</Badge>
+                  <Body tone="dim">›</Body>
+                </View>
+              }
+              onPress={() => router.push(`/(protected)/admin-season?seasonId=${season.id}`)}
+            />
+          ))}
+        </View>
+      )}
+    </>
+  );
+
+  const newSeasonSheet = (
+    <Sheet visible={showSeasonModal} onClose={() => { setShowSeasonModal(false); setNewSeasonName(''); }}>
+      <Heading size="lg" className="mb-5">New Season</Heading>
+      <Label>Season name</Label>
+      <Input value={newSeasonName} onChangeText={setNewSeasonName} placeholder="e.g. 2025/26" autoFocus className="mb-5" />
+      <View className="flex-row gap-2.5">
+        <Button variant="ghost" className="flex-1" onPress={() => { setShowSeasonModal(false); setNewSeasonName(''); }}>Cancel</Button>
+        <Button className="flex-1" disabled={isCreatingSeason || !newSeasonName.trim()} loading={isCreatingSeason} onPress={createSeason}>
+          Create
+        </Button>
+      </View>
+    </Sheet>
+  );
+
+  if (isDesktop) {
+    const activeSeason = seasons.find((s) => s.status === 'active') ?? seasons[0] ?? null;
+    const managePath = activeSeason ? `/(protected)/admin-season?seasonId=${activeSeason.id}` : null;
+    const inboxCount = pendingCount + disputeCount;
+
+    return (
+      <>
+        <AdminShell
+          leagueName={leagueName}
+          title="Dashboard"
+          actions={<Button size="sm" onPress={() => setShowSeasonModal(true)}>+ New Season</Button>}
+        >
+          <View style={{ maxWidth: 900 }}>
+            <View className="flex-row gap-3 mb-8">
+              <StatTile label="Pending Requests" value={pendingCount} tone={pendingCount > 0 ? 'coral' : 'butter'} className="flex-1" />
+              <StatTile label="Disputes" value={disputeCount} tone={disputeCount > 0 ? 'coral' : 'butter'} className="flex-1" />
+              <StatTile label="Teams" value={teamsCount} tone="brand" className="flex-1" />
+              <StatTile label="Active Season" value={activeSeason?.name ?? '—'} tone="sage" className="flex-1" />
+            </View>
+
+            <Heading size="sm" className="mb-3">Quick Actions</Heading>
+            <View className="flex-row flex-wrap gap-3 mb-8">
+              <ActionCard
+                icon="table" label="Create Season" description="Start a new season for your league"
+                onPress={() => setShowSeasonModal(true)} isDark={isDark}
+              />
+              <ActionCard
+                icon="users" label="Manage Teams" description="Add players, assign captains, move rosters"
+                onPress={() => managePath && router.push(managePath as never)} disabled={!managePath} isDark={isDark}
+              />
+              <ActionCard
+                icon="calendar" label="Generate Fixtures" description="Create or edit the match schedule"
+                onPress={() => managePath && router.push(managePath as never)} disabled={!managePath} isDark={isDark}
+              />
+              <ActionCard
+                icon="trending-up" label="Adjust Standings" description="Manually correct points or player stats"
+                onPress={() => managePath && router.push(managePath as never)} disabled={!managePath} isDark={isDark}
+              />
+              <ActionCard
+                icon="zap" label="Resolve Inbox" description={`${inboxCount} item${inboxCount === 1 ? '' : 's'} waiting`}
+                onPress={() => router.push('/(protected)/admin-inbox')} isDark={isDark}
+              />
+            </View>
+
+            {seasonsSection}
+          </View>
+        </AdminShell>
+        {newSeasonSheet}
+      </>
+    );
+  }
+
   return (
     <Screen>
       {/* League banner */}
@@ -200,47 +321,12 @@ export default function AdminHomeScreen() {
         />
       </View>
 
-      {/* Seasons */}
-      <View className="flex-row items-center mb-3">
-        <Heading size="sm" className="flex-1">Seasons</Heading>
-        <Button size="sm" onPress={() => setShowSeasonModal(true)}>+ New Season</Button>
-      </View>
-
-      {seasons.length === 0 ? (
-        <Body className="text-center py-5">No seasons yet — create one to get started</Body>
-      ) : (
-        <View className="gap-2">
-          {seasons.map((season) => (
-            <ListRow
-              key={season.id}
-              title={season.name}
-              trailing={
-                <View className="flex-row items-center gap-2">
-                  <Badge tone={SEASON_STATUS_TONE[season.status] ?? 'brand'}>{season.status}</Badge>
-                  <Body tone="dim">›</Body>
-                </View>
-              }
-              onPress={() => router.push(`/(protected)/admin-season?seasonId=${season.id}`)}
-            />
-          ))}
-        </View>
-      )}
+      {seasonsSection}
 
       {/* Sign out */}
       <Button variant="ghost" className="mt-6" onPress={logOut}>Sign Out</Button>
 
-      {/* New season modal */}
-      <Sheet visible={showSeasonModal} onClose={() => { setShowSeasonModal(false); setNewSeasonName(''); }}>
-        <Heading size="lg" className="mb-5">New Season</Heading>
-        <Label>Season name</Label>
-        <Input value={newSeasonName} onChangeText={setNewSeasonName} placeholder="e.g. 2025/26" autoFocus className="mb-5" />
-        <View className="flex-row gap-2.5">
-          <Button variant="ghost" className="flex-1" onPress={() => { setShowSeasonModal(false); setNewSeasonName(''); }}>Cancel</Button>
-          <Button className="flex-1" disabled={isCreatingSeason || !newSeasonName.trim()} loading={isCreatingSeason} onPress={createSeason}>
-            Create
-          </Button>
-        </View>
-      </Sheet>
+      {newSeasonSheet}
     </Screen>
   );
 }

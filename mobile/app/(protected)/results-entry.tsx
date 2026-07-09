@@ -1,9 +1,9 @@
 import { useState, useEffect, useMemo } from 'react';
-import { View, TouchableOpacity, ScrollView, ActivityIndicator, Alert, Platform } from 'react-native';
+import { View, TouchableOpacity, ScrollView, ActivityIndicator, Alert, Platform, useWindowDimensions } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { Stack, useLocalSearchParams } from 'expo-router';
 import {
-  collection, doc, onSnapshot, query, where, getDoc, setDoc, serverTimestamp,
+  collection, doc, onSnapshot, query, where, getDoc, setDoc, updateDoc, deleteDoc, serverTimestamp,
 } from 'firebase/firestore';
 import { db } from '@/config/firebase';
 import { useAuthStore } from '@/stores/authStore';
@@ -12,7 +12,10 @@ import { RAW } from '@/lib/theme';
 import {
   Screen, Heading, Body, Caption, Stat, Button, Card, Chip, Input, Label, Sheet, AppBar,
 } from '@/components/ui';
+import { AdminShell } from '@/components/admin/AdminShell';
 import type { Match, MatchGame, GameType, MatchSide, HighCheckout } from '@/types';
+
+const DESKTOP_BREAKPOINT = 768;
 
 interface Player { id: string; name: string; teamId: string }
 
@@ -104,6 +107,8 @@ function normalizeGameForCompare(g: DraftGame): string {
 export default function ResultsEntryScreen() {
   const { matchId } = useLocalSearchParams<{ matchId: string }>();
   const { appUser } = useAuthStore();
+  const { width } = useWindowDimensions();
+  const isDesktop = width >= DESKTOP_BREAKPOINT;
 
   const [match, setMatch] = useState<Match | null>(null);
   const [homeTeamName, setHomeTeamName] = useState('');
@@ -115,6 +120,7 @@ export default function ResultsEntryScreen() {
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const [editing, setEditing] = useState(false);
+  const [adminCorrecting, setAdminCorrecting] = useState(false);
   const [games, setGames] = useState<DraftGame[]>(blankGames());
   const [isSubmitting, setIsSubmitting] = useState(false);
   // Review mode: games flagged as "not right, let me fix this" — everything else
@@ -133,6 +139,7 @@ export default function ResultsEntryScreen() {
   const isHome = match ? teamId === match.homeTeamId : false;
   const isAway = match ? teamId === match.awayTeamId : false;
   const myTeamId = isHome ? match?.homeTeamId : isAway ? match?.awayTeamId : null;
+  const isAdmin = !!appUser?.isLeagueAdmin;
 
   useEffect(() => {
     if (!matchId || !appUser?.leagueId) return;
@@ -368,14 +375,58 @@ export default function ResultsEntryScreen() {
     }
   }
 
-  // Anyone on either team can view a confirmed match's score card; only
-  // captains/VCs on an unconfirmed one can actually enter/edit a result.
-  const canView = (isHome || isAway) && !!match;
-  const canEnterResult = canView && match!.status !== 'confirmed';
+  function openAdminCorrection() {
+    if (!match) return;
+    setGames(toDraft(match.games ?? []));
+    setAdminCorrecting(true);
+    setEditing(true);
+  }
 
-  return (
-    <Screen scroll={false} header={<AppBar title={match?.status === 'confirmed' ? 'Result' : 'Enter Result'} />}>
-      <Stack.Screen options={{ headerShown: false }} />
+  async function saveAdminCorrection() {
+    if (!matchId || !allComplete) return;
+    setIsSubmitting(true);
+    try {
+      const finalGames: MatchGame[] = games.map(toMatchGame);
+      await updateDoc(doc(db, 'matches', matchId), { games: finalGames });
+      setAdminCorrecting(false);
+      setEditing(false);
+      Alert.alert('Result updated', 'Standings and player stats have been recalculated.');
+      goBack();
+    } catch (e: unknown) {
+      Alert.alert('Error', (e as Error).message ?? 'Something went wrong');
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  function confirmDeleteMatch() {
+    Alert.alert(
+      'Delete this fixture',
+      "This removes the fixture and its result completely, and reverses its contribution to standings and player stats. This can't be undone.",
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Delete', style: 'destructive', onPress: deleteMatch },
+      ],
+    );
+  }
+
+  async function deleteMatch() {
+    if (!matchId) return;
+    try {
+      await deleteDoc(doc(db, 'matches', matchId));
+      goBack();
+    } catch (e: unknown) {
+      Alert.alert('Error', (e as Error).message ?? 'Something went wrong');
+    }
+  }
+
+  // Anyone on either team can view a confirmed match's score card; admins can
+  // view (and correct) any match regardless of team.
+  const canView = (isHome || isAway || isAdmin) && !!match;
+  const title = adminCorrecting ? 'Edit Result' : match?.status === 'confirmed' ? 'Result' : 'Enter Result';
+
+  const body = (
+    <>
 
       {loadError ? (
         <View className="p-5">
@@ -389,7 +440,7 @@ export default function ResultsEntryScreen() {
             <Body tone="strong" weight="semibold">You can't view this result</Body>
           </Card>
         </View>
-      ) : match!.status === 'confirmed' ? (
+      ) : match!.status === 'confirmed' && !adminCorrecting ? (
         <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 8 }}>
           <Card className="mb-4">
             <Heading className="mb-1">{homeTeamName} vs {awayTeamName}</Heading>
@@ -397,6 +448,12 @@ export default function ResultsEntryScreen() {
               {match!.homeLegsWon} - {match!.awayLegsWon} legs · {match!.homeGamesWon} - {match!.awayGamesWon} games
             </Body>
           </Card>
+          {isAdmin && (
+            <View className="flex-row gap-2.5 mb-4">
+              <Button variant="secondary" size="sm" className="flex-1" onPress={openAdminCorrection}>Edit Result</Button>
+              <Button variant="danger" size="sm" className="flex-1" onPress={confirmDeleteMatch}>Delete Fixture</Button>
+            </View>
+          )}
           {toDraft(match!.games ?? []).map((game, gameIndex) => (
             <Card key={gameIndex} tone="sage" className="mb-3.5">
               <Caption className="mb-2">Game {gameIndex + 1} · {game.type === 'singles' ? 'Singles' : 'Pairs'}</Caption>
@@ -620,9 +677,14 @@ export default function ResultsEntryScreen() {
 
           {/* Bottom bar */}
           <View className="flex-row gap-2.5 p-5 pt-2">
-            <Button variant="ghost" className="flex-1" onPress={() => setEditing(false)}>Cancel</Button>
-            <Button className="flex-1" disabled={!allComplete || isSubmitting} loading={isSubmitting} onPress={submit}>
-              Submit Result
+            <Button variant="ghost" className="flex-1" onPress={() => { setEditing(false); setAdminCorrecting(false); }}>Cancel</Button>
+            <Button
+              className="flex-1"
+              disabled={!allComplete || isSubmitting}
+              loading={isSubmitting}
+              onPress={adminCorrecting ? saveAdminCorrection : submit}
+            >
+              {adminCorrecting ? 'Save Correction' : 'Submit Result'}
             </Button>
           </View>
         </>
@@ -694,6 +756,30 @@ export default function ResultsEntryScreen() {
           <Button className="flex-1" disabled={!checkoutPlayerId || !checkoutValue.trim()} onPress={saveCheckout}>Save</Button>
         </View>
       </Sheet>
+    </>
+  );
+
+  if (isAdmin && isDesktop) {
+    return (
+      <>
+        <Stack.Screen options={{ headerShown: false }} />
+        <AdminShell
+          title={title}
+          breadcrumb={[
+            { label: 'Dashboard', path: '/(protected)/(tabs)/admin' },
+            { label: 'Results' },
+          ]}
+        >
+          <View style={{ maxWidth: 900 }}>{body}</View>
+        </AdminShell>
+      </>
+    );
+  }
+
+  return (
+    <Screen scroll={false} header={<AppBar title={title} />}>
+      <Stack.Screen options={{ headerShown: false }} />
+      {body}
     </Screen>
   );
 }

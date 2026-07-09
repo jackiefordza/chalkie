@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { View, ScrollView, TouchableOpacity, ActivityIndicator, Alert, Platform } from 'react-native';
+import { View, ScrollView, TouchableOpacity, ActivityIndicator, Alert, Platform, useWindowDimensions } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { Stack, useLocalSearchParams } from 'expo-router';
 import { useColorScheme } from 'nativewind';
@@ -9,7 +9,10 @@ import { useAuthStore } from '@/stores/authStore';
 import { goBack } from '@/lib/navigation';
 import { RAW } from '@/lib/theme';
 import { Screen, Body, Caption, Button, Card, Chip, AppBar, AppIcon } from '@/components/ui';
+import { AdminShell } from '@/components/admin/AdminShell';
 import type { Match, MatchGame, MatchSide } from '@/types';
+
+const DESKTOP_BREAKPOINT = 768;
 
 interface Player { id: string; name: string; teamId: string }
 
@@ -30,6 +33,8 @@ export default function AdminDisputeScreen() {
   const { appUser } = useAuthStore();
   const { colorScheme } = useColorScheme();
   const isDark = colorScheme === 'dark';
+  const { width } = useWindowDimensions();
+  const isDesktop = width >= DESKTOP_BREAKPOINT;
 
   const [match, setMatch] = useState<Match | null>(null);
   const [homeTeamName, setHomeTeamName] = useState('');
@@ -149,9 +154,8 @@ export default function AdminDisputeScreen() {
     );
   }
 
-  return (
-    <Screen scroll={false} header={<AppBar title="Resolve Dispute" />}>
-      <Stack.Screen options={{ headerShown: false }} />
+  const body = (
+    <>
       {loadError ? (
         <View className="p-5"><Card tone="coral"><Body tone="coral">{loadError}</Body></Card></View>
       ) : isLoading ? (
@@ -256,6 +260,24 @@ export default function AdminDisputeScreen() {
           </View>
         </>
       )}
+    </>
+  );
+
+  if (isDesktop) {
+    return (
+      <>
+        <Stack.Screen options={{ headerShown: false }} />
+        <AdminShell title="Resolve Dispute" breadcrumb={[{ label: 'Dashboard', path: '/(protected)/(tabs)/admin' }, { label: 'Inbox', path: '/(protected)/admin-inbox' }, { label: 'Resolve Dispute' }]}>
+          <View style={{ maxWidth: 780 }}>{body}</View>
+        </AdminShell>
+      </>
+    );
+  }
+
+  return (
+    <Screen scroll={false} header={<AppBar title="Resolve Dispute" />}>
+      <Stack.Screen options={{ headerShown: false }} />
+      {body}
     </Screen>
   );
 }

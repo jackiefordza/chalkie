@@ -193,15 +193,23 @@ service cloud.firestore {
     }
 
     // ── divisionTables ────────────────────────────────────────────────────
+    // Normally only written by Cloud Functions via the Admin SDK (which
+    // bypasses rules entirely) as matches confirm. The admin write clauses
+    // below exist for manual standings corrections — a FieldValue.increment
+    // from a later match confirmation works correctly on top of whatever
+    // absolute values an admin sets here.
     match /divisionTables/{tableId} {
       allow read: if isSignedIn();
-      allow write: if false;
+      allow create: if isAdmin() && me().leagueId == request.resource.data.leagueId;
+      allow update, delete: if isAdmin() && me().leagueId == resource.data.leagueId;
     }
 
     // ── playerSeasonStats ─────────────────────────────────────────────────
+    // Same reasoning as divisionTables above — admin-only manual correction.
     match /playerSeasonStats/{statsId} {
       allow read: if isSignedIn();
-      allow write: if false;
+      allow create: if isAdmin() && me().leagueId == request.resource.data.leagueId;
+      allow update, delete: if isAdmin() && me().leagueId == resource.data.leagueId;
     }
 
     // ── fineDefinitions ───────────────────────────────────────────────────

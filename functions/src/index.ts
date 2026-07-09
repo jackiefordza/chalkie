@@ -1,6 +1,7 @@
 import { initializeApp } from 'firebase-admin/app';
-import { getFirestore, FieldValue, type DocumentReference, type DocumentData } from 'firebase-admin/firestore';
-import { onDocumentWritten, onDocumentUpdated } from 'firebase-functions/v2/firestore';
+import { getFirestore, FieldValue } from 'firebase-admin/firestore';
+import { onDocumentWritten, onDocumentUpdated, onDocumentDeleted } from 'firebase-functions/v2/firestore';
+import { onCall, HttpsError } from 'firebase-functions/v2/https';
 
 initializeApp();
 const db = getFirestore();
@@ -96,82 +97,22 @@ function computeTotals(games: MatchGame[]) {
   return { homeGamesWon, awayGamesWon, homeLegsWon, awayLegsWon };
 }
 
+interface HighCheckoutEntry { value: string; matchId: string; date: Date }
 interface PlayerAccum {
   teamId: string;
   played: number;
   won: number;
   lost: number;
   oneEighties: number;
-  highCheckouts: { value: string; matchId: string; date: Date }[];
+  highCheckouts: HighCheckoutEntry[];
 }
 
-// ── On confirm (whether via auto-confirm above or admin dispute resolution):
-// recompute homeGamesWon/etc, each team's divisionTables row + division
-// positions, and every involved player's playerSeasonStats. ─────────────────
-export const onMatchConfirmed = onDocumentUpdated('matches/{matchId}', async (event) => {
-  const before = event.data?.before.data();
-  const after = event.data?.after.data();
-  if (!before || !after) return;
-  if (before.status === 'confirmed' || after.status !== 'confirmed') return;
-
-  const matchId = event.params.matchId;
-  const games = (after.games ?? []) as MatchGame[];
-  const { leagueId, seasonId, divisionId, homeTeamId, awayTeamId, scheduledDate } = after as {
-    leagueId: string; seasonId: string; divisionId: string;
-    homeTeamId: string; awayTeamId: string; scheduledDate: FirebaseFirestore.Timestamp;
-  };
-  const totals = computeTotals(games);
-
-  await db.doc(`matches/${matchId}`).update(totals);
-
-  // ── divisionTables ──
-  const homeWon = totals.homeGamesWon > totals.awayGamesWon;
-  const tableUpdates: { ref: DocumentReference; data: DocumentData }[] = [
-    {
-      ref: db.doc(`divisionTables/${seasonId}_${divisionId}_${homeTeamId}`),
-      data: {
-        leagueId, seasonId, divisionId, teamId: homeTeamId,
-        played: FieldValue.increment(1),
-        won: FieldValue.increment(homeWon ? 1 : 0),
-        lost: FieldValue.increment(homeWon ? 0 : 1),
-        points: FieldValue.increment(homeWon ? 2 : 0),
-        legsFor: FieldValue.increment(totals.homeLegsWon),
-        legsAgainst: FieldValue.increment(totals.awayLegsWon),
-        legDiff: FieldValue.increment(totals.homeLegsWon - totals.awayLegsWon),
-      },
-    },
-    {
-      ref: db.doc(`divisionTables/${seasonId}_${divisionId}_${awayTeamId}`),
-      data: {
-        leagueId, seasonId, divisionId, teamId: awayTeamId,
-        played: FieldValue.increment(1),
-        won: FieldValue.increment(homeWon ? 0 : 1),
-        lost: FieldValue.increment(homeWon ? 1 : 0),
-        points: FieldValue.increment(homeWon ? 0 : 2),
-        legsFor: FieldValue.increment(totals.awayLegsWon),
-        legsAgainst: FieldValue.increment(totals.homeLegsWon),
-        legDiff: FieldValue.increment(totals.awayLegsWon - totals.homeLegsWon),
-      },
-    },
-  ];
-
-  const tableBatch = db.batch();
-  tableUpdates.forEach(({ ref, data }) => tableBatch.set(ref, data, { merge: true }));
-  await tableBatch.commit();
-
-  // Recompute standings position for the whole division (points desc, legDiff tiebreak)
-  const divisionRows = await db.collection('divisionTables')
-    .where('seasonId', '==', seasonId)
-    .where('divisionId', '==', divisionId)
-    .get();
-  const sorted = divisionRows.docs
-    .map((d) => ({ ref: d.ref, points: d.data().points ?? 0, legDiff: d.data().legDiff ?? 0 }))
-    .sort((a, b) => (b.points - a.points) || (b.legDiff - a.legDiff));
-  const positionBatch = db.batch();
-  sorted.forEach((row, i) => positionBatch.update(row.ref, { position: i + 1 }));
-  await positionBatch.commit();
-
-  // ── playerSeasonStats — played/won/lost count individual games, not matches ──
+// Pure — no Firestore calls. Reused for a match's first confirmation, a later
+// admin correction of an already-confirmed match, and a full reversal on
+// delete (by passing an empty games array as the "other side" of the diff).
+function computePlayerAccum(
+  games: MatchGame[], homeTeamId: string, awayTeamId: string, matchId: string, scheduledDate: Date,
+): Map<string, PlayerAccum> {
   const accum = new Map<string, PlayerAccum>();
   const getAccum = (playerId: string, teamId: string): PlayerAccum => {
     if (!accum.has(playerId)) accum.set(playerId, { teamId, played: 0, won: 0, lost: 0, oneEighties: 0, highCheckouts: [] });
@@ -200,23 +141,331 @@ export const onMatchConfirmed = onDocumentUpdated('matches/{matchId}', async (ev
         getAccum(leg.highCheckout.playerId, teamId).highCheckouts.push({
           value: leg.highCheckout.value,
           matchId,
-          date: scheduledDate.toDate(),
+          date: scheduledDate,
         });
       }
     }
   }
+  return accum;
+}
+
+async function recomputeDivisionPositions(seasonId: string, divisionId: string): Promise<void> {
+  const divisionRows = await db.collection('divisionTables')
+    .where('seasonId', '==', seasonId)
+    .where('divisionId', '==', divisionId)
+    .get();
+  const sorted = divisionRows.docs
+    .map((d) => ({ ref: d.ref, points: d.data().points ?? 0, legDiff: d.data().legDiff ?? 0 }))
+    .sort((a, b) => (b.points - a.points) || (b.legDiff - a.legDiff));
+  const positionBatch = db.batch();
+  sorted.forEach((row, i) => positionBatch.update(row.ref, { position: i + 1 }));
+  await positionBatch.commit();
+}
+
+interface ResultDeltaParams {
+  matchId: string;
+  leagueId: string;
+  seasonId: string;
+  divisionId: string;
+  homeTeamId: string;
+  awayTeamId: string;
+  scheduledDate: Date;
+  oldGames: MatchGame[]; // [] for a first confirmation (no prior result to reverse)
+  newGames: MatchGame[]; // [] for a full reversal (match deleted)
+  playedDelta: number; // +1 first confirmation, 0 correction of an existing result, -1 delete
+}
+
+// Single source of truth for "how a match's result affects divisionTables +
+// playerSeasonStats" — applied as a (new − old) delta so it works identically
+// whether this is the very first confirmation (old = zero contribution),
+// an admin correcting an already-confirmed result (old = the previous
+// games), or a full delete (new = zero contribution).
+async function applyMatchResultDelta(p: ResultDeltaParams): Promise<void> {
+  const oldTotals = computeTotals(p.oldGames);
+  const newTotals = computeTotals(p.newGames);
+  // null (not false) when there are no games at all — a false here would
+  // wrongly credit the away side with a "win" contribution against zero games.
+  const oldHomeWon = p.oldGames.length ? oldTotals.homeGamesWon > oldTotals.awayGamesWon : null;
+  const newHomeWon = p.newGames.length ? newTotals.homeGamesWon > newTotals.awayGamesWon : null;
+
+  const contrib = (homeWon: boolean | null) => (homeWon === null
+    ? { homePoints: 0, homeWon: 0, homeLost: 0, awayPoints: 0, awayWon: 0, awayLost: 0 }
+    : {
+      homePoints: homeWon ? 2 : 0, homeWon: homeWon ? 1 : 0, homeLost: homeWon ? 0 : 1,
+      awayPoints: homeWon ? 0 : 2, awayWon: homeWon ? 0 : 1, awayLost: homeWon ? 1 : 0,
+    });
+  const oldContrib = contrib(oldHomeWon);
+  const newContrib = contrib(newHomeWon);
+
+  const tableBatch = db.batch();
+  tableBatch.set(db.doc(`divisionTables/${p.seasonId}_${p.divisionId}_${p.homeTeamId}`), {
+    leagueId: p.leagueId, seasonId: p.seasonId, divisionId: p.divisionId, teamId: p.homeTeamId,
+    played: FieldValue.increment(p.playedDelta),
+    won: FieldValue.increment(newContrib.homeWon - oldContrib.homeWon),
+    lost: FieldValue.increment(newContrib.homeLost - oldContrib.homeLost),
+    points: FieldValue.increment(newContrib.homePoints - oldContrib.homePoints),
+    legsFor: FieldValue.increment(newTotals.homeLegsWon - oldTotals.homeLegsWon),
+    legsAgainst: FieldValue.increment(newTotals.awayLegsWon - oldTotals.awayLegsWon),
+    legDiff: FieldValue.increment(
+      (newTotals.homeLegsWon - newTotals.awayLegsWon) - (oldTotals.homeLegsWon - oldTotals.awayLegsWon),
+    ),
+  }, { merge: true });
+  tableBatch.set(db.doc(`divisionTables/${p.seasonId}_${p.divisionId}_${p.awayTeamId}`), {
+    leagueId: p.leagueId, seasonId: p.seasonId, divisionId: p.divisionId, teamId: p.awayTeamId,
+    played: FieldValue.increment(p.playedDelta),
+    won: FieldValue.increment(newContrib.awayWon - oldContrib.awayWon),
+    lost: FieldValue.increment(newContrib.awayLost - oldContrib.awayLost),
+    points: FieldValue.increment(newContrib.awayPoints - oldContrib.awayPoints),
+    legsFor: FieldValue.increment(newTotals.awayLegsWon - oldTotals.awayLegsWon),
+    legsAgainst: FieldValue.increment(newTotals.homeLegsWon - oldTotals.homeLegsWon),
+    legDiff: FieldValue.increment(
+      (newTotals.awayLegsWon - newTotals.homeLegsWon) - (oldTotals.awayLegsWon - oldTotals.homeLegsWon),
+    ),
+  }, { merge: true });
+  await tableBatch.commit();
+
+  await recomputeDivisionPositions(p.seasonId, p.divisionId);
+
+  // ── playerSeasonStats — diff old vs new per player ──
+  const oldAccum = computePlayerAccum(p.oldGames, p.homeTeamId, p.awayTeamId, p.matchId, p.scheduledDate);
+  const newAccum = computePlayerAccum(p.newGames, p.homeTeamId, p.awayTeamId, p.matchId, p.scheduledDate);
+  const playerIds = new Set([...oldAccum.keys(), ...newAccum.keys()]);
 
   const statsBatch = db.batch();
-  for (const [playerId, a] of accum) {
-    const ref = db.doc(`playerSeasonStats/${seasonId}_${playerId}`);
-    statsBatch.set(ref, {
-      leagueId, seasonId, divisionId, teamId: a.teamId, playerId,
-      played: FieldValue.increment(a.played),
-      won: FieldValue.increment(a.won),
-      lost: FieldValue.increment(a.lost),
-      oneEighties: FieldValue.increment(a.oneEighties),
-      ...(a.highCheckouts.length ? { highCheckouts: FieldValue.arrayUnion(...a.highCheckouts) } : {}),
+  const checkoutPlayerIds: string[] = [];
+
+  for (const playerId of playerIds) {
+    const o = oldAccum.get(playerId);
+    const n = newAccum.get(playerId);
+    const deltaPlayed = (n?.played ?? 0) - (o?.played ?? 0);
+    const deltaWon = (n?.won ?? 0) - (o?.won ?? 0);
+    const deltaLost = (n?.lost ?? 0) - (o?.lost ?? 0);
+    const delta180 = (n?.oneEighties ?? 0) - (o?.oneEighties ?? 0);
+    const checkoutsChanged = JSON.stringify(o?.highCheckouts ?? []) !== JSON.stringify(n?.highCheckouts ?? []);
+
+    if (checkoutsChanged) {
+      checkoutPlayerIds.push(playerId);
+      continue;
+    }
+    if (deltaPlayed === 0 && deltaWon === 0 && deltaLost === 0 && delta180 === 0) continue;
+
+    const teamId = (n ?? o)!.teamId;
+    statsBatch.set(db.doc(`playerSeasonStats/${p.seasonId}_${playerId}`), {
+      leagueId: p.leagueId, seasonId: p.seasonId, divisionId: p.divisionId, teamId, playerId,
+      played: FieldValue.increment(deltaPlayed),
+      won: FieldValue.increment(deltaWon),
+      lost: FieldValue.increment(deltaLost),
+      oneEighties: FieldValue.increment(delta180),
     }, { merge: true });
   }
   await statsBatch.commit();
+
+  // highCheckouts can't be delta-incremented (no arrayRemove-by-predicate) —
+  // read, drop this match's old entries, append the new ones, write in full.
+  for (const playerId of checkoutPlayerIds) {
+    const o = oldAccum.get(playerId);
+    const n = newAccum.get(playerId);
+    const deltaPlayed = (n?.played ?? 0) - (o?.played ?? 0);
+    const deltaWon = (n?.won ?? 0) - (o?.won ?? 0);
+    const deltaLost = (n?.lost ?? 0) - (o?.lost ?? 0);
+    const delta180 = (n?.oneEighties ?? 0) - (o?.oneEighties ?? 0);
+    const teamId = (n ?? o)!.teamId;
+
+    const ref = db.doc(`playerSeasonStats/${p.seasonId}_${playerId}`);
+    const snap = await ref.get();
+    const existing = (snap.exists ? (snap.data()!.highCheckouts as HighCheckoutEntry[] | undefined) ?? [] : []);
+    const filtered = existing.filter((hc) => hc.matchId !== p.matchId);
+    const rebuilt = [...filtered, ...(n?.highCheckouts ?? [])];
+
+    await ref.set({
+      leagueId: p.leagueId, seasonId: p.seasonId, divisionId: p.divisionId, teamId, playerId,
+      played: FieldValue.increment(deltaPlayed),
+      won: FieldValue.increment(deltaWon),
+      lost: FieldValue.increment(deltaLost),
+      oneEighties: FieldValue.increment(delta180),
+      highCheckouts: rebuilt,
+    }, { merge: true });
+  }
+}
+
+// ── On confirm (auto-confirm above, or an admin correcting an already-
+// confirmed result): recompute totals, divisionTables, standings positions,
+// and playerSeasonStats. ────────────────────────────────────────────────────
+export const onMatchConfirmed = onDocumentUpdated('matches/{matchId}', async (event) => {
+  const before = event.data?.before.data();
+  const after = event.data?.after.data();
+  if (!before || !after) return;
+  if (after.status !== 'confirmed') return;
+
+  // Only treat before.games as a real prior result if the match was already
+  // confirmed — otherwise (first confirmation) there's nothing to reverse.
+  const beforeGames = (before.status === 'confirmed' ? (before.games ?? []) : []) as MatchGame[];
+  const afterGames = (after.games ?? []) as MatchGame[];
+  if (JSON.stringify(beforeGames) === JSON.stringify(afterGames)) return; // no actual result change (e.g. venue/date edit)
+
+  const matchId = event.params.matchId;
+  const { leagueId, seasonId, divisionId, homeTeamId, awayTeamId, scheduledDate } = after as {
+    leagueId: string; seasonId: string; divisionId: string;
+    homeTeamId: string; awayTeamId: string; scheduledDate: FirebaseFirestore.Timestamp;
+  };
+
+  await db.doc(`matches/${matchId}`).update(computeTotals(afterGames));
+
+  await applyMatchResultDelta({
+    matchId, leagueId, seasonId, divisionId, homeTeamId, awayTeamId,
+    scheduledDate: scheduledDate.toDate(),
+    oldGames: beforeGames,
+    newGames: afterGames,
+    playedDelta: before.status !== 'confirmed' ? 1 : 0,
+  });
+});
+
+// ── On delete of a confirmed match: fully reverse its contribution to
+// divisionTables/playerSeasonStats/standings — otherwise deleting a
+// confirmed match would silently leave stale stats behind. ─────────────────
+export const onMatchDeleted = onDocumentDeleted('matches/{matchId}', async (event) => {
+  const before = event.data?.data();
+  if (!before || before.status !== 'confirmed') return;
+
+  const matchId = event.params.matchId;
+  const { leagueId, seasonId, divisionId, homeTeamId, awayTeamId, scheduledDate } = before as {
+    leagueId: string; seasonId: string; divisionId: string;
+    homeTeamId: string; awayTeamId: string; scheduledDate: FirebaseFirestore.Timestamp;
+  };
+  const games = (before.games ?? []) as MatchGame[];
+
+  await applyMatchResultDelta({
+    matchId, leagueId, seasonId, divisionId, homeTeamId, awayTeamId,
+    scheduledDate: scheduledDate.toDate(),
+    oldGames: games,
+    newGames: [],
+    playedDelta: -1,
+  });
+});
+
+// ── Admin cascading deletes ─────────────────────────────────────────────────
+// Callable functions bypass Firestore rules entirely, so each one re-checks
+// the caller is really a league admin for the league that owns the target
+// doc before doing anything. Deliberately conservative: anything with a
+// confirmed match in its history is blocked rather than cascade-reversed —
+// that would need the same bulk stats-reversal complexity as the single-
+// match recompute engine above, and is out of scope for this pass.
+
+async function assertLeagueAdmin(uid: string | undefined, leagueId: string): Promise<void> {
+  if (!uid) throw new HttpsError('unauthenticated', 'Sign in required.');
+  const userSnap = await db.doc(`users/${uid}`).get();
+  const user = userSnap.data();
+  if (!user || user.isLeagueAdmin !== true || user.leagueId !== leagueId) {
+    throw new HttpsError('permission-denied', 'League admin access required.');
+  }
+}
+
+async function hasConfirmedMatch(teamId: string): Promise<boolean> {
+  const [homeSnap, awaySnap] = await Promise.all([
+    db.collection('matches').where('homeTeamId', '==', teamId).where('status', '==', 'confirmed').limit(1).get(),
+    db.collection('matches').where('awayTeamId', '==', teamId).where('status', '==', 'confirmed').limit(1).get(),
+  ]);
+  return !homeSnap.empty || !awaySnap.empty;
+}
+
+async function assertNoConfirmedMatches(teamIds: string[]): Promise<void> {
+  for (const teamId of teamIds) {
+    if (await hasConfirmedMatch(teamId)) {
+      throw new HttpsError(
+        'failed-precondition',
+        'One or more teams here have confirmed match results — delete isn\'t supported while that history exists. Delete or correct those results first.',
+      );
+    }
+  }
+}
+
+// Deletes a team's players, its pending join requests, its own (non-
+// confirmed — callers must have already checked) matches, then the team
+// itself. Re-checks confirmed matches itself too, so it's safe to call
+// directly (adminDeleteTeam) as well as from a division/season cascade that
+// already did the check up front.
+async function deleteTeamCascade(teamId: string): Promise<void> {
+  if (await hasConfirmedMatch(teamId)) {
+    throw new HttpsError(
+      'failed-precondition',
+      'This team has confirmed match results — delete isn\'t supported while that history exists. Delete or correct those results first.',
+    );
+  }
+
+  const [playersSnap, joinReqSnap, homeMatchesSnap, awayMatchesSnap] = await Promise.all([
+    db.collection('players').where('teamId', '==', teamId).get(),
+    db.collection('joinRequests').where('teamId', '==', teamId).get(),
+    db.collection('matches').where('homeTeamId', '==', teamId).get(),
+    db.collection('matches').where('awayTeamId', '==', teamId).get(),
+  ]);
+
+  const batch = db.batch();
+  playersSnap.docs.forEach((d) => batch.delete(d.ref));
+  joinReqSnap.docs.forEach((d) => batch.delete(d.ref));
+  homeMatchesSnap.docs.forEach((d) => batch.delete(d.ref));
+  awayMatchesSnap.docs.forEach((d) => batch.delete(d.ref));
+  batch.delete(db.doc(`teams/${teamId}`));
+  await batch.commit();
+}
+
+async function deleteDivisionCascade(divisionId: string): Promise<void> {
+  const teamsSnap = await db.collection('teams').where('divisionId', '==', divisionId).get();
+  const teamIds = teamsSnap.docs.map((d) => d.id);
+  await assertNoConfirmedMatches(teamIds);
+
+  for (const teamId of teamIds) {
+    await deleteTeamCascade(teamId);
+  }
+
+  const [tablesSnap, statsSnap] = await Promise.all([
+    db.collection('divisionTables').where('divisionId', '==', divisionId).get(),
+    db.collection('playerSeasonStats').where('divisionId', '==', divisionId).get(),
+  ]);
+  const cleanupBatch = db.batch();
+  tablesSnap.docs.forEach((d) => cleanupBatch.delete(d.ref));
+  statsSnap.docs.forEach((d) => cleanupBatch.delete(d.ref));
+  cleanupBatch.delete(db.doc(`divisions/${divisionId}`));
+  await cleanupBatch.commit();
+}
+
+async function deleteSeasonCascade(seasonId: string): Promise<void> {
+  const divisionsSnap = await db.collection('divisions').where('seasonId', '==', seasonId).get();
+  const divisionIds = divisionsSnap.docs.map((d) => d.id);
+
+  const teamIdsPerDivision = await Promise.all(
+    divisionIds.map((divisionId) => db.collection('teams').where('divisionId', '==', divisionId).get()),
+  );
+  await assertNoConfirmedMatches(teamIdsPerDivision.flatMap((snap) => snap.docs.map((d) => d.id)));
+
+  for (const divisionId of divisionIds) {
+    await deleteDivisionCascade(divisionId);
+  }
+  await db.doc(`seasons/${seasonId}`).delete();
+}
+
+export const adminDeleteTeam = onCall(async (request) => {
+  const { teamId } = (request.data ?? {}) as { teamId?: string };
+  if (!teamId) throw new HttpsError('invalid-argument', 'teamId is required.');
+  const teamSnap = await db.doc(`teams/${teamId}`).get();
+  if (!teamSnap.exists) throw new HttpsError('not-found', 'Team not found.');
+  await assertLeagueAdmin(request.auth?.uid, teamSnap.data()!.leagueId);
+  await deleteTeamCascade(teamId);
+});
+
+export const adminDeleteDivision = onCall(async (request) => {
+  const { divisionId } = (request.data ?? {}) as { divisionId?: string };
+  if (!divisionId) throw new HttpsError('invalid-argument', 'divisionId is required.');
+  const divisionSnap = await db.doc(`divisions/${divisionId}`).get();
+  if (!divisionSnap.exists) throw new HttpsError('not-found', 'Division not found.');
+  await assertLeagueAdmin(request.auth?.uid, divisionSnap.data()!.leagueId);
+  await deleteDivisionCascade(divisionId);
+});
+
+export const adminDeleteSeason = onCall(async (request) => {
+  const { seasonId } = (request.data ?? {}) as { seasonId?: string };
+  if (!seasonId) throw new HttpsError('invalid-argument', 'seasonId is required.');
+  const seasonSnap = await db.doc(`seasons/${seasonId}`).get();
+  if (!seasonSnap.exists) throw new HttpsError('not-found', 'Season not found.');
+  await assertLeagueAdmin(request.auth?.uid, seasonSnap.data()!.leagueId);
+  await deleteSeasonCascade(seasonId);
 });

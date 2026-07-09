@@ -13,6 +13,8 @@ const FEATHER_ICONS = {
   'log-out': 'log-out',
   'trending-up': 'trending-up',
   'chevron-left': 'chevron-left',
+  'chevron-right': 'chevron-right',
+  'chevron-down': 'chevron-down',
   settings: 'settings',
   phone: 'phone',
   sun: 'sun',

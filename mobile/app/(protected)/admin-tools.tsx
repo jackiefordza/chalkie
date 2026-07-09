@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { View, Alert } from 'react-native';
+import { View, Alert, useWindowDimensions } from 'react-native';
 import { Stack } from 'expo-router';
 import { useColorScheme } from 'nativewind';
 import { useAuthStore } from '@/stores/authStore';
@@ -7,12 +7,17 @@ import { seedTestLeague, TEST_HOME_EMAIL, TEST_AWAY_EMAIL, TEST_PASSWORD } from 
 import { seedMockSeason, MOCK_CAPTAIN_EMAILS } from '@/lib/mockSeason';
 import { RAW } from '@/lib/theme';
 import { Screen, Heading, Body, Button, Card, AppBar, AppIcon } from '@/components/ui';
+import { AdminShell } from '@/components/admin/AdminShell';
+
+const DESKTOP_BREAKPOINT = 768;
 
 export default function AdminToolsScreen() {
   const { appUser } = useAuthStore();
   const { colorScheme } = useColorScheme();
   const isDark = colorScheme === 'dark';
   const leagueId = appUser?.leagueId ?? null;
+  const { width } = useWindowDimensions();
+  const isDesktop = width >= DESKTOP_BREAKPOINT;
 
   const [isSeeding, setIsSeeding] = useState(false);
   const [isSeedingMock, setIsSeedingMock] = useState(false);
@@ -70,10 +75,8 @@ export default function AdminToolsScreen() {
     );
   }
 
-  return (
-    <Screen header={<AppBar title="Tools" />}>
-      <Stack.Screen options={{ headerShown: false }} />
-
+  const body = (
+    <>
       {/* Dev-only: seed a throwaway test league for QA */}
       {__DEV__ && (
         <Card className="mb-5">
@@ -124,6 +127,24 @@ export default function AdminToolsScreen() {
           <Body size="sm" className="text-center mt-1">Admin tools will appear here as they're added.</Body>
         </Card>
       )}
+    </>
+  );
+
+  if (isDesktop) {
+    return (
+      <>
+        <Stack.Screen options={{ headerShown: false }} />
+        <AdminShell title="Tools" breadcrumb={[{ label: 'Dashboard', path: '/(protected)/(tabs)/admin' }, { label: 'Tools' }]}>
+          <View style={{ maxWidth: 780 }}>{body}</View>
+        </AdminShell>
+      </>
+    );
+  }
+
+  return (
+    <Screen header={<AppBar title="Tools" />}>
+      <Stack.Screen options={{ headerShown: false }} />
+      {body}
     </Screen>
   );
 }

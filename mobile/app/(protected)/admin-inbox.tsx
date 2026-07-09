@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { View, Alert, Platform } from 'react-native';
+import { View, Alert, Platform, useWindowDimensions } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { router, Stack } from 'expo-router';
 import { useColorScheme } from 'nativewind';
@@ -11,7 +11,10 @@ import { db } from '@/config/firebase';
 import { useAuthStore } from '@/stores/authStore';
 import { RAW } from '@/lib/theme';
 import { Screen, Heading, Body, Button, Card, ListRow, AppBar, AppIcon } from '@/components/ui';
+import { AdminShell } from '@/components/admin/AdminShell';
 import type { JoinRequest } from '@/types';
+
+const DESKTOP_BREAKPOINT = 768;
 
 interface TeamInfo {
   name: string; captainUserId: string | null; viceCaptainUserId: string | null;
@@ -26,6 +29,8 @@ export default function AdminInboxScreen() {
   const { colorScheme } = useColorScheme();
   const isDark = colorScheme === 'dark';
   const leagueId = appUser?.leagueId ?? null;
+  const { width } = useWindowDimensions();
+  const isDesktop = width >= DESKTOP_BREAKPOINT;
 
   const [captainRequests, setCaptainRequests] = useState<JoinRequest[]>([]);
   const [disputes, setDisputes] = useState<DisputedMatch[]>([]);
@@ -157,10 +162,8 @@ export default function AdminInboxScreen() {
     );
   }
 
-  return (
-    <Screen header={<AppBar title="Inbox" />}>
-      <Stack.Screen options={{ headerShown: false }} />
-
+  const body = (
+    <>
       {actionableRequests.length === 0 && disputes.length === 0 ? (
         <Card className="items-center py-8">
           <Body tone="strong" weight="semibold">All caught up</Body>
@@ -216,6 +219,24 @@ export default function AdminInboxScreen() {
           )}
         </>
       )}
+    </>
+  );
+
+  if (isDesktop) {
+    return (
+      <>
+        <Stack.Screen options={{ headerShown: false }} />
+        <AdminShell title="Inbox" breadcrumb={[{ label: 'Dashboard', path: '/(protected)/(tabs)/admin' }, { label: 'Inbox' }]}>
+          <View style={{ maxWidth: 780 }}>{body}</View>
+        </AdminShell>
+      </>
+    );
+  }
+
+  return (
+    <Screen header={<AppBar title="Inbox" />}>
+      <Stack.Screen options={{ headerShown: false }} />
+      {body}
     </Screen>
   );
 }

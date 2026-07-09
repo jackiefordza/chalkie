@@ -45,6 +45,23 @@ module.exports = {
         'text-dim-dark': '#A9AFBC',
         'text-faint': '#96998F',
         'text-faint-dark': '#6F7684',
+
+        // Admin console — deliberately cooler/darker than the app's warm
+        // branded palette above, so the desktop admin shell reads as a
+        // distinct console rather than a stretched phone screen. The
+        // sidebar is a fixed dark slate regardless of light/dark theme
+        // (same convention as most desktop admin tools).
+        'admin-sidebar': '#181B22',
+        'admin-sidebar-ink': '#B7BCC9',
+        'admin-sidebar-ink-active': '#FFFFFF',
+        'admin-sidebar-active': 'rgba(139,111,217,0.28)',
+        'admin-sidebar-border': '#262A35',
+        'admin-canvas': '#EEF0F4',
+        'admin-canvas-dark': '#0E1013',
+        'admin-panel': '#FFFFFF',
+        'admin-panel-dark': '#181A20',
+        'admin-panel-border': '#DFE2E8',
+        'admin-panel-border-dark': '#2A2E38',
       },
     },
   },
