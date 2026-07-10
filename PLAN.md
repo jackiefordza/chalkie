@@ -7,11 +7,17 @@ they're actually shipped and tested, not just started.
 ## Status snapshot
 
 - **Now:** Phase 1 core league loop (fixtures → results → auto-confirm/dispute →
-  standings/stats) is built end-to-end as of 2026-07-06. Not yet deployed/tested against
-  real Firestore — see "Not yet verified" note under Phase 1 below. Remaining Phase 1
-  items: push notifications, admin role-management screen, venue contact field (the
-  latter two added 2026-07-08 after clarifying the roles/permissions model with Jake —
-  see Roles & Permissions below).
+  standings/stats) is built end-to-end, plus a full desktop admin console (added
+  2026-07-09, see new checklist item below) that goes beyond Phase 1's original scope
+  with admin edit/delete of confirmed matches and cascading season/division/team
+  deletes. **Only remaining unbuilt Phase 1 item: push notifications.** Everything else
+  is code-complete but stuck at the same gap that's dogged this whole phase: **nothing
+  from 2026-07-08 or 2026-07-09 has been pushed to `origin/JakeDevBranch`, and the
+  latest rules/Cloud Functions changes (`b444ad0`) haven't been deployed** — so none of
+  it is live yet, and none of it has a real logged-in Firestore verification pass (no
+  admin test credentials exist in the sandbox this was built in — see per-item notes
+  below). Jake: pushing, deploying, and doing one real walkthrough as yourself is the
+  actual next step before writing any more code.
 - **Deadlines:** Showcase to league committee/captains in **August 2026**. Live trial
   with own league for the **2026/27 winter season (starts Sept/Oct 2026)**.
 - **What already exists and works:** account onboarding (admin/captain/VC/player roles,
@@ -394,6 +400,30 @@ Functions. Flag this to Jake before starting Phase 1 build.
       away fixture" to screenshot. Re-seeding the test league to get back to a
       `'scheduled'` state requires the admin-only seed tool in `admin-tools.tsx`, which
       hits the same no-admin-credentials wall as above.
+
+- [x] Desktop admin console (goes beyond original Phase 1 scope). Done 2026-07-09
+      (`b444ad0`): `src/components/admin/AdminShell.tsx` — a real sidebar console
+      (Dashboard/Teams/Fixtures/Results/Standings/Inbox/Tools) replacing the earlier
+      single desktop screen, with a persistent season/division context switcher
+      (`adminContextStore.ts`, fixes shortcuts getting stuck on one season when several
+      exist) and clickable breadcrumbs on every admin screen. Fixtures split out from
+      Results as its own section (scheduled/awaiting vs. confirmed/disputed), matching
+      how real league-management platforms separate scheduling from reviewing what
+      already happened. Also adds genuine new admin authority: **edit or delete an
+      already-confirmed match** via `results-entry.tsx` — required a Cloud Functions
+      stats-recompute engine so `divisionTables`/`playerSeasonStats` correctly
+      reverse/reapply their contribution (previously this aggregation only worked
+      correctly the first time a match was confirmed) — plus cascading
+      `adminDelete{Team,Division,Season}` callables that refuse to run if confirmed
+      match history exists, to avoid silent data loss. New
+      `admin-standings-override.tsx` for manual team-points/player-stat corrections.
+      Mobile is completely unaffected — everything is gated behind the existing
+      `isDesktop` (>=768px) branch already used for the web admin surface.
+      **Not pushed, not deployed, not live-verified.** `firestore.rules` and
+      `functions/src/index.ts` both changed as part of this — none of the new behavior
+      (especially the stats-recompute-on-edit fix) is live until `firebase deploy` runs
+      for both rules and functions. Together with `6ca1673` before it, this is 2 commits
+      sitting ahead of `origin/JakeDevBranch` as of 2026-07-10.
 
   **Not yet verified (2026-07-06 build):** typechecks clean (`mobile` + `functions`
   both build with no errors) and the web bundle boots with no console errors (checked
