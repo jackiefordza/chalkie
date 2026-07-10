@@ -1,10 +1,60 @@
 import { initializeApp } from 'firebase-admin/app';
-import { getFirestore, FieldValue } from 'firebase-admin/firestore';
-import { onDocumentWritten, onDocumentUpdated, onDocumentDeleted } from 'firebase-functions/v2/firestore';
+import { getFirestore, FieldValue, Timestamp } from 'firebase-admin/firestore';
+import { onDocumentWritten, onDocumentUpdated, onDocumentDeleted, onDocumentCreated } from 'firebase-functions/v2/firestore';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
+import { onSchedule } from 'firebase-functions/v2/scheduler';
 
 initializeApp();
 const db = getFirestore();
+
+// ── Push notifications (Expo push service — no extra SDK needed, just its
+// plain HTTP API). Every lookup here tolerates users with no expoPushToken
+// yet (pre-EAS-setup, or simply never granted permission) by filtering them
+// out rather than erroring — sending pushes is always best-effort, never
+// something a core flow (confirm, submit, join-request) should fail over. ──
+
+async function sendExpoPush(tokens: string[], title: string, body: string, data?: Record<string, unknown>): Promise<void> {
+  const uniqueTokens = [...new Set(tokens)].filter((t) => typeof t === 'string' && t.startsWith('ExponentPushToken'));
+  if (uniqueTokens.length === 0) return;
+  const messages = uniqueTokens.map((to) => ({ to, title, body, data, sound: 'default' }));
+  for (let i = 0; i < messages.length; i += 100) {
+    await fetch('https://exp.host/--/api/v2/push/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify(messages.slice(i, i + 100)),
+    });
+  }
+}
+
+function tokensFromDocs(docs: FirebaseFirestore.QueryDocumentSnapshot[]): string[] {
+  return docs.map((d) => d.data().expoPushToken as string | undefined).filter((t): t is string => !!t);
+}
+
+async function tokensForTeamRoles(teamId: string, roles: string[]): Promise<string[]> {
+  const snap = await db.collection('users').where('teamId', '==', teamId).where('role', 'in', roles).get();
+  return tokensFromDocs(snap.docs);
+}
+
+async function tokensForTeams(teamIds: string[]): Promise<string[]> {
+  const snap = await db.collection('users').where('teamId', 'in', teamIds).get();
+  return tokensFromDocs(snap.docs);
+}
+
+async function tokensForLeagueAdmins(leagueId: string): Promise<string[]> {
+  const snap = await db.collection('users').where('leagueId', '==', leagueId).where('isLeagueAdmin', '==', true).get();
+  return tokensFromDocs(snap.docs);
+}
+
+async function tokensForUser(uid: string): Promise<string[]> {
+  const snap = await db.doc(`users/${uid}`).get();
+  const token = snap.data()?.expoPushToken as string | undefined;
+  return token ? [token] : [];
+}
+
+async function teamName(teamId: string): Promise<string> {
+  const snap = await db.doc(`teams/${teamId}`).get();
+  return (snap.data()?.name as string | undefined) ?? 'Their team';
+}
 
 type MatchSide = 'home' | 'away';
 type GameType = 'singles' | 'pairs';
@@ -69,6 +119,18 @@ export const onSubmissionWrite = onDocumentWritten(
     if (subsSnap.size === 1) {
       if (match.status === 'scheduled') {
         await matchRef.update({ status: 'awaiting_confirmation' });
+        const submittedByTeamId = subsSnap.docs[0].data().submittedByTeamId as string;
+        const otherTeamId = submittedByTeamId === match.homeTeamId ? match.awayTeamId : match.homeTeamId;
+        const [submittedName, tokens] = await Promise.all([
+          teamName(submittedByTeamId),
+          tokensForTeamRoles(otherTeamId, ['captain', 'viceCaptain']),
+        ]);
+        await sendExpoPush(
+          tokens,
+          'Result needs confirmation',
+          `${submittedName} submitted their result — check it matches yours.`,
+          { type: 'awaiting_confirmation', matchId },
+        );
       }
       return;
     }
@@ -311,13 +373,29 @@ export const onMatchConfirmed = onDocumentUpdated('matches/{matchId}', async (ev
 
   await db.doc(`matches/${matchId}`).update(computeTotals(afterGames));
 
+  const isFirstConfirmation = before.status !== 'confirmed';
+
   await applyMatchResultDelta({
     matchId, leagueId, seasonId, divisionId, homeTeamId, awayTeamId,
     scheduledDate: scheduledDate.toDate(),
     oldGames: beforeGames,
     newGames: afterGames,
-    playedDelta: before.status !== 'confirmed' ? 1 : 0,
+    playedDelta: isFirstConfirmation ? 1 : 0,
   });
+
+  if (isFirstConfirmation) {
+    const [homeName, awayName, tokens] = await Promise.all([
+      teamName(homeTeamId),
+      teamName(awayTeamId),
+      tokensForTeams([homeTeamId, awayTeamId]),
+    ]);
+    await sendExpoPush(
+      tokens,
+      'Result confirmed',
+      `${homeName} vs ${awayName} is confirmed — check the standings.`,
+      { type: 'match_confirmed', matchId },
+    );
+  }
 });
 
 // ── On delete of a confirmed match: fully reverse its contribution to
@@ -341,6 +419,73 @@ export const onMatchDeleted = onDocumentDeleted('matches/{matchId}', async (even
     newGames: [],
     playedDelta: -1,
   });
+});
+
+// ── Fixture reminder: every day, push anyone on a team playing a scheduled
+// match tomorrow. Runs once daily rather than per-match so it's one simple
+// query instead of N per-match scheduled triggers. ─────────────────────────
+export const sendFixtureReminders = onSchedule(
+  { schedule: 'every day 09:00', timeZone: 'Europe/London' },
+  async () => {
+    const tomorrowStart = new Date();
+    tomorrowStart.setDate(tomorrowStart.getDate() + 1);
+    tomorrowStart.setHours(0, 0, 0, 0);
+    const tomorrowEnd = new Date(tomorrowStart);
+    tomorrowEnd.setHours(23, 59, 59, 999);
+
+    const matchesSnap = await db.collection('matches')
+      .where('status', '==', 'scheduled')
+      .where('scheduledDate', '>=', Timestamp.fromDate(tomorrowStart))
+      .where('scheduledDate', '<=', Timestamp.fromDate(tomorrowEnd))
+      .get();
+
+    for (const matchDoc of matchesSnap.docs) {
+      const match = matchDoc.data();
+      const [homeName, awayName, tokens] = await Promise.all([
+        teamName(match.homeTeamId),
+        teamName(match.awayTeamId),
+        tokensForTeams([match.homeTeamId, match.awayTeamId]),
+      ]);
+      await sendExpoPush(
+        tokens,
+        'Fixture tomorrow',
+        `${homeName} vs ${awayName} is tomorrow${match.venue ? ` at ${match.venue}` : ''}.`,
+        { type: 'fixture_reminder', matchId: matchDoc.id },
+      );
+    }
+  },
+);
+
+// ── Approval alerts: notify whoever needs to act on a new join/claim/
+// captain-role request — reuses the existing approval flows, just adds a
+// push on top of the in-app inbox that already exists. ─────────────────────
+export const onJoinRequestCreated = onDocumentCreated('joinRequests/{requestId}', async (event) => {
+  const request = event.data?.data();
+  if (!request) return;
+
+  let tokens: string[];
+  let title: string;
+  let body: string;
+
+  if (request.requestType === 'captainRole') {
+    if (request.requestedRole === 'captain') {
+      tokens = await tokensForLeagueAdmins(request.leagueId);
+    } else {
+      const teamSnap = await db.doc(`teams/${request.teamId}`).get();
+      const captainUserId = teamSnap.data()?.captainUserId as string | undefined;
+      tokens = captainUserId ? await tokensForUser(captainUserId) : await tokensForLeagueAdmins(request.leagueId);
+    }
+    title = request.requestedRole === 'captain' ? 'Captain request' : 'Vice Captain request';
+    body = `${request.displayName} wants to be ${request.requestedRole === 'captain' ? 'captain' : 'vice captain'} of ${request.teamName}.`;
+  } else {
+    tokens = await tokensForTeamRoles(request.teamId, ['captain', 'viceCaptain']);
+    title = request.requestType === 'claim' ? 'Claim request' : 'Join request';
+    body = request.requestType === 'claim'
+      ? `${request.displayName} says they're already on your roster for ${request.teamName}.`
+      : `${request.displayName} wants to join ${request.teamName}.`;
+  }
+
+  await sendExpoPush(tokens, title, body, { type: 'join_request', requestId: event.params.requestId });
 });
 
 // ── Admin cascading deletes ─────────────────────────────────────────────────

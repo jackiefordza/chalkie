@@ -5,9 +5,10 @@ import { useColorScheme } from 'nativewind';
 import { useAuthStore } from '@/stores/authStore';
 import { RAW } from '@/lib/theme';
 import { AccountMenu } from '@/components/ui';
+import { registerForPushNotificationsAsync } from '@/lib/pushNotifications';
 
 export default function ProtectedLayout() {
-  const { firebaseUser, isLoading, logOut } = useAuthStore();
+  const { firebaseUser, appUser, isLoading, logOut, savePushToken } = useAuthStore();
   const { colorScheme } = useColorScheme();
   const isDark = colorScheme === 'dark';
 
@@ -17,6 +18,13 @@ export default function ProtectedLayout() {
       router.replace('/(auth)/login');
     }
   }, [firebaseUser, isLoading]);
+
+  useEffect(() => {
+    if (!appUser || appUser.expoPushToken) return;
+    registerForPushNotificationsAsync().then((token) => {
+      if (token) savePushToken(token);
+    });
+  }, [appUser, savePushToken]);
 
   return (
     <>

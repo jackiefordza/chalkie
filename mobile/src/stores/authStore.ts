@@ -26,6 +26,7 @@ interface AuthState {
   register: (email: string, password: string, displayName: string) => Promise<void>;
   updateContactDetails: (phone: string, phoneVisibility: PhoneVisibility) => Promise<void>;
   updateProfileDetails: (name: string, nickname: string | null) => Promise<void>;
+  savePushToken: (token: string) => Promise<void>;
   logOut: () => Promise<void>;
   clearError: () => void;
 }
@@ -61,6 +62,7 @@ export const useAuthStore = create<AuthState>((set) => ({
         playerId: null,
         isLeagueAdmin: false,
         pendingRequestType: null,
+        expoPushToken: null,
         createdAt: serverTimestamp(),
       });
       // Set appUser immediately — onAuthStateChanged fires before setDoc completes
@@ -82,6 +84,7 @@ export const useAuthStore = create<AuthState>((set) => ({
           pendingRequestId: null,
           phone: null,
           phoneVisibility: null,
+          expoPushToken: null,
           createdAt: new Date(),
         },
         isLoading: false,
@@ -103,6 +106,12 @@ export const useAuthStore = create<AuthState>((set) => ({
     if (!currentUser) throw new Error('Not authenticated');
     await updateProfile(currentUser, { displayName: name });
     await updateDoc(doc(db, 'users', currentUser.uid), { displayName: name, nickname });
+  },
+
+  savePushToken: async (token: string) => {
+    const currentUser = auth.currentUser;
+    if (!currentUser) return;
+    await updateDoc(doc(db, 'users', currentUser.uid), { expoPushToken: token });
   },
 
   logOut: async () => {
@@ -161,6 +170,7 @@ export function initAuthListener() {
               pendingRequestId: d.pendingRequestId ?? null,
               phone: d.phone ?? null,
               phoneVisibility: d.phoneVisibility ?? null,
+              expoPushToken: d.expoPushToken ?? null,
               createdAt: d.createdAt?.toDate() ?? new Date(),
             },
             isLoading: false,

@@ -20,6 +20,7 @@ export interface AppUser {
   pendingRequestId: string | null;
   phone: string | null;
   phoneVisibility: PhoneVisibility | null;
+  expoPushToken: string | null;
   createdAt: Date;
 }
 

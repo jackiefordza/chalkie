@@ -6,18 +6,22 @@ they're actually shipped and tested, not just started.
 
 ## Status snapshot
 
-- **Now:** Phase 1 core league loop (fixtures → results → auto-confirm/dispute →
-  standings/stats) is built end-to-end, plus a full desktop admin console (added
-  2026-07-09, see new checklist item below) that goes beyond Phase 1's original scope
-  with admin edit/delete of confirmed matches and cascading season/division/team
-  deletes. **Only remaining unbuilt Phase 1 item: push notifications.** Everything else
-  is code-complete but stuck at the same gap that's dogged this whole phase: **nothing
-  from 2026-07-08 or 2026-07-09 has been pushed to `origin/JakeDevBranch`, and the
-  latest rules/Cloud Functions changes (`b444ad0`) haven't been deployed** — so none of
-  it is live yet, and none of it has a real logged-in Firestore verification pass (no
-  admin test credentials exist in the sandbox this was built in — see per-item notes
-  below). Jake: pushing, deploying, and doing one real walkthrough as yourself is the
-  actual next step before writing any more code.
+- **Now:** every Phase 1 checklist item is code-complete as of 2026-07-10, including
+  push notifications (just added) and the desktop admin console (2026-07-09) that goes
+  beyond Phase 1's original scope with admin edit/delete of confirmed matches and
+  cascading season/division/team deletes. **Nothing left to build for Phase 1** — what's
+  left is entirely deploy/verify/infra:
+  1. Push notifications need an EAS project (`eas login`/`eas init`, Jake's Expo
+     account) before they can actually send/receive on a device — see that checklist
+     item for detail.
+  2. `firestore.rules`, `firestore.indexes.json`, and `functions/src/index.ts` have all
+     changed since the last deploy and need `firebase deploy` for rules + indexes +
+     functions before any of it works live.
+  3. None of 2026-07-08 through 2026-07-10's work has a real logged-in Firestore
+     verification pass yet (no admin test credentials exist in the sandbox this was
+     built in — see per-item notes below). Jake: deploying and doing one real
+     walkthrough as yourself is the actual next step before this phase can be called
+     done, not more code.
 - **Deadlines:** Showcase to league committee/captains in **August 2026**. Live trial
   with own league for the **2026/27 winter season (starts Sept/Oct 2026)**.
 - **What already exists and works:** account onboarding (admin/captain/VC/player roles,
@@ -360,10 +364,41 @@ Functions. Flag this to Jake before starting Phase 1 build.
         request — the seeded test league has neither state right now, and there's no
         admin account available in this sandbox to re-seed it (same limitation noted
         elsewhere in this doc).
-- [ ] Push notifications: register Expo push token on user doc; Cloud Functions (or
-      scheduled function) for: fixture reminder day-before, "result needs your
-      confirmation", "result confirmed", admin/captain approval alerts (team/join
-      requests — reuses existing approval flows from the already-built onboarding).
+- [x] Push notifications — code complete 2026-07-10, **not deployed, not pushed,
+      genuinely can't be live-tested yet** (see blocker below). `AppUser.expoPushToken`
+      (string | null) added; `mobile/src/lib/pushNotifications.ts` requests permission
+      and registers an Expo push token on login (`(protected)/_layout.tsx`), saved via
+      a new `savePushToken` authStore action — silently no-ops (never throws) if
+      there's no physical device, permission is denied, or no EAS project exists yet.
+      Server side, `functions/src/index.ts` gained a plain-HTTP Expo-push helper
+      (`sendExpoPush`, no extra SDK needed) and four notification points, matching this
+      item's original scope exactly: `onSubmissionWrite` → "result needs your
+      confirmation" to the other team's captain/VC when the first submission comes in;
+      `onMatchConfirmed` → "result confirmed" to both teams on first confirmation only
+      (not on later admin corrections); new `sendFixtureReminders` (`onSchedule`, daily
+      09:00 Europe/London) → "fixture tomorrow" to both teams for anything still
+      `'scheduled'` the next day; new `onJoinRequestCreated` → routes to league admins
+      (captain requests), the team's current captain (VC requests, falling back to
+      admin if no captain yet), or the team's captain/VC (join/claim requests) — this is
+      the "admin/captain approval alerts" reuse of the existing request/approve flows.
+      Two new composite indexes added (`matches` status+scheduledDate,
+      `users` teamId+role) — nothing else needed in `firestore.rules`, `expoPushToken`
+      already falls under the existing "user updates own safe fields" branch since that
+      rule denies specific sensitive fields rather than allow-listing safe ones.
+      `mobile`/`functions` both typecheck and build clean; web bundle exports with no
+      runtime error from the new imports.
+
+      **Real blocker, confirmed 2026-07-10, same shape as the EAS gap noted in Phase 3:**
+      no `eas.json` / EAS project exists for this app yet (still just `expo start`, no
+      dev/production build). `expo-notifications`' `getExpoPushTokenAsync()` requires an
+      EAS project ID even to obtain a token, and as of Expo SDK 53+, **Expo Go on Android
+      no longer supports receiving remote push notifications at all** — only a real
+      build does. So none of this can actually send/receive a live push until Jake runs
+      `eas login` / `eas init` (an Expo account + login only he can do) and gets at least
+      a dev build. Added the `expo-notifications` config plugin to `app.json` now so that
+      step is one less thing to configure when he gets there. Until then, the client-side
+      registration silently no-ops (by design) rather than erroring — safe to ship ahead
+      of the EAS work, but pushes genuinely won't arrive on a device until it's done.
 - [x] Admin role management screen. Done 2026-07-08, scoped **per-team** (not a
       league-wide user browser — decided with Jake to keep captaincy transfer tied to
       the team it happens on): `admin-team.tsx`'s player roster now shows each claimed
