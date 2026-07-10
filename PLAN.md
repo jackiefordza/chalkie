@@ -64,6 +64,26 @@ they're actually shipped and tested, not just started.
   and Phase 2 cup/knockout competitions (still just roadmap, see below) — Jake had
   assumed basic fixture generation was also unbuilt, but that's been live since
   2026-07-02 (`admin-fixtures.tsx`, round-robin generator).
+- **Full admin QA pass, 2026-07-10.** Built a throwaway multi-division test season
+  (2 divisions, 6 teams) since every real season only had 1 division, then walked
+  every admin screen. Found and shipped a critical fix (`7afd935`): **every
+  `Alert.alert` call in the app — every delete/confirm dialog and every error
+  message — was a complete no-op on the web build.** `react-native-web`'s
+  `Alert.alert` is a literal empty function; confirmed by reading the installed
+  package source, not just guessing. This silently disabled Delete
+  Team/Season/Division/Player, Reject Request, and every "Something went wrong"
+  message across ~10 screens on desktop — clicking Delete Season produced nothing
+  at all. Fixed with `mobile/src/lib/alert.ts`: native platforms keep the real
+  Alert, web falls back to `window.confirm`/`window.alert` against the same
+  signature every call site already used, so no call site's logic changed, only
+  its import. Verified end-to-end with a real cascading Delete Season that removed
+  the test season. Full report (including 4 other issues found — a Players-count
+  bug from admin-added players missing `divisionId`, a blank unstyled Standings
+  screen before any match is played, multiple seasons allowed "active"
+  simultaneously with a Dashboard Teams count that sums across all of them, and a
+  minor Captain/VC helper-text bug) is in the QA artifact linked from that
+  session — not duplicated here in full since this file is for state, not the
+  narrative.
 - **Deadlines:** Showcase to league committee/captains in **August 2026**. Live trial
   with own league for the **2026/27 winter season (starts Sept/Oct 2026)**.
 - **What already exists and works:** account onboarding (admin/captain/VC/player roles,
