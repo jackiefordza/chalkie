@@ -581,6 +581,42 @@ Functions. Flag this to Jake before starting Phase 1 build.
 - Also added an explicit header back button to both new screens rather than relying on
   platform default back-button behavior, which wasn't reliably showing.
 
+## Known bugs — open (found in the 2026-07-10 admin QA pass)
+
+Full writeup with repro steps in the QA artifact linked from that session
+(https://claude.ai/code/artifact/0302f9e2-a31a-4bee-95c3-e7e02bb0edcd) — these are
+just the checkable summary so they don't get lost.
+
+- [ ] Players added via admin "Add Player" (`admin-team.tsx`'s `addPlayer()`) never
+      get `divisionId` set on the player doc, only `leagueId`/`teamId`. Every
+      division-scoped query (the Players stat card, the Teams table's per-team
+      Players column, and most likely `playerSeasonStats` once matches are
+      confirmed) filters on `divisionId`, so these players are invisible to all of
+      it. Contrast with the claim/join-approval path, which does set it correctly.
+- [ ] Standings tab shows a completely blank page with no explanation when a
+      division has teams but zero confirmed matches yet — no empty-state message,
+      unlike Results ("No results yet…") and Inbox ("All caught up"). Likely because
+      `divisionTables` has no row for a team until the stats-recompute function
+      runs after its first confirmed match.
+- [ ] Nothing stops two seasons being marked "active" simultaneously (3 were active
+      at once during testing) — the Dashboard's "Active Season" card just silently
+      picks one. Separately, the Dashboard's "Teams" stat sums teams across every
+      season the league has ever had, not just the current one — went from 10 to 16
+      after adding teams to a season that wasn't even "active".
+- [ ] On a team's page, the "waiting for someone to request this role" hint under
+      Vice Captain only checks whether *Captain* has no pending assignment — it
+      disappears once Captain is assigned/pending even if VC is still fully
+      unassigned.
+
+## Suggested improvements (not bugs, raised 2026-07-10)
+
+- [ ] Admin-side "enter/confirm a result" path — right now results only enter the
+      system via a captain's own mobile submission; no way for an admin to record
+      one on behalf of a captain who's stuck or offline.
+- [ ] Team/roster carry-over between seasons — every season's teams are built from
+      scratch today; a "copy teams from…" option on a new season/division would cut
+      most of the re-entry each season turnover.
+
 ## Open risks / things to revisit
 
 - Including Phase 2 (cup + 4 individual competitions) is a lot of scope for the
