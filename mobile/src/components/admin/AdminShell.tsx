@@ -92,7 +92,7 @@ interface AdminShellProps {
 export function AdminShell({ leagueName, title, breadcrumb, actions, children }: AdminShellProps) {
   const { appUser, logOut } = useAuthStore();
   const pathname = usePathname();
-  const { tab } = useGlobalSearchParams<{ tab?: string }>();
+  const { tab, seasonId: urlSeasonId, divisionId: urlDivisionId } = useGlobalSearchParams<{ tab?: string; seasonId?: string; divisionId?: string }>();
   const ctx = useAdminContextStore();
   const { colorScheme } = useColorScheme();
   const isDark = colorScheme === 'dark';
@@ -100,6 +100,10 @@ export function AdminShell({ leagueName, title, breadcrumb, actions, children }:
   const [seasons, setSeasons] = useState<SeasonSummary[]>([]);
   const [divisions, setDivisions] = useState<DivisionSummary[]>([]);
   const [teams, setTeams] = useState<TeamSummary[]>([]);
+  // Which season's division tree is open in the sidebar — an accordion, not
+  // independent toggles per season, so the tree doesn't grow to list every
+  // division across every season at once.
+  const [expandedSeasonId, setExpandedSeasonId] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pendingTab, setPendingTab] = useState<WorkspaceTab>('teams');
   // Season first, then that season's divisions — not one flat list of every
@@ -126,12 +130,18 @@ export function AdminShell({ leagueName, title, breadcrumb, actions, children }:
     return () => { unsubSeasons(); unsubDivisions(); unsubTeams(); };
   }, [appUser?.leagueId]);
 
+  // Tracks the URL's own seasonId, not the persisted admin-context store —
+  // AdminShell remounts fresh on every navigation (each admin-*.tsx screen
+  // renders its own instance), so local state alone can't survive the
+  // goToSeason navigation that's supposed to trigger this expansion. The
+  // store is a separate "last-chosen" memory for the Fixtures/Results/
+  // Standings shortcuts and is deliberately not touched here.
+  useEffect(() => {
+    if (urlSeasonId) setExpandedSeasonId(urlSeasonId);
+  }, [urlSeasonId]);
+
   const currentSeasonName = seasons.find((s) => s.id === ctx.seasonId)?.name ?? null;
   const currentDivisionName = divisions.find((d) => d.id === ctx.divisionId)?.name ?? null;
-  // Sidebar tree is scoped to whichever season the header switcher currently
-  // points at — switching seasons entirely still goes through that picker,
-  // this is just quick lateral movement between divisions once you're in one.
-  const sidebarDivisions = ctx.seasonId ? divisions.filter((d) => d.seasonId === ctx.seasonId) : [];
 
   function goToTab(workspaceTab: WorkspaceTab) {
     if (ctx.seasonId && ctx.divisionId) {
@@ -156,10 +166,19 @@ export function AdminShell({ leagueName, title, breadcrumb, actions, children }:
     router.push(`/(protected)/admin-season?seasonId=${seasonId}&divisionId=${divisionId}&tab=${pendingTab}` as never);
   }
 
-  function goToDivision(divisionId: string) {
-    if (!ctx.seasonId) return;
-    ctx.setContext(ctx.seasonId, divisionId);
-    router.push(`/(protected)/admin-season?seasonId=${ctx.seasonId}&divisionId=${divisionId}&tab=teams` as never);
+  // Clicking a season row opens its division tree and takes you to that
+  // season's own management screen (add/delete divisions, delete season) —
+  // distinct from a division row, which drops straight into that division's
+  // Teams tab.
+  function goToSeason(seasonId: string) {
+    setExpandedSeasonId(seasonId);
+    router.push(`/(protected)/admin-season?seasonId=${seasonId}` as never);
+  }
+
+  function goToDivisionInSeason(seasonId: string, divisionId: string) {
+    ctx.setContext(seasonId, divisionId);
+    setExpandedSeasonId(seasonId);
+    router.push(`/(protected)/admin-season?seasonId=${seasonId}&divisionId=${divisionId}&tab=teams` as never);
   }
 
   const section = currentSection(pathname, tab);
@@ -190,36 +209,56 @@ export function AdminShell({ leagueName, title, breadcrumb, actions, children }:
           />
 
           <SectionLabel>League Structure</SectionLabel>
-          <SidebarRow
-            icon="users"
-            label="Divisions"
-            active={section === 'teams' && !ctx.divisionId}
-            trailing={sidebarDivisions.length > 0 ? <Text style={{ fontFamily: FONT_BODY, color: '#8189A0', fontSize: 10.5 }}>{sidebarDivisions.length}</Text> : undefined}
-            onPress={() => goToTab('teams')}
-          />
-          {ctx.seasonId && sidebarDivisions.length > 0 && (
-            <View style={{ marginLeft: 26, marginTop: 2, borderLeftWidth: 1, borderLeftColor: '#262A35', paddingLeft: 12, gap: 1 }}>
-              {sidebarDivisions.map((division) => {
-                const teamCount = teams.filter((t) => t.divisionId === division.id).length;
-                const active = section === 'teams' && ctx.divisionId === division.id;
-                return (
-                  <Pressable
-                    key={division.id}
-                    onPress={() => goToDivision(division.id)}
-                    className="flex-row items-center justify-between"
-                    style={{ paddingVertical: 6, paddingHorizontal: 10, borderRadius: 6 }}
-                  >
-                    <Text
-                      numberOfLines={1}
-                      style={{ fontFamily: FONT_BODY, fontSize: 12.5, fontWeight: active ? '700' : '500', color: active ? RAW.textDark : '#8189A0', flex: 1 }}
-                    >
-                      {division.name}
-                    </Text>
-                    <Text style={{ fontFamily: FONT_BODY, color: '#8189A0', fontSize: 10.5, marginLeft: 6 }}>{teamCount}</Text>
-                  </Pressable>
-                );
-              })}
-            </View>
+          {seasons.length === 0 ? (
+            <Text style={{ fontFamily: FONT_BODY, color: '#6B7080', fontSize: 12.5, paddingHorizontal: 16 }}>
+              No seasons yet
+            </Text>
+          ) : (
+            seasons.map((season) => {
+              const seasonDivisions = divisions.filter((d) => d.seasonId === season.id);
+              const expanded = expandedSeasonId === season.id;
+              const seasonActive = section === 'teams' && urlSeasonId === season.id && !urlDivisionId;
+              return (
+                <View key={season.id}>
+                  <SidebarRow
+                    icon="calendar"
+                    label={season.name}
+                    active={seasonActive}
+                    trailing={
+                      <View className="flex-row items-center gap-1">
+                        <Text style={{ fontFamily: FONT_BODY, color: '#8189A0', fontSize: 10.5 }}>{seasonDivisions.length}</Text>
+                        <AppIcon name={expanded ? 'chevron-down' : 'chevron-right'} size={12} color="#6B7080" />
+                      </View>
+                    }
+                    onPress={() => goToSeason(season.id)}
+                  />
+                  {expanded && seasonDivisions.length > 0 && (
+                    <View style={{ marginLeft: 26, marginTop: 2, marginBottom: 2, borderLeftWidth: 1, borderLeftColor: '#262A35', paddingLeft: 12, gap: 1 }}>
+                      {seasonDivisions.map((division) => {
+                        const teamCount = teams.filter((t) => t.divisionId === division.id).length;
+                        const active = section === 'teams' && urlSeasonId === season.id && urlDivisionId === division.id;
+                        return (
+                          <Pressable
+                            key={division.id}
+                            onPress={() => goToDivisionInSeason(season.id, division.id)}
+                            className="flex-row items-center justify-between"
+                            style={{ paddingVertical: 6, paddingHorizontal: 10, borderRadius: 6 }}
+                          >
+                            <Text
+                              numberOfLines={1}
+                              style={{ fontFamily: FONT_BODY, fontSize: 12.5, fontWeight: active ? '700' : '500', color: active ? RAW.textDark : '#8189A0', flex: 1 }}
+                            >
+                              {division.name}
+                            </Text>
+                            <Text style={{ fontFamily: FONT_BODY, color: '#8189A0', fontSize: 10.5, marginLeft: 6 }}>{teamCount}</Text>
+                          </Pressable>
+                        );
+                      })}
+                    </View>
+                  )}
+                </View>
+              );
+            })
           )}
 
           <SectionLabel>Competition</SectionLabel>
