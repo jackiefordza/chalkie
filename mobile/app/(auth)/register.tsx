@@ -46,9 +46,10 @@ export default function RegisterScreen() {
     <View className="flex-1 bg-bg dark:bg-bg-dark">
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
         <ScrollView
-          contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', paddingHorizontal: 24, paddingVertical: 40 }}
+          contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 24, paddingVertical: 40 }}
           keyboardShouldPersistTaps="handled"
         >
+          <View style={{ width: '100%', maxWidth: 400 }}>
           {/* Header */}
           <View className="mb-8">
             <Heading size="lg">Create account</Heading>
@@ -126,6 +127,7 @@ export default function RegisterScreen() {
             <Body onPress={() => goBack('/(auth)/login')} suppressHighlighting>
               Already have an account? <Body tone="brand" weight="semibold">Sign In</Body>
             </Body>
+          </View>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>

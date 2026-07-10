@@ -2,6 +2,7 @@ import { useState, useEffect, type ReactNode } from 'react';
 import { View, ScrollView, Text, Pressable } from 'react-native';
 import { router, usePathname, useGlobalSearchParams } from 'expo-router';
 import { collection, onSnapshot, query, where } from 'firebase/firestore';
+import { useColorScheme } from 'nativewind';
 import { db } from '@/config/firebase';
 import { useAuthStore } from '@/stores/authStore';
 import { useAdminContextStore } from '@/stores/adminContextStore';
@@ -41,6 +42,7 @@ function currentSection(pathname: string, tab: string | undefined): SectionKey |
 
 interface SeasonSummary { id: string; name: string }
 interface DivisionSummary { id: string; name: string; seasonId: string }
+interface TeamSummary { id: string; divisionId: string }
 
 interface SidebarRowProps {
   icon?: AppIconName;
@@ -92,11 +94,20 @@ export function AdminShell({ leagueName, title, breadcrumb, actions, children }:
   const pathname = usePathname();
   const { tab } = useGlobalSearchParams<{ tab?: string }>();
   const ctx = useAdminContextStore();
+  const { colorScheme } = useColorScheme();
+  const isDark = colorScheme === 'dark';
 
   const [seasons, setSeasons] = useState<SeasonSummary[]>([]);
   const [divisions, setDivisions] = useState<DivisionSummary[]>([]);
+  const [teams, setTeams] = useState<TeamSummary[]>([]);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pendingTab, setPendingTab] = useState<WorkspaceTab>('teams');
+  // Season first, then that season's divisions — not one flat list of every
+  // division across every season, so picking "last season" doesn't require
+  // already knowing which division you want and losing track of how many
+  // divisions the current season has.
+  const [pickerStep, setPickerStep] = useState<'season' | 'division'>('season');
+  const [pickerSeasonId, setPickerSeasonId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!appUser?.leagueId) return;
@@ -108,25 +119,47 @@ export function AdminShell({ leagueName, title, breadcrumb, actions, children }:
       query(collection(db, 'divisions'), where('leagueId', '==', appUser.leagueId)),
       (snap) => setDivisions(snap.docs.map((d) => ({ id: d.id, name: d.data().name, seasonId: d.data().seasonId }))),
     );
-    return () => { unsubSeasons(); unsubDivisions(); };
+    const unsubTeams = onSnapshot(
+      query(collection(db, 'teams'), where('leagueId', '==', appUser.leagueId)),
+      (snap) => setTeams(snap.docs.map((d) => ({ id: d.id, divisionId: d.data().divisionId }))),
+    );
+    return () => { unsubSeasons(); unsubDivisions(); unsubTeams(); };
   }, [appUser?.leagueId]);
 
   const currentSeasonName = seasons.find((s) => s.id === ctx.seasonId)?.name ?? null;
   const currentDivisionName = divisions.find((d) => d.id === ctx.divisionId)?.name ?? null;
+  // Sidebar tree is scoped to whichever season the header switcher currently
+  // points at — switching seasons entirely still goes through that picker,
+  // this is just quick lateral movement between divisions once you're in one.
+  const sidebarDivisions = ctx.seasonId ? divisions.filter((d) => d.seasonId === ctx.seasonId) : [];
 
   function goToTab(workspaceTab: WorkspaceTab) {
     if (ctx.seasonId && ctx.divisionId) {
       router.push(`/(protected)/admin-season?seasonId=${ctx.seasonId}&divisionId=${ctx.divisionId}&tab=${workspaceTab}` as never);
     } else {
-      setPendingTab(workspaceTab);
-      setPickerOpen(true);
+      openPicker(workspaceTab);
     }
+  }
+
+  function openPicker(workspaceTab: WorkspaceTab) {
+    setPendingTab(workspaceTab);
+    // Reopening on an already-chosen season jumps straight to its division
+    // list rather than making you re-pick the season every time.
+    setPickerSeasonId(ctx.seasonId ?? null);
+    setPickerStep(ctx.seasonId ? 'division' : 'season');
+    setPickerOpen(true);
   }
 
   function choosePicker(seasonId: string, divisionId: string) {
     ctx.setContext(seasonId, divisionId);
     setPickerOpen(false);
     router.push(`/(protected)/admin-season?seasonId=${seasonId}&divisionId=${divisionId}&tab=${pendingTab}` as never);
+  }
+
+  function goToDivision(divisionId: string) {
+    if (!ctx.seasonId) return;
+    ctx.setContext(ctx.seasonId, divisionId);
+    router.push(`/(protected)/admin-season?seasonId=${ctx.seasonId}&divisionId=${divisionId}&tab=teams` as never);
   }
 
   const section = currentSection(pathname, tab);
@@ -148,24 +181,6 @@ export function AdminShell({ leagueName, title, breadcrumb, actions, children }:
           <Badge tone="brand" className="self-start mt-2">Admin</Badge>
         </View>
 
-        {/* Context switcher — always-visible, one tap to change which season/
-            division Teams/Fixtures/Results/Standings point at, replacing the
-            old "guess the active season" shortcut logic. */}
-        <Pressable
-          onPress={() => { setPendingTab('teams'); setPickerOpen(true); }}
-          className="mx-3 mb-3 px-3 py-2.5 rounded-xl border border-admin-sidebar-border bg-white/5"
-        >
-          <Text style={{ fontFamily: FONT_BODY, color: '#8189A0', fontSize: 10, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5 }}>
-            Working In
-          </Text>
-          <View className="flex-row items-center mt-1">
-            <Text numberOfLines={1} style={{ flex: 1, fontFamily: FONT_BODY, color: RAW.textDark, fontSize: 13, fontWeight: '600' }}>
-              {currentSeasonName && currentDivisionName ? `${currentSeasonName} · ${currentDivisionName}` : 'Choose a season'}
-            </Text>
-            <AppIcon name="chevron-down" size={13} color="#8189A0" />
-          </View>
-        </Pressable>
-
         <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 12 }}>
           <SidebarRow
             icon="home"
@@ -174,8 +189,40 @@ export function AdminShell({ leagueName, title, breadcrumb, actions, children }:
             onPress={() => router.push('/(protected)/(tabs)/admin')}
           />
 
-          <SectionLabel>Manage</SectionLabel>
-          <SidebarRow icon="users" label="Teams" active={section === 'teams'} onPress={() => goToTab('teams')} />
+          <SectionLabel>League Structure</SectionLabel>
+          <SidebarRow
+            icon="users"
+            label="Divisions"
+            active={section === 'teams' && !ctx.divisionId}
+            trailing={sidebarDivisions.length > 0 ? <Text style={{ fontFamily: FONT_BODY, color: '#8189A0', fontSize: 10.5 }}>{sidebarDivisions.length}</Text> : undefined}
+            onPress={() => goToTab('teams')}
+          />
+          {ctx.seasonId && sidebarDivisions.length > 0 && (
+            <View style={{ marginLeft: 26, marginTop: 2, borderLeftWidth: 1, borderLeftColor: '#262A35', paddingLeft: 12, gap: 1 }}>
+              {sidebarDivisions.map((division) => {
+                const teamCount = teams.filter((t) => t.divisionId === division.id).length;
+                const active = section === 'teams' && ctx.divisionId === division.id;
+                return (
+                  <Pressable
+                    key={division.id}
+                    onPress={() => goToDivision(division.id)}
+                    className="flex-row items-center justify-between"
+                    style={{ paddingVertical: 6, paddingHorizontal: 10, borderRadius: 6 }}
+                  >
+                    <Text
+                      numberOfLines={1}
+                      style={{ fontFamily: FONT_BODY, fontSize: 12.5, fontWeight: active ? '700' : '500', color: active ? RAW.textDark : '#8189A0', flex: 1 }}
+                    >
+                      {division.name}
+                    </Text>
+                    <Text style={{ fontFamily: FONT_BODY, color: '#8189A0', fontSize: 10.5, marginLeft: 6 }}>{teamCount}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          )}
+
+          <SectionLabel>Competition</SectionLabel>
           <SidebarRow icon="calendar" label="Fixtures" active={section === 'fixtures'} onPress={() => goToTab('fixtures')} />
           <SidebarRow icon="check" label="Results" active={section === 'results'} onPress={() => goToTab('results')} />
           <SidebarRow icon="trending-up" label="Standings" active={section === 'standings'} onPress={() => goToTab('standings')} />
@@ -213,6 +260,25 @@ export function AdminShell({ leagueName, title, breadcrumb, actions, children }:
             )}
             <Heading size="lg">{title}</Heading>
           </View>
+          {/* Season/division switcher — only meaningful on the workspace tabs
+              it actually governs, moved here from a permanent sidebar box so
+              it reads as a filter on the page you're looking at, not a
+              standing app-wide setting. */}
+          {(section === 'teams' || section === 'fixtures' || section === 'results' || section === 'standings') && (
+            <Pressable
+              onPress={() => openPicker(section as WorkspaceTab)}
+              className="flex-row items-center gap-1.5 px-3 py-2 mr-3 rounded-xl border border-admin-panel-border dark:border-admin-panel-border-dark bg-surface-2 dark:bg-surface-2-dark"
+            >
+              <Text
+                numberOfLines={1}
+                className="text-text dark:text-text-dark"
+                style={{ fontFamily: FONT_BODY, fontSize: 13, fontWeight: '600', maxWidth: 220 }}
+              >
+                {currentSeasonName && currentDivisionName ? `${currentSeasonName} · ${currentDivisionName}` : 'Choose a season'}
+              </Text>
+              <AppIcon name="chevron-down" size={13} color={isDark ? RAW.textFaintDark : RAW.textFaint} />
+            </Pressable>
+          )}
           {actions}
         </View>
         <ScrollView contentContainerStyle={{ padding: 32 }}>
@@ -220,41 +286,68 @@ export function AdminShell({ leagueName, title, breadcrumb, actions, children }:
         </ScrollView>
       </View>
 
-      {/* Season/division picker */}
+      {/* Season/division picker — season first, then that season's divisions */}
       <Sheet visible={pickerOpen} onClose={() => setPickerOpen(false)}>
-        <Heading size="lg" className="mb-4">Choose Season &amp; Division</Heading>
-        <ScrollView style={{ maxHeight: 420 }}>
-          {seasons.length === 0 ? (
-            <Caption>No seasons yet — create one from the Dashboard first.</Caption>
-          ) : (
-            seasons.map((season) => {
-              const seasonDivisions = divisions.filter((d) => d.seasonId === season.id);
-              return (
-                <View key={season.id} className="mb-4">
-                  <Caption className="mb-1.5">{season.name}</Caption>
-                  {seasonDivisions.length === 0 ? (
-                    <Caption className="opacity-60">No divisions yet</Caption>
-                  ) : (
-                    <View className="gap-1.5">
-                      {seasonDivisions.map((division) => {
-                        const selected = ctx.seasonId === season.id && ctx.divisionId === division.id;
-                        return (
-                          <Pressable
-                            key={division.id}
-                            onPress={() => choosePicker(season.id, division.id)}
-                            className={['px-3 py-2.5 rounded-xl', selected ? 'bg-brand-fill dark:bg-brand-fill-dark' : 'bg-surface-2 dark:bg-surface-2-dark'].join(' ')}
-                          >
-                            <Body tone={selected ? 'brand' : 'strong'} weight="semibold">{division.name}</Body>
-                          </Pressable>
-                        );
-                      })}
-                    </View>
-                  )}
+        {pickerStep === 'season' ? (
+          <>
+            <Heading size="lg" className="mb-4">Choose Season</Heading>
+            <ScrollView style={{ maxHeight: 420 }}>
+              {seasons.length === 0 ? (
+                <Caption>No seasons yet — create one from the Dashboard first.</Caption>
+              ) : (
+                <View className="gap-1.5">
+                  {seasons.map((season) => {
+                    const count = divisions.filter((d) => d.seasonId === season.id).length;
+                    return (
+                      <Pressable
+                        key={season.id}
+                        onPress={() => { setPickerSeasonId(season.id); setPickerStep('division'); }}
+                        className="flex-row items-center justify-between px-3 py-3 rounded-xl bg-surface-2 dark:bg-surface-2-dark"
+                      >
+                        <Body tone="strong" weight="semibold">{season.name}</Body>
+                        <View className="flex-row items-center gap-1.5">
+                          <Caption>{count} division{count === 1 ? '' : 's'}</Caption>
+                          <AppIcon name="chevron-right" size={14} color={isDark ? RAW.textFaintDark : RAW.textFaint} />
+                        </View>
+                      </Pressable>
+                    );
+                  })}
                 </View>
-              );
-            })
-          )}
-        </ScrollView>
+              )}
+            </ScrollView>
+          </>
+        ) : (
+          <>
+            <Pressable onPress={() => setPickerStep('season')} className="flex-row items-center gap-1 mb-3">
+              <AppIcon name="chevron-left" size={14} color={isDark ? RAW.brandInkDark : RAW.brandInk} />
+              <Body tone="brand" weight="semibold">All Seasons</Body>
+            </Pressable>
+            <Heading size="lg" className="mb-4">{seasons.find((s) => s.id === pickerSeasonId)?.name ?? 'Choose Division'}</Heading>
+            <ScrollView style={{ maxHeight: 420 }}>
+              {(() => {
+                const seasonDivisions = divisions.filter((d) => d.seasonId === pickerSeasonId);
+                return seasonDivisions.length === 0 ? (
+                  <Caption>No divisions yet in this season.</Caption>
+                ) : (
+                  <View className="gap-1.5">
+                    {seasonDivisions.map((division) => {
+                      const selected = ctx.seasonId === pickerSeasonId && ctx.divisionId === division.id;
+                      return (
+                        <Pressable
+                          key={division.id}
+                          onPress={() => choosePicker(pickerSeasonId as string, division.id)}
+                          className={['px-3 py-2.5 rounded-xl', selected ? 'bg-brand-fill dark:bg-brand-fill-dark' : 'bg-surface-2 dark:bg-surface-2-dark'].join(' ')}
+                        >
+                          <Body tone={selected ? 'brand' : 'strong'} weight="semibold">{division.name}</Body>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                );
+              })()}
+            </ScrollView>
+          </>
+        )}
       </Sheet>
     </View>
   );

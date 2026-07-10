@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
-import { View, TouchableOpacity, ActivityIndicator, Alert, useWindowDimensions } from 'react-native';
+import { View, Text, TouchableOpacity, Pressable, ActivityIndicator, Alert, useWindowDimensions } from 'react-native';
 import { router, Stack, useLocalSearchParams } from 'expo-router';
+import { useColorScheme } from 'nativewind';
 import {
   collection, doc, onSnapshot, query, where, updateDoc, addDoc, serverTimestamp,
 } from 'firebase/firestore';
@@ -10,7 +11,8 @@ import { useAuthStore } from '@/stores/authStore';
 import { useAdminContextStore } from '@/stores/adminContextStore';
 import { goBack } from '@/lib/navigation';
 import { RAW, type SemanticTone } from '@/lib/theme';
-import { Screen, Heading, Body, Caption, Button, Card, Chip, ListRow, Input, Label, Sheet } from '@/components/ui';
+import { FONT_DISPLAY } from '@/styles/typography';
+import { Screen, Heading, Body, Caption, Button, Card, Chip, ListRow, Input, Label, Sheet, StatTile, Badge, Avatar, AppIcon } from '@/components/ui';
 import { AdminShell } from '@/components/admin/AdminShell';
 import { FixturesTab, ResultsTab } from './admin-fixtures';
 import { StandingsTab } from './admin-standings-override';
@@ -18,7 +20,7 @@ import { StandingsTab } from './admin-standings-override';
 const DESKTOP_BREAKPOINT = 768;
 
 interface Division { id: string; name: string; order: number }
-interface Team { id: string; name: string; divisionId: string; captainUserId: string | null }
+interface Team { id: string; name: string; divisionId: string; captainUserId: string | null; address: string | null }
 
 const STATUS_OPTIONS: { value: string; label: string; tone: SemanticTone }[] = [
   { value: 'upcoming', label: 'Upcoming', tone: 'butter' },
@@ -33,6 +35,138 @@ const WORKSPACE_TABS = [
   { value: 'standings', label: 'Standings' },
 ] as const;
 type WorkspaceTab = typeof WORKSPACE_TABS[number]['value'];
+
+// Underline style, not pills — reads as a workspace with sub-views rather
+// than a set of equally-weighted filter chips.
+function WorkspaceTabBar({ active, onChange }: { active: WorkspaceTab; onChange: (tab: WorkspaceTab) => void }) {
+  const { colorScheme } = useColorScheme();
+  const isDark = colorScheme === 'dark';
+  return (
+    <View className="flex-row gap-6 border-b border-admin-panel-border dark:border-admin-panel-border-dark mb-5">
+      {WORKSPACE_TABS.map((t) => {
+        const selected = active === t.value;
+        return (
+          <TouchableOpacity key={t.value} onPress={() => onChange(t.value)} activeOpacity={0.7}>
+            <Text
+              style={{
+                fontFamily: FONT_DISPLAY,
+                fontSize: 14.5,
+                paddingVertical: 10,
+                color: selected ? (isDark ? RAW.textDark : RAW.text) : (isDark ? RAW.textFaintDark : RAW.textFaint),
+                borderBottomWidth: 2,
+                borderBottomColor: selected ? (isDark ? RAW.brandDark : RAW.brand) : 'transparent',
+              }}
+            >
+              {t.label}
+            </Text>
+          </TouchableOpacity>
+        );
+      })}
+    </View>
+  );
+}
+
+type TeamStatus = 'active' | 'pending' | 'incomplete';
+const TEAM_STATUS_TONE: Record<TeamStatus, SemanticTone> = { active: 'sage', pending: 'butter', incomplete: 'coral' };
+const TEAM_STATUS_LABEL: Record<TeamStatus, string> = { active: 'Active', pending: 'Pending Approval', incomplete: 'Incomplete' };
+
+function TeamTableRow({
+  team, players, played, won, lost, status, onPress, isLast,
+}: {
+  team: Team; players: number; played: number; won: number; lost: number; status: TeamStatus;
+  onPress: () => void; isLast: boolean;
+}) {
+  const [hovered, setHovered] = useState(false);
+  return (
+    <Pressable
+      onPress={onPress}
+      onHoverIn={() => setHovered(true)}
+      onHoverOut={() => setHovered(false)}
+      className={[
+        'flex-row items-center px-4 py-3',
+        isLast ? '' : 'border-b border-admin-panel-border dark:border-admin-panel-border-dark',
+        hovered ? 'bg-surface-2 dark:bg-surface-2-dark' : '',
+      ].join(' ')}
+    >
+      <View style={{ flex: 2.6 }} className="flex-row items-center gap-2.5 pr-2">
+        <Avatar initial={team.name.charAt(0)} tone="brand" size="sm" />
+        <View className="flex-1">
+          <Body tone="strong" weight="semibold" size="sm" numberOfLines={1}>{team.name}</Body>
+          <Caption className="normal-case tracking-normal font-normal" numberOfLines={1}>
+            {team.captainUserId ? 'Captain assigned' : 'No captain'}
+          </Caption>
+        </View>
+      </View>
+      <Body size="sm" numberOfLines={1} style={{ flex: 2 }}>{team.address || 'Not set'}</Body>
+      <Body size="sm" className="text-right" style={{ flex: 0.8 }}>{players}</Body>
+      <Body size="sm" className="text-right" style={{ flex: 0.5 }}>{played}</Body>
+      <Body size="sm" className="text-right" style={{ flex: 0.5 }}>{won}</Body>
+      <Body size="sm" className="text-right" style={{ flex: 0.5 }}>{lost}</Body>
+      <View style={{ flex: 1.4 }}>
+        <Badge tone={TEAM_STATUS_TONE[status]}>{TEAM_STATUS_LABEL[status]}</Badge>
+      </View>
+      <View style={{ flex: 0.5 }} className="items-end">
+        <AppIcon name="chevron-right" size={15} color={RAW.textFaint} />
+      </View>
+    </Pressable>
+  );
+}
+
+function TeamsTable({
+  teams, playerCountByTeam, tableRowByTeam, pendingTeamIds, onOpenTeam,
+}: {
+  teams: Team[];
+  playerCountByTeam: Record<string, number>;
+  tableRowByTeam: Record<string, { played: number; won: number; lost: number }>;
+  pendingTeamIds: Set<string>;
+  onOpenTeam: (teamId: string) => void;
+}) {
+  const [query, setQuery] = useState('');
+  const filtered = teams.filter((t) => t.name.toLowerCase().includes(query.trim().toLowerCase()));
+
+  return (
+    <View>
+      <Input value={query} onChangeText={setQuery} placeholder="Filter teams…" className="mb-3" />
+      <View className="rounded-2xl border border-admin-panel-border dark:border-admin-panel-border-dark bg-admin-panel dark:bg-admin-panel-dark overflow-hidden">
+        <View className="flex-row px-4 py-2.5 border-b border-admin-panel-border dark:border-admin-panel-border-dark">
+          <Caption style={{ flex: 2.6 }}>Team</Caption>
+          <Caption style={{ flex: 2 }}>Home venue</Caption>
+          <Caption className="text-right" style={{ flex: 0.8 }}>Players</Caption>
+          <Caption className="text-right" style={{ flex: 0.5 }}>P</Caption>
+          <Caption className="text-right" style={{ flex: 0.5 }}>W</Caption>
+          <Caption className="text-right" style={{ flex: 0.5 }}>L</Caption>
+          <Caption style={{ flex: 1.4 }}>Status</Caption>
+          <View style={{ flex: 0.5 }} />
+        </View>
+        {filtered.length === 0 ? (
+          <Body size="sm" className="text-center py-6">
+            {query ? `No teams match "${query}"` : 'No teams yet in this division'}
+          </Body>
+        ) : (
+          filtered.map((team, i) => {
+            const rowStat = tableRowByTeam[team.id];
+            const status: TeamStatus = pendingTeamIds.has(team.id)
+              ? 'pending'
+              : !team.captainUserId ? 'incomplete' : 'active';
+            return (
+              <TeamTableRow
+                key={team.id}
+                team={team}
+                players={playerCountByTeam[team.id] ?? 0}
+                played={rowStat?.played ?? 0}
+                won={rowStat?.won ?? 0}
+                lost={rowStat?.lost ?? 0}
+                status={status}
+                onPress={() => onOpenTeam(team.id)}
+                isLast={i === filtered.length - 1}
+              />
+            );
+          })
+        )}
+      </View>
+    </View>
+  );
+}
 
 export default function AdminSeasonScreen() {
   const { seasonId, divisionId, tab } = useLocalSearchParams<{ seasonId: string; divisionId?: string; tab?: WorkspaceTab }>();
@@ -67,6 +201,50 @@ export default function AdminSeasonScreen() {
   const [showAddDivision, setShowAddDivision] = useState(false);
   const [newDivisionName, setNewDivisionName] = useState('');
   const [isAddingDivision, setIsAddingDivision] = useState(false);
+
+  // Division-scoped stat-card and Teams-table data. Separate from the
+  // season-wide `teams` query above since players/matches/tables/pending
+  // requests aren't otherwise loaded here.
+  const [divisionPlayers, setDivisionPlayers] = useState<{ id: string; teamId: string }[]>([]);
+  const [divisionMatches, setDivisionMatches] = useState<{ status: string }[]>([]);
+  const [divisionTableRows, setDivisionTableRows] = useState<{ teamId: string; played: number; won: number; lost: number }[]>([]);
+  const [pendingRequestTeamIds, setPendingRequestTeamIds] = useState<string[]>([]);
+  const divisionPlayerCount = divisionPlayers.length;
+
+  useEffect(() => {
+    if (!divisionId || !appUser?.leagueId || !seasonId) return;
+    const unsubPlayers = onSnapshot(
+      query(collection(db, 'players'), where('divisionId', '==', divisionId)),
+      (snap) => setDivisionPlayers(snap.docs.map((d) => ({ id: d.id, teamId: d.data().teamId as string }))),
+    );
+    // matches' read rule only checks leagueId (not divisionId), so that
+    // filter has to be in the query too or Firestore rejects it outright —
+    // see the note on this exact failure mode elsewhere in this codebase.
+    const unsubMatches = onSnapshot(
+      query(
+        collection(db, 'matches'),
+        where('leagueId', '==', appUser.leagueId),
+        where('divisionId', '==', divisionId),
+      ),
+      (snap) => setDivisionMatches(snap.docs.map((d) => ({ status: d.data().status as string }))),
+    );
+    const unsubTables = onSnapshot(
+      query(collection(db, 'divisionTables'), where('seasonId', '==', seasonId), where('divisionId', '==', divisionId)),
+      (snap) => setDivisionTableRows(snap.docs.map((d) => ({
+        teamId: d.data().teamId as string,
+        played: (d.data().played as number) ?? 0,
+        won: (d.data().won as number) ?? 0,
+        lost: (d.data().lost as number) ?? 0,
+      }))),
+    );
+    // One query for the whole league rather than one per team — grouped by
+    // teamId client-side to flag which teams have a request awaiting review.
+    const unsubRequests = onSnapshot(
+      query(collection(db, 'joinRequests'), where('leagueId', '==', appUser.leagueId), where('status', '==', 'pending')),
+      (snap) => setPendingRequestTeamIds(snap.docs.map((d) => d.data().teamId as string).filter(Boolean)),
+    );
+    return () => { unsubPlayers(); unsubMatches(); unsubTables(); unsubRequests(); };
+  }, [divisionId, appUser?.leagueId, seasonId]);
 
   useEffect(() => {
     if (!seasonId) return;
@@ -330,6 +508,15 @@ export default function AdminSeasonScreen() {
   // ── Desktop: division picker, or a Teams/Fixtures/Standings workspace ──
   if (currentDivision) {
     const divTeams = teamsForDivision(currentDivision.id);
+
+    const playerCountByTeam: Record<string, number> = {};
+    divisionPlayers.forEach((p) => { playerCountByTeam[p.teamId] = (playerCountByTeam[p.teamId] ?? 0) + 1; });
+
+    const tableRowByTeam: Record<string, { played: number; won: number; lost: number }> = {};
+    divisionTableRows.forEach((r) => { tableRowByTeam[r.teamId] = { played: r.played, won: r.won, lost: r.lost }; });
+
+    const pendingTeamIds = new Set(pendingRequestTeamIds);
+
     return (
       <>
         <Stack.Screen options={{ headerShown: false }} />
@@ -342,11 +529,24 @@ export default function AdminSeasonScreen() {
           ]}
         >
           <View style={{ maxWidth: 960 }}>
-            <View className="flex-row gap-2 mb-6">
-              {WORKSPACE_TABS.map((t) => (
-                <Chip key={t.value} label={t.label} selected={activeTab === t.value} onPress={() => router.setParams({ tab: t.value })} />
-              ))}
+            <View className="flex-row gap-3 mb-6">
+              <StatTile label="Teams" value={divTeams.length} tone="brand" className="flex-1" />
+              <StatTile label="Players" value={divisionPlayerCount} tone="brand" className="flex-1" />
+              <StatTile
+                label="Fixtures Played"
+                value={`${divisionMatches.filter((m) => m.status !== 'scheduled').length} / ${divisionMatches.length}`}
+                tone="sage"
+                className="flex-1"
+              />
+              <StatTile
+                label="Pending Results"
+                value={divisionMatches.filter((m) => m.status === 'awaiting_confirmation' || m.status === 'disputed').length}
+                tone={divisionMatches.some((m) => m.status === 'awaiting_confirmation' || m.status === 'disputed') ? 'coral' : 'butter'}
+                className="flex-1"
+              />
             </View>
+
+            <WorkspaceTabBar active={activeTab} onChange={(t) => router.setParams({ tab: t })} />
 
             {activeTab === 'teams' && (
               <>
@@ -356,21 +556,13 @@ export default function AdminSeasonScreen() {
                     + Add Team
                   </Button>
                 </View>
-                {divTeams.length === 0 ? (
-                  <Body size="sm" className="py-4 text-center">No teams yet in this division</Body>
-                ) : (
-                  <View className="gap-2">
-                    {divTeams.map((team) => (
-                      <ListRow
-                        key={team.id}
-                        title={team.name}
-                        subtitle={team.captainUserId ? 'Captain assigned' : 'No captain'}
-                        trailing={<Body tone="dim">›</Body>}
-                        onPress={() => router.push(`/(protected)/admin-team?teamId=${team.id}`)}
-                      />
-                    ))}
-                  </View>
-                )}
+                <TeamsTable
+                  teams={divTeams}
+                  playerCountByTeam={playerCountByTeam}
+                  tableRowByTeam={tableRowByTeam}
+                  pendingTeamIds={pendingTeamIds}
+                  onOpenTeam={(teamId) => router.push(`/(protected)/admin-team?teamId=${teamId}`)}
+                />
               </>
             )}
 
@@ -452,7 +644,7 @@ export default function AdminSeasonScreen() {
           {unassignedTeams.length > 0 && (
             <View className="mb-5">
               <Caption className="mb-2">Unassigned Teams</Caption>
-              <View className="gap-2">
+              <View className="gap-2" style={{ maxWidth: 560 }}>
                 {unassignedTeams.map((team) => (
                   <ListRow key={team.id} title={team.name} trailing={<Body tone="dim">›</Body>} onPress={() => router.push(`/(protected)/admin-team?teamId=${team.id}`)} />
                 ))}

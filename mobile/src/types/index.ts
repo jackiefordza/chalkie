@@ -74,6 +74,11 @@ export interface Player {
   claimedAt: Date | null;
   createdByUserId: string | null;
   createdAt: Date;
+  // Admin pre-assigns a captain/VC to an unclaimed roster slot before that
+  // person has registered. Only meaningful while claimedByUserId is null —
+  // the claim-approval flow reads this to promote them straight to the role
+  // instead of leaving them as a plain player, then clears it.
+  designatedRole: 'captain' | 'viceCaptain' | null;
 }
 
 export type JoinRequestStatus = 'pending' | 'approved' | 'rejected';

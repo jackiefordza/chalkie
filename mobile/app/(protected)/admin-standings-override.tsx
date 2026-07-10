@@ -32,8 +32,11 @@ function useStandingsOverrideController(seasonId: string | undefined, divisionId
   const [tab, setTab] = useState<'teams' | 'players'>('teams');
   const [teamNames, setTeamNames] = useState<Record<string, string>>({});
   const [playerNames, setPlayerNames] = useState<Record<string, string>>({});
-  const [teamRows, setTeamRows] = useState<TeamRow[]>([]);
-  const [playerRows, setPlayerRows] = useState<PlayerRow[]>([]);
+  // Raw Firestore data, name-less — kept separate from the name-resolved
+  // TeamRow/PlayerRow shape below so a name arriving after the table/stats
+  // snapshot already fired still triggers a re-render with names filled in.
+  const [rawTeamRows, setRawTeamRows] = useState<Record<string, unknown>[]>([]);
+  const [rawPlayerRows, setRawPlayerRows] = useState<Record<string, unknown>[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
   const [editTeamRow, setEditTeamRow] = useState<TeamRow | null>(null);
@@ -74,14 +77,7 @@ function useStandingsOverrideController(seasonId: string | undefined, divisionId
     const unsubTables = onSnapshot(
       query(collection(db, 'divisionTables'), where('seasonId', '==', seasonId), where('divisionId', '==', divisionId)),
       (snap) => {
-        setTeamRows(snap.docs.map((d) => {
-          const data = d.data();
-          return {
-            id: d.id, teamId: data.teamId, teamName: teamNames[data.teamId] ?? '…',
-            played: data.played ?? 0, won: data.won ?? 0, lost: data.lost ?? 0,
-            points: data.points ?? 0, legsFor: data.legsFor ?? 0, legsAgainst: data.legsAgainst ?? 0,
-          };
-        }));
+        setRawTeamRows(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
         setIsLoading(false);
       },
     );
@@ -89,23 +85,29 @@ function useStandingsOverrideController(seasonId: string | undefined, divisionId
     const unsubStats = onSnapshot(
       query(collection(db, 'playerSeasonStats'), where('seasonId', '==', seasonId), where('divisionId', '==', divisionId)),
       (snap) => {
-        setPlayerRows(snap.docs.map((d) => {
-          const data = d.data();
-          return {
-            id: d.id, playerId: data.playerId, playerName: playerNames[data.playerId] ?? '…',
-            teamName: teamNames[data.teamId] ?? '…',
-            played: data.played ?? 0, won: data.won ?? 0, lost: data.lost ?? 0, oneEighties: data.oneEighties ?? 0,
-          };
-        }));
+        setRawPlayerRows(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
       },
     );
 
     return () => { unsubTables(); unsubStats(); };
-    // teamNames/playerNames intentionally excluded — they resolve moments after
-    // the rows themselves and would otherwise restart these listeners on every
-    // name lookup update; row content re-renders fine off the next snapshot.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [seasonId, divisionId]);
+
+  // Resolved into display rows here, not inside the snapshot callbacks above —
+  // that way a name arriving after its table/stats row already loaded (the
+  // normal case, since these are two independent listeners with no ordering
+  // guarantee) still re-resolves instead of getting stuck showing '…' forever.
+  const teamRows: TeamRow[] = useMemo(() => rawTeamRows.map((data) => ({
+    id: data.id as string, teamId: data.teamId as string, teamName: teamNames[data.teamId as string] ?? '…',
+    played: (data.played as number) ?? 0, won: (data.won as number) ?? 0, lost: (data.lost as number) ?? 0,
+    points: (data.points as number) ?? 0, legsFor: (data.legsFor as number) ?? 0, legsAgainst: (data.legsAgainst as number) ?? 0,
+  })), [rawTeamRows, teamNames]);
+
+  const playerRows: PlayerRow[] = useMemo(() => rawPlayerRows.map((data) => ({
+    id: data.id as string, playerId: data.playerId as string, playerName: playerNames[data.playerId as string] ?? '…',
+    teamName: teamNames[data.teamId as string] ?? '…',
+    played: (data.played as number) ?? 0, won: (data.won as number) ?? 0, lost: (data.lost as number) ?? 0,
+    oneEighties: (data.oneEighties as number) ?? 0,
+  })), [rawPlayerRows, teamNames, playerNames]);
 
   const sortedTeamRows = useMemo(
     () => [...teamRows].sort((a, b) => (b.points - a.points) || ((b.legsFor - b.legsAgainst) - (a.legsFor - a.legsAgainst))),

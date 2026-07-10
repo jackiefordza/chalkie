@@ -49,9 +49,12 @@ export default function LoginScreen() {
     <View className="flex-1 bg-bg dark:bg-bg-dark">
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
         <ScrollView
-          contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', paddingHorizontal: 24 }}
+          contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 24 }}
           keyboardShouldPersistTaps="handled"
         >
+          {/* Capped so this doesn't stretch edge-to-edge on a wide desktop browser —
+              this screen has no isDesktop branch of its own, unlike the admin console. */}
+          <View style={{ width: '100%', maxWidth: 400 }}>
           {/* Logo / Title */}
           <View className="items-center mb-10">
             <View className="w-20 h-20 rounded-full items-center justify-center bg-brand-fill dark:bg-brand-fill-dark mb-3">
@@ -142,6 +145,7 @@ export default function LoginScreen() {
               </View>
             </View>
           )}
+          </View>
         </ScrollView>
       </KeyboardAvoidingView>
     </View>

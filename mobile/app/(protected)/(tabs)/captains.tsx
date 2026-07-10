@@ -17,6 +17,7 @@ import type { Match, PhoneVisibility, JoinRequest } from '@/types';
 interface Player {
   id: string; name: string;
   claimedByUserId: string | null;
+  designatedRole: 'captain' | 'viceCaptain' | null;
   teamId: string;
 }
 interface ActionableMatch {
@@ -240,12 +241,25 @@ export default function CaptainsScreen() {
       const batch = writeBatch(db);
 
       if (req.requestType === 'claim' && req.claimPlayerId) {
+        // If admin pre-designated this roster slot as captain/VC before this
+        // person registered, honor it now instead of leaving them a plain
+        // player — this is their one chance to pick it up automatically.
+        const claimedPlayer = players.find((p) => p.id === req.claimPlayerId);
+        const designatedRole = claimedPlayer?.designatedRole ?? null;
+        const finalRole = designatedRole ?? 'player';
+
         batch.update(doc(db, 'players', req.claimPlayerId), {
           claimedByUserId: req.userId,
           claimedAt: serverTimestamp(),
+          designatedRole: null,
         });
+        if (designatedRole === 'captain') {
+          batch.update(doc(db, 'teams', appUser.teamId), { captainUserId: req.userId });
+        } else if (designatedRole === 'viceCaptain') {
+          batch.update(doc(db, 'teams', appUser.teamId), { viceCaptainUserId: req.userId });
+        }
         batch.update(doc(db, 'users', req.userId), {
-          role: 'player',
+          role: finalRole,
           teamId: appUser.teamId,
           leagueId: appUser.leagueId,
           divisionId: appUser.divisionId,

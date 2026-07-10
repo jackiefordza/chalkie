@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { View, Text, TouchableOpacity, Animated, Platform, type LayoutChangeEvent } from 'react-native';
+import { View, Text, TouchableOpacity, Animated, Platform, useWindowDimensions, type LayoutChangeEvent } from 'react-native';
 import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useColorScheme } from 'nativewind';
@@ -7,6 +7,10 @@ import * as Haptics from 'expo-haptics';
 import { useAuthStore } from '@/stores/authStore';
 import { RAW } from '@/lib/theme';
 import { AppIcon, type AppIconName } from './AppIcon';
+
+// Matches the DESKTOP_BREAKPOINT constant duplicated across admin-*.tsx screens —
+// AdminShell's sidebar is the desktop nav, so this bar must not render on top of it.
+const DESKTOP_BREAKPOINT = 768;
 
 const TAB_META: Record<string, { icon: AppIconName; label: string }> = {
   home: { icon: 'home', label: 'Home' },
@@ -36,8 +40,16 @@ export function TabBar({ state, navigation }: BottomTabBarProps) {
   const { appUser } = useAuthStore();
   const insets = useSafeAreaInsets();
   const { colorScheme } = useColorScheme();
+  const { width } = useWindowDimensions();
   const isDark = colorScheme === 'dark';
   const names = visibleRouteNames(appUser?.role, appUser?.isLeagueAdmin);
+
+  // The "admin" tab renders AdminShell's own sidebar nav at desktop width,
+  // which fully replaces this bar — rendering both stacks a floating pill
+  // over the sidebar's content. Every other tab has no desktop layout yet,
+  // so this bar is still their only nav there.
+  const focusedRouteName = state.routes[state.index]?.name;
+  if (width >= DESKTOP_BREAKPOINT && focusedRouteName === 'admin') return null;
 
   const focusedIndex = names.findIndex((name) => state.routes.find((r) => r.name === name)?.key === state.routes[state.index]?.key);
 

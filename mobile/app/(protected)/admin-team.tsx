@@ -14,7 +14,11 @@ import { AdminShell } from '@/components/admin/AdminShell';
 
 const DESKTOP_BREAKPOINT = 768;
 
-interface Player { id: string; name: string; teamId: string; claimedByUserId: string | null }
+interface Player {
+  id: string; name: string; teamId: string;
+  claimedByUserId: string | null;
+  designatedRole: 'captain' | 'viceCaptain' | null;
+}
 interface OtherTeam { id: string; name: string }
 
 type TeamRole = 'captain' | 'viceCaptain' | 'player';
@@ -142,6 +146,10 @@ export default function AdminTeamScreen() {
     }
   }
 
+  // null = no role at all. Unclaimed players can still carry a *designated*
+  // role (see designatedRoleOf) even though roleOf itself is null for them —
+  // a role only becomes "real" (drives team.captainUserId, Firestore rules
+  // access) once someone has actually claimed the slot.
   function roleOf(player: Player): TeamRole | null {
     if (!player.claimedByUserId) return null;
     if (player.claimedByUserId === captainUserId) return 'captain';
@@ -149,9 +157,15 @@ export default function AdminTeamScreen() {
     return 'player';
   }
 
+  // Only meaningful for unclaimed players — what an admin has pre-assigned,
+  // pending that person actually registering and claiming this roster slot.
+  function designatedRoleOf(player: Player): 'captain' | 'viceCaptain' | null {
+    return player.claimedByUserId ? null : player.designatedRole;
+  }
+
   async function changeRole(player: Player, newRole: TeamRole) {
-    if (!teamId || !player.claimedByUserId) return;
-    const targetUid = player.claimedByUserId;
+    if (!teamId) return;
+    const targetUid = player.claimedByUserId; // null = pre-assigning an unclaimed slot
     setIsChangingRole(true);
     try {
       const teamSnap = await getDoc(doc(db, 'teams', teamId));
@@ -161,29 +175,45 @@ export default function AdminTeamScreen() {
       let nextCaptainUserId: string | null = teamData.captainUserId ?? null;
       let nextVcUserId: string | null = teamData.viceCaptainUserId ?? null;
 
-      // Clear the target out of whichever slot they currently hold
-      if (nextCaptainUserId === targetUid) nextCaptainUserId = null;
-      if (nextVcUserId === targetUid) nextVcUserId = null;
+      // Clear the target out of whichever registered slot they currently hold
+      if (targetUid && nextCaptainUserId === targetUid) nextCaptainUserId = null;
+      if (targetUid && nextVcUserId === targetUid) nextVcUserId = null;
 
       const batch = writeBatch(db);
 
-      if (newRole === 'captain') {
-        if (nextCaptainUserId && nextCaptainUserId !== targetUid) {
-          batch.update(doc(db, 'users', nextCaptainUserId), { role: 'player' });
+      if (newRole === 'captain' || newRole === 'viceCaptain') {
+        const currentSlotUid = newRole === 'captain' ? nextCaptainUserId : nextVcUserId;
+        if (currentSlotUid && currentSlotUid !== targetUid) {
+          batch.update(doc(db, 'users', currentSlotUid), { role: 'player' });
         }
-        nextCaptainUserId = targetUid;
-      } else if (newRole === 'viceCaptain') {
-        if (nextVcUserId && nextVcUserId !== targetUid) {
-          batch.update(doc(db, 'users', nextVcUserId), { role: 'player' });
+        // Only one pending designee per role slot — clear any other unclaimed
+        // player already holding this designation
+        const otherDesignee = players.find(
+          (p) => p.id !== player.id && !p.claimedByUserId && p.designatedRole === newRole,
+        );
+        if (otherDesignee) {
+          batch.update(doc(db, 'players', otherDesignee.id), { designatedRole: null });
         }
-        nextVcUserId = targetUid;
+        if (newRole === 'captain') nextCaptainUserId = targetUid;
+        else nextVcUserId = targetUid;
       }
 
       batch.update(doc(db, 'teams', teamId), {
         captainUserId: nextCaptainUserId,
         viceCaptainUserId: nextVcUserId,
       });
-      batch.update(doc(db, 'users', targetUid), { role: newRole });
+
+      if (targetUid) {
+        batch.update(doc(db, 'users', targetUid), { role: newRole });
+        batch.update(doc(db, 'players', player.id), { designatedRole: null });
+      } else {
+        // No account yet — just record the pending designation. The claim-
+        // approval flow (captains.tsx) reads this and promotes them straight
+        // to the role once they actually register and claim this slot.
+        batch.update(doc(db, 'players', player.id), {
+          designatedRole: newRole === 'player' ? null : newRole,
+        });
+      }
 
       await batch.commit();
       setRoleSheetPlayer(null);
@@ -299,19 +329,26 @@ export default function AdminTeamScreen() {
     }
   }
 
+  const pendingCaptain = players.find((p) => !p.claimedByUserId && p.designatedRole === 'captain');
+  const pendingVc = players.find((p) => !p.claimedByUserId && p.designatedRole === 'viceCaptain');
+
   const captainCard = (
     <Card className="mb-4">
-      <View className={vcName ? 'mb-3' : ''}>
+      <View className="mb-3">
         <Caption className="mb-1">Captain</Caption>
         <Body tone={captainName ? 'strong' : 'dim'} weight="semibold">{captainName ?? 'Not yet assigned'}</Body>
+        {!captainName && pendingCaptain && (
+          <Body size="xs" className="mt-0.5">Reserved for {pendingCaptain.name}, pending them joining</Body>
+        )}
       </View>
-      {vcName && (
-        <View>
-          <Caption className="mb-1">Vice Captain</Caption>
-          <Body tone="strong" weight="semibold">{vcName}</Body>
-        </View>
-      )}
-      {!captainName && (
+      <View>
+        <Caption className="mb-1">Vice Captain</Caption>
+        <Body tone={vcName ? 'strong' : 'dim'} weight="semibold">{vcName ?? 'Not yet assigned'}</Body>
+        {!vcName && pendingVc && (
+          <Body size="xs" className="mt-0.5">Reserved for {pendingVc.name}, pending them joining</Body>
+        )}
+      </View>
+      {!captainName && !pendingCaptain && (
         <Body size="xs" className="mt-2">
           Waiting for someone to request this role — see the league Inbox.
         </Body>
@@ -383,21 +420,23 @@ export default function AdminTeamScreen() {
         <View className="gap-2">
           {players.map((player) => {
             const role = roleOf(player);
+            const designated = designatedRoleOf(player);
             return (
               <ListRow
                 key={player.id}
                 avatar={<Avatar initial={player.name.charAt(0)} tone="brand" size="sm" />}
                 title={player.name}
-                subtitle={role ? undefined : 'No account yet'}
+                subtitle={role ? undefined : designated ? 'Pending — no account yet' : 'No account yet'}
                 trailing={(
                   <View className="items-end gap-1.5">
                     {role && <Badge tone={role === 'player' ? 'butter' : 'brand'}>{ROLE_BADGE_LABEL[role]}</Badge>}
+                    {designated && <Badge tone="butter">{ROLE_BADGE_LABEL[designated]} (Pending)</Badge>}
                     <View className="flex-row gap-3">
-                      {role && (
-                        <TouchableOpacity onPress={() => setRoleSheetPlayer(player)}>
-                          <Body size="xs" tone="brand" weight="semibold">Change Role</Body>
-                        </TouchableOpacity>
-                      )}
+                      <TouchableOpacity onPress={() => setRoleSheetPlayer(player)}>
+                        <Body size="xs" tone="brand" weight="semibold">
+                          {role ? 'Change Role' : designated ? 'Change' : 'Assign Role'}
+                        </Body>
+                      </TouchableOpacity>
                       <TouchableOpacity onPress={() => setMoveTarget(player)}>
                         <Body size="xs" tone="brand" weight="semibold">Move</Body>
                       </TouchableOpacity>
@@ -424,11 +463,17 @@ export default function AdminTeamScreen() {
       <Sheet visible={!!roleSheetPlayer} onClose={() => setRoleSheetPlayer(null)}>
         {roleSheetPlayer && (
           <>
-            <Heading size="sm" className="mb-1">Change Role</Heading>
+            <Heading size="sm" className="mb-1">{roleOf(roleSheetPlayer) ? 'Change Role' : 'Assign Role'}</Heading>
             <Body size="sm" className="mb-4">{roleSheetPlayer.name}</Body>
+            {!roleSheetPlayer.claimedByUserId && (
+              <Body size="xs" className="mb-4">
+                {roleSheetPlayer.name} hasn't registered yet — this reserves the role for
+                when they join and claim their spot on the roster.
+              </Body>
+            )}
             <View className="gap-2">
               {ROLE_OPTIONS.map((opt) => {
-                const selected = roleOf(roleSheetPlayer) === opt.value;
+                const selected = (roleOf(roleSheetPlayer) ?? designatedRoleOf(roleSheetPlayer) ?? 'player') === opt.value;
                 return (
                   <TouchableOpacity
                     key={opt.value}

@@ -201,7 +201,7 @@ export default function AdminHomeScreen() {
       {seasons.length === 0 ? (
         <Body className="text-center py-5">No seasons yet — create one to get started</Body>
       ) : (
-        <View className="gap-2">
+        <View className="gap-2" style={{ maxWidth: 560 }}>
           {seasons.map((season) => (
             <ListRow
               key={season.id}
