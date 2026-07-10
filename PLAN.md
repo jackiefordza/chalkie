@@ -9,19 +9,27 @@ they're actually shipped and tested, not just started.
 - **Now:** every Phase 1 checklist item is code-complete as of 2026-07-10, including
   push notifications (just added) and the desktop admin console (2026-07-09) that goes
   beyond Phase 1's original scope with admin edit/delete of confirmed matches and
-  cascading season/division/team deletes. **Nothing left to build for Phase 1** — what's
-  left is entirely deploy/verify/infra:
-  1. Push notifications need an EAS project (`eas login`/`eas init`, Jake's Expo
-     account) before they can actually send/receive on a device — see that checklist
-     item for detail.
-  2. `firestore.rules`, `firestore.indexes.json`, and `functions/src/index.ts` have all
-     changed since the last deploy and need `firebase deploy` for rules + indexes +
-     functions before any of it works live.
-  3. None of 2026-07-08 through 2026-07-10's work has a real logged-in Firestore
-     verification pass yet (no admin test credentials exist in the sandbox this was
-     built in — see per-item notes below). Jake: deploying and doing one real
-     walkthrough as yourself is the actual next step before this phase can be called
-     done, not more code.
+  cascading season/division/team deletes. **`firestore.rules`, `firestore.indexes.json`,
+  and all 8 Cloud Functions were deployed live to `chalkie-app` on 2026-07-10** (CI
+  token via Google Cloud Shell) — `onJoinRequestCreated` and `sendFixtureReminders`
+  created new, the other 6 updated, indexes released, rules released.
+  **EAS project also created and linked on 2026-07-10** (`eas init`, run from the
+  sandbox using an Expo personal access token Jake generated via the expo.dev website —
+  Jake's on a work PC with no terminal access, so this replaces the `eas login`/
+  `eas init` steps described below): `@fordza95/chalkie`, project ID
+  `26ba0098-1660-4083-87b0-1062e47ff405` written into `mobile/app.json`
+  (`d7341de`). This is what `getExpoPushTokenAsync()` needs to mint a token at all, so
+  registration should stop silently no-op'ing now. **Still not the same as a real
+  build** — no `eas.json` build profile exists yet, and Expo Go on Android still can't
+  receive pushes regardless (see the push notifications checklist item). The access
+  token used for this was single-purpose and should be revoked from Jake's expo.dev
+  account settings once confirmed no longer needed.
+  **One thing still blocks calling Phase 1 done:** none of 2026-07-08 through
+  2026-07-10's work has a real logged-in Firestore verification pass yet (no admin test
+  credentials exist in the sandbox this was built in — see per-item notes below). Now
+  that everything is actually deployed and linked, Jake: doing one real walkthrough as
+  yourself — including checking a push notification actually arrives — is the actual
+  next step before this phase can be called done, not more code.
 - **Deadlines:** Showcase to league committee/captains in **August 2026**. Live trial
   with own league for the **2026/27 winter season (starts Sept/Oct 2026)**.
 - **What already exists and works:** account onboarding (admin/captain/VC/player roles,
@@ -388,17 +396,17 @@ Functions. Flag this to Jake before starting Phase 1 build.
       `mobile`/`functions` both typecheck and build clean; web bundle exports with no
       runtime error from the new imports.
 
-      **Real blocker, confirmed 2026-07-10, same shape as the EAS gap noted in Phase 3:**
-      no `eas.json` / EAS project exists for this app yet (still just `expo start`, no
-      dev/production build). `expo-notifications`' `getExpoPushTokenAsync()` requires an
-      EAS project ID even to obtain a token, and as of Expo SDK 53+, **Expo Go on Android
-      no longer supports receiving remote push notifications at all** — only a real
-      build does. So none of this can actually send/receive a live push until Jake runs
-      `eas login` / `eas init` (an Expo account + login only he can do) and gets at least
-      a dev build. Added the `expo-notifications` config plugin to `app.json` now so that
-      step is one less thing to configure when he gets there. Until then, the client-side
-      registration silently no-ops (by design) rather than erroring — safe to ship ahead
-      of the EAS work, but pushes genuinely won't arrive on a device until it's done.
+      **Partial blocker, updated 2026-07-10:** no `eas.json` / dev-or-production build
+      exists yet (still just `expo start`), and Expo SDK 53+'s **Expo Go on Android no
+      longer supports receiving remote push notifications at all** regardless of EAS
+      config — only a real build does. What *has* been resolved: `expo-notifications`'
+      `getExpoPushTokenAsync()` needs an EAS project ID to mint a token at all, and that
+      project now exists — `eas init` was run 2026-07-10 (`@fordza95/chalkie`, see
+      status snapshot above), so token registration should stop silently no-op'ing on
+      iOS Expo Go / web at least. Added the `expo-notifications` config plugin to
+      `app.json` earlier so that's already handled too. Still needed before a real push
+      arrives on an Android device specifically: `eas build` for a dev/production
+      build, which needs Jake's Apple/Google dev accounts for signing (see Phase 3).
 - [x] Admin role management screen. Done 2026-07-08, scoped **per-team** (not a
       league-wide user browser — decided with Jake to keep captaincy transfer tied to
       the team it happens on): `admin-team.tsx`'s player roster now shows each claimed
