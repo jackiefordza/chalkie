@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { View, TouchableOpacity, ActivityIndicator, Alert, useWindowDimensions } from 'react-native';
+import { View, TouchableOpacity, ActivityIndicator, useWindowDimensions } from 'react-native';
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import {
   collection, doc, onSnapshot, query, where, orderBy,
@@ -7,6 +7,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '@/config/firebase';
 import { useAuthStore } from '@/stores/authStore';
+import { Alert } from '@/lib/alert';
 import { generateRoundRobinFixtures } from '@/lib/fixtures';
 import { RAW, type SemanticTone } from '@/lib/theme';
 import { Screen, Heading, Body, Caption, Badge, Button, Card, ListRow, Input, Label, Sheet, AppBar } from '@/components/ui';

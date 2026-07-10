@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { View, TouchableOpacity, ScrollView, ActivityIndicator, Alert, Platform, useWindowDimensions } from 'react-native';
+import { View, TouchableOpacity, ScrollView, ActivityIndicator, Platform, useWindowDimensions } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { Stack, useLocalSearchParams } from 'expo-router';
 import {
@@ -8,6 +8,7 @@ import {
 import { db } from '@/config/firebase';
 import { useAuthStore } from '@/stores/authStore';
 import { goBack } from '@/lib/navigation';
+import { Alert } from '@/lib/alert';
 import { RAW } from '@/lib/theme';
 import {
   Screen, Heading, Body, Caption, Stat, Button, Card, Chip, Input, Label, Sheet, AppBar,

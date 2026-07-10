@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { View, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
+import { View, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { router } from 'expo-router';
 import { useColorScheme } from 'nativewind';
 import {
@@ -8,6 +8,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '@/config/firebase';
 import { useAuthStore } from '@/stores/authStore';
+import { Alert } from '@/lib/alert';
 import { RAW } from '@/lib/theme';
 import {
   Screen, Heading, Body, Chip, Button, Card, Badge, Avatar, Input, Label, Sheet, VisibilityPicker, AppIcon,

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { View, Alert, Platform, useWindowDimensions } from 'react-native';
+import { View, Platform, useWindowDimensions } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { router, Stack } from 'expo-router';
 import { useColorScheme } from 'nativewind';
@@ -9,6 +9,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '@/config/firebase';
 import { useAuthStore } from '@/stores/authStore';
+import { Alert } from '@/lib/alert';
 import { RAW } from '@/lib/theme';
 import { Screen, Heading, Body, Button, Card, ListRow, AppBar, AppIcon } from '@/components/ui';
 import { AdminShell } from '@/components/admin/AdminShell';

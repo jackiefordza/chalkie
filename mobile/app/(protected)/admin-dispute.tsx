@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { View, ScrollView, TouchableOpacity, ActivityIndicator, Alert, Platform, useWindowDimensions } from 'react-native';
+import { View, ScrollView, TouchableOpacity, ActivityIndicator, Platform, useWindowDimensions } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { Stack, useLocalSearchParams } from 'expo-router';
 import { useColorScheme } from 'nativewind';
@@ -7,6 +7,7 @@ import { collection, doc, getDoc, onSnapshot, query, where, updateDoc } from 'fi
 import { db } from '@/config/firebase';
 import { useAuthStore } from '@/stores/authStore';
 import { goBack } from '@/lib/navigation';
+import { Alert } from '@/lib/alert';
 import { RAW } from '@/lib/theme';
 import { Screen, Body, Caption, Button, Card, Chip, AppBar, AppIcon } from '@/components/ui';
 import { AdminShell } from '@/components/admin/AdminShell';

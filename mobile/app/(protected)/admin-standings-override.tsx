@@ -1,11 +1,12 @@
 import { useState, useEffect, useMemo } from 'react';
-import { View, TouchableOpacity, ActivityIndicator, Alert, useWindowDimensions } from 'react-native';
+import { View, TouchableOpacity, ActivityIndicator, useWindowDimensions } from 'react-native';
 import { Stack, useLocalSearchParams } from 'expo-router';
 import {
   collection, doc, onSnapshot, query, where, setDoc, writeBatch,
 } from 'firebase/firestore';
 import { db } from '@/config/firebase';
 import { useAuthStore } from '@/stores/authStore';
+import { Alert } from '@/lib/alert';
 import { RAW } from '@/lib/theme';
 import { Screen, Heading, Body, Caption, Chip, Button, Card, Input, Label, Sheet, AppBar } from '@/components/ui';
 import { AdminShell } from '@/components/admin/AdminShell';

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { View, TouchableOpacity, ActivityIndicator, Alert, useWindowDimensions } from 'react-native';
+import { View, TouchableOpacity, ActivityIndicator, useWindowDimensions } from 'react-native';
 import { Stack, useLocalSearchParams } from 'expo-router';
 import {
   collection, doc, onSnapshot, query, where, updateDoc, getDoc, addDoc, writeBatch,
@@ -8,6 +8,7 @@ import { httpsCallable } from 'firebase/functions';
 import { db, functions } from '@/config/firebase';
 import { useAuthStore } from '@/stores/authStore';
 import { goBack } from '@/lib/navigation';
+import { Alert } from '@/lib/alert';
 import { RAW } from '@/lib/theme';
 import { Screen, Heading, Body, Caption, Button, Card, Avatar, ListRow, Input, Label, Badge, Sheet } from '@/components/ui';
 import { AdminShell } from '@/components/admin/AdminShell';

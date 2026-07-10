@@ -1,8 +1,9 @@
 import { useState } from 'react';
-import { View, Alert, useWindowDimensions } from 'react-native';
+import { View, useWindowDimensions } from 'react-native';
 import { Stack } from 'expo-router';
 import { useColorScheme } from 'nativewind';
 import { useAuthStore } from '@/stores/authStore';
+import { Alert } from '@/lib/alert';
 import { seedTestLeague, TEST_HOME_EMAIL, TEST_AWAY_EMAIL, TEST_PASSWORD } from '@/lib/testData';
 import { seedMockSeason, MOCK_CAPTAIN_EMAILS } from '@/lib/mockSeason';
 import { RAW } from '@/lib/theme';

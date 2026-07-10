@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, Pressable, ActivityIndicator, Alert, useWindowDimensions } from 'react-native';
+import { View, Text, TouchableOpacity, Pressable, ActivityIndicator, useWindowDimensions } from 'react-native';
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { useColorScheme } from 'nativewind';
 import {
@@ -10,6 +10,7 @@ import { db, functions } from '@/config/firebase';
 import { useAuthStore } from '@/stores/authStore';
 import { useAdminContextStore } from '@/stores/adminContextStore';
 import { goBack } from '@/lib/navigation';
+import { Alert } from '@/lib/alert';
 import { RAW, type SemanticTone } from '@/lib/theme';
 import { FONT_DISPLAY } from '@/styles/typography';
 import { Screen, Heading, Body, Caption, Button, Card, Chip, ListRow, Input, Label, Sheet, StatTile, Badge, Avatar, AppIcon } from '@/components/ui';
