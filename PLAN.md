@@ -30,6 +30,21 @@ they're actually shipped and tested, not just started.
   that everything is actually deployed and linked, Jake: doing one real walkthrough as
   yourself — including checking a push notification actually arrives — is the actual
   next step before this phase can be called done, not more code.
+- **Admin dashboard revamp — shipped and deployed 2026-07-10** (`c6ab104`): implements
+  the dashboard mockup artifact. Teams tab is now a real data table (players/P/W/L,
+  home venue, status badge) instead of a card list; the season/division picker splits
+  into two steps (season, then that season's divisions) instead of one flat list; the
+  sidebar grows a live division tree with team counts; the context switcher moved out
+  of a permanent sidebar box into a per-page filter chip shown only on the tabs it
+  governs. Also bundled in: admin inbox now catches claim/join requests for teams with
+  no captain/VC yet (previously only `captainRole` requests surfaced there), a new
+  `designatedRole` field on `Player` so admins can pre-assign a captain/VC to an
+  unclaimed roster slot before that person registers, TabBar hides itself on desktop
+  admin (AdminShell's sidebar replaces it), and auth screens get a max-width cap on
+  desktop browsers. No `firestore.rules`/indexes/functions changes — frontend only.
+  Typechecked clean, web bundle built and **deployed live to Firebase Hosting**
+  (`https://chalkie-app.web.app`) via a fresh CI token from Google Cloud Shell, then
+  pushed to `origin/JakeDevBranch`. Not yet walked through as a real logged-in admin.
 - **Deadlines:** Showcase to league committee/captains in **August 2026**. Live trial
   with own league for the **2026/27 winter season (starts Sept/Oct 2026)**.
 - **What already exists and works:** account onboarding (admin/captain/VC/player roles,
