@@ -83,7 +83,7 @@ function TeamTableRow({
       onHoverIn={() => setHovered(true)}
       onHoverOut={() => setHovered(false)}
       className={[
-        'flex-row items-center px-4 py-3',
+        'flex-row items-center gap-2 px-4 py-3',
         isLast ? '' : 'border-b border-admin-panel-border dark:border-admin-panel-border-dark',
         hovered ? 'bg-surface-2 dark:bg-surface-2-dark' : '',
       ].join(' ')}
@@ -128,7 +128,7 @@ function TeamsTable({
     <View>
       <Input value={query} onChangeText={setQuery} placeholder="Filter teams…" className="mb-3" />
       <View className="rounded-2xl border border-admin-panel-border dark:border-admin-panel-border-dark bg-admin-panel dark:bg-admin-panel-dark overflow-hidden">
-        <View className="flex-row px-4 py-2.5 border-b border-admin-panel-border dark:border-admin-panel-border-dark">
+        <View className="flex-row items-center gap-2 px-4 py-2.5 border-b border-admin-panel-border dark:border-admin-panel-border-dark">
           <Caption style={{ flex: 2.6 }}>Team</Caption>
           <Caption style={{ flex: 2 }}>Home venue</Caption>
           <Caption className="text-right" style={{ flex: 0.8 }}>Players</Caption>
