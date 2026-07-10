@@ -44,7 +44,26 @@ they're actually shipped and tested, not just started.
   desktop browsers. No `firestore.rules`/indexes/functions changes — frontend only.
   Typechecked clean, web bundle built and **deployed live to Firebase Hosting**
   (`https://chalkie-app.web.app`) via a fresh CI token from Google Cloud Shell, then
-  pushed to `origin/JakeDevBranch`. Not yet walked through as a real logged-in admin.
+  pushed to `origin/JakeDevBranch`. **Walked through as a real logged-in admin
+  2026-07-10** — created a genuine test admin account
+  (`claude-test-admin@chalkie-test.dev`, `isLeagueAdmin`/`leagueId` set manually by
+  Jake in the Console the same way his own account was originally bootstrapped, since
+  `isLeagueAdmin` is deliberately never client-settable per `firestore.rules`) and
+  drove it against Jake's real "Bedford & Kempston District" league data via
+  Playwright. Caught and fixed two real issues this way: (1) `8868907` — the sidebar's
+  "Divisions" item only ever showed the last-chosen season's divisions with no way to
+  switch seasons except a top-right picker chip; replaced with a Season→Division
+  accordion in the sidebar itself, one season expanded at a time, matching what a
+  league admin actually expects. (2) `6f3dd34` — Teams table header rendered "L" and
+  "STATUS" flush together with no gap (body rows didn't show it because the status
+  `Badge` pill's own padding masked it). What first looked like a broken/blank
+  season-picker dropdown turned out, on pixel-level inspection, to not be a bug at all
+  — the dark overlay does cover the whole screen including the sidebar, just
+  imperceptibly against its already-near-black background.
+  **Not done:** team import/carry-over between seasons (raised by Jake, not built),
+  and Phase 2 cup/knockout competitions (still just roadmap, see below) — Jake had
+  assumed basic fixture generation was also unbuilt, but that's been live since
+  2026-07-02 (`admin-fixtures.tsx`, round-robin generator).
 - **Deadlines:** Showcase to league committee/captains in **August 2026**. Live trial
   with own league for the **2026/27 winter season (starts Sept/Oct 2026)**.
 - **What already exists and works:** account onboarding (admin/captain/VC/player roles,
