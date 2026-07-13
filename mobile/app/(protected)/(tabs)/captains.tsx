@@ -207,6 +207,7 @@ export default function CaptainsScreen() {
         name: newPlayerName.trim(),
         leagueId: appUser.leagueId,
         teamId: appUser.teamId,
+        divisionId: appUser.divisionId,
         claimedByUserId: null,
         claimedAt: null,
         createdAt: serverTimestamp(),

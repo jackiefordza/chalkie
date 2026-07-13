@@ -3,7 +3,7 @@ import { View, Text, TouchableOpacity, Pressable, ActivityIndicator, useWindowDi
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { useColorScheme } from 'nativewind';
 import {
-  collection, doc, onSnapshot, query, where, updateDoc, addDoc, serverTimestamp,
+  collection, doc, onSnapshot, query, where, updateDoc, addDoc, serverTimestamp, getDocs, writeBatch,
 } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { db, functions } from '@/config/firebase';
@@ -281,6 +281,40 @@ export default function AdminSeasonScreen() {
 
   async function setStatus(status: string) {
     if (!seasonId) return;
+
+    // A league should only ever have one active season — the Dashboard's
+    // "Active Season" stat and Teams count both assume this and silently
+    // pick/sum the wrong thing if it's violated. Demote any other active
+    // season to Completed in the same batch instead of just letting it happen.
+    if (status === 'active' && appUser?.leagueId) {
+      const others = (await getDocs(query(
+        collection(db, 'seasons'),
+        where('leagueId', '==', appUser.leagueId),
+        where('status', '==', 'active'),
+      ))).docs.filter((d) => d.id !== seasonId);
+
+      if (others.length > 0) {
+        const names = others.map((d) => d.data().name).join(', ');
+        Alert.alert(
+          'Mark this season active?',
+          `${names} ${others.length > 1 ? 'are' : 'is'} currently marked active too. A league should only have one active season — continuing will mark ${others.length > 1 ? 'those seasons' : 'that season'} Completed.`,
+          [
+            { text: 'Cancel', style: 'cancel' },
+            {
+              text: 'Continue',
+              onPress: async () => {
+                const batch = writeBatch(db);
+                others.forEach((d) => batch.update(doc(db, 'seasons', d.id), { status: 'completed' }));
+                batch.update(doc(db, 'seasons', seasonId), { status: 'active' });
+                await batch.commit();
+              },
+            },
+          ],
+        );
+        return;
+      }
+    }
+
     await updateDoc(doc(db, 'seasons', seasonId), { status });
   }
 

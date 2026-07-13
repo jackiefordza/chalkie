@@ -232,6 +232,7 @@ export default function AdminTeamScreen() {
       await addDoc(collection(db, 'players'), {
         leagueId: appUser.leagueId,
         teamId,
+        divisionId,
         name: newPlayerName.trim(),
         claimedByUserId: null,
       });
@@ -341,6 +342,9 @@ export default function AdminTeamScreen() {
         {!captainName && pendingCaptain && (
           <Body size="xs" className="mt-0.5">Reserved for {pendingCaptain.name}, pending them joining</Body>
         )}
+        {!captainName && !pendingCaptain && (
+          <Body size="xs" className="mt-0.5">Waiting for someone to request this role — see the league Inbox.</Body>
+        )}
       </View>
       <View>
         <Caption className="mb-1">Vice Captain</Caption>
@@ -348,12 +352,10 @@ export default function AdminTeamScreen() {
         {!vcName && pendingVc && (
           <Body size="xs" className="mt-0.5">Reserved for {pendingVc.name}, pending them joining</Body>
         )}
+        {!vcName && !pendingVc && (
+          <Body size="xs" className="mt-0.5">Waiting for someone to request this role — see the league Inbox.</Body>
+        )}
       </View>
-      {!captainName && !pendingCaptain && (
-        <Body size="xs" className="mt-2">
-          Waiting for someone to request this role — see the league Inbox.
-        </Body>
-      )}
     </Card>
   );
 

@@ -197,19 +197,31 @@ function StandingsBody({ c }: { c: StandingsController }) {
       {c.isLoading ? (
         <ActivityIndicator color={RAW.brand} />
       ) : c.tab === 'teams' ? (
-        <View className="gap-2">
-          {c.sortedTeamRows.map((row, i) => (
-            <TouchableOpacity key={row.id} activeOpacity={0.7} onPress={() => c.openEditTeam(row)}>
-              <Card className="flex-row items-center">
-                <Body tone="dim" className="w-6">{i + 1}</Body>
-                <Body tone="strong" weight="semibold" className="flex-1">{row.teamName}</Body>
-                <Body size="sm" className="w-16 text-right">P {row.played}</Body>
-                <Body size="sm" className="w-16 text-right">Pts {row.points}</Body>
-                <Body size="sm" className="w-20 text-right">{row.legsFor - row.legsAgainst >= 0 ? '+' : ''}{row.legsFor - row.legsAgainst}</Body>
-              </Card>
-            </TouchableOpacity>
-          ))}
-        </View>
+        c.sortedTeamRows.length === 0 ? (
+          <Card className="items-center py-8">
+            <Body tone="strong" weight="semibold">No standings yet</Body>
+            <Body size="sm" className="text-center mt-1">Team points will show up here once the first match in this division is confirmed.</Body>
+          </Card>
+        ) : (
+          <View className="gap-2">
+            {c.sortedTeamRows.map((row, i) => (
+              <TouchableOpacity key={row.id} activeOpacity={0.7} onPress={() => c.openEditTeam(row)}>
+                <Card className="flex-row items-center">
+                  <Body tone="dim" className="w-6">{i + 1}</Body>
+                  <Body tone="strong" weight="semibold" className="flex-1">{row.teamName}</Body>
+                  <Body size="sm" className="w-16 text-right">P {row.played}</Body>
+                  <Body size="sm" className="w-16 text-right">Pts {row.points}</Body>
+                  <Body size="sm" className="w-20 text-right">{row.legsFor - row.legsAgainst >= 0 ? '+' : ''}{row.legsFor - row.legsAgainst}</Body>
+                </Card>
+              </TouchableOpacity>
+            ))}
+          </View>
+        )
+      ) : c.playerRows.length === 0 ? (
+        <Card className="items-center py-8">
+          <Body tone="strong" weight="semibold">No player stats yet</Body>
+          <Body size="sm" className="text-center mt-1">Player stats will show up here once the first match in this division is confirmed.</Body>
+        </Card>
       ) : (
         <View className="gap-2">
           {c.playerRows

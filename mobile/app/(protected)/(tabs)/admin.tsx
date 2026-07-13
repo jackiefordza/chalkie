@@ -128,13 +128,23 @@ export default function AdminHomeScreen() {
       query(collection(db, 'matches'), where('leagueId', '==', leagueId), where('status', '==', 'disputed')),
       (snap) => setDisputeCount(snap.size),
     );
-    const unsubTeamsCount = onSnapshot(
-      query(collection(db, 'teams'), where('leagueId', '==', leagueId)),
+
+    return () => { cancelled = true; unsubSeasons(); unsubReqs(); unsubDisputes(); };
+  }, [leagueId]); // appUser intentionally excluded — new object ref on every onSnapshot would restart subscriptions
+
+  const activeSeason = seasons.find((s) => s.status === 'active') ?? seasons[0] ?? null;
+
+  // Scoped to the current season, not summed across every season the league has
+  // ever had — a team only exists within one season, so counting across all of
+  // them inflates this the moment a league has run more than one season.
+  useEffect(() => {
+    if (!activeSeason) { setTeamsCount(0); return; }
+    const unsub = onSnapshot(
+      query(collection(db, 'teams'), where('seasonId', '==', activeSeason.id)),
       (snap) => setTeamsCount(snap.size),
     );
-
-    return () => { cancelled = true; unsubSeasons(); unsubReqs(); unsubDisputes(); unsubTeamsCount(); };
-  }, [leagueId]); // appUser intentionally excluded — new object ref on every onSnapshot would restart subscriptions
+    return unsub;
+  }, [activeSeason?.id]);
 
   async function createSeason() {
     if (!newSeasonName.trim() || !leagueId) return;
@@ -235,7 +245,6 @@ export default function AdminHomeScreen() {
   );
 
   if (isDesktop) {
-    const activeSeason = seasons.find((s) => s.status === 'active') ?? seasons[0] ?? null;
     const managePath = activeSeason ? `/(protected)/admin-season?seasonId=${activeSeason.id}` : null;
     const inboxCount = pendingCount + disputeCount;
 

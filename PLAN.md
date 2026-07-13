@@ -461,6 +461,27 @@ Functions. Flag this to Jake before starting Phase 1 build.
       `app.json` earlier so that's already handled too. Still needed before a real push
       arrives on an Android device specifically: `eas build` for a dev/production
       build, which needs Jake's Apple/Google dev accounts for signing (see Phase 3).
+
+      **2026-07-13 — build groundwork laid, still not buildable.** Added
+      `mobile/eas.json` (development/preview/production profiles, matching Expo's
+      standard shape — development and preview both produce an installable `.apk`
+      directly rather than an `.aab`, since those are for on-device testing, not Play
+      Store) and installed `expo-dev-client` (required for
+      `developmentClient: true` in the development profile to actually build).
+      Verified `eas.json` is valid JSON and matches the current documented schema
+      (checked docs directly per this file's own SDK-version-changed warning), but
+      **could not validate it against the real EAS schema or actually run a build**
+      — `eas` commands require a logged-in Expo account, and no credentials for
+      that exist in this sandbox. Config-only work; still blocked on the same two
+      things as before: Jake's Apple/Google dev accounts for signing, and — newly
+      surfaced while researching this — Android push specifically also needs an FCM
+      V1 service account credential uploaded via `eas credentials` (Expo migrated
+      off the legacy FCM server-key flow), which needs Firebase Console access to
+      the `chalkie-app` project. Also flagged, not fixed: no dedicated white/
+      transparent notification icon asset exists for Android (`expo-notifications`
+      plugin's `icon` option) — without one, Android falls back to the app icon in
+      the notification shade, which usually renders poorly. Not blocking, just
+      worth designing before the first real push notification ships.
 - [x] Admin role management screen. Done 2026-07-08, scoped **per-team** (not a
       league-wide user browser — decided with Jake to keep captaincy transfer tied to
       the team it happens on): `admin-team.tsx`'s player roster now shows each claimed
@@ -587,26 +608,63 @@ Full writeup with repro steps in the QA artifact linked from that session
 (https://claude.ai/code/artifact/0302f9e2-a31a-4bee-95c3-e7e02bb0edcd) — these are
 just the checkable summary so they don't get lost.
 
-- [ ] Players added via admin "Add Player" (`admin-team.tsx`'s `addPlayer()`) never
-      get `divisionId` set on the player doc, only `leagueId`/`teamId`. Every
-      division-scoped query (the Players stat card, the Teams table's per-team
-      Players column, and most likely `playerSeasonStats` once matches are
-      confirmed) filters on `divisionId`, so these players are invisible to all of
-      it. Contrast with the claim/join-approval path, which does set it correctly.
-- [ ] Standings tab shows a completely blank page with no explanation when a
-      division has teams but zero confirmed matches yet — no empty-state message,
-      unlike Results ("No results yet…") and Inbox ("All caught up"). Likely because
-      `divisionTables` has no row for a team until the stats-recompute function
-      runs after its first confirmed match.
-- [ ] Nothing stops two seasons being marked "active" simultaneously (3 were active
-      at once during testing) — the Dashboard's "Active Season" card just silently
-      picks one. Separately, the Dashboard's "Teams" stat sums teams across every
-      season the league has ever had, not just the current one — went from 10 to 16
-      after adding teams to a season that wasn't even "active".
-- [ ] On a team's page, the "waiting for someone to request this role" hint under
-      Vice Captain only checks whether *Captain* has no pending assignment — it
-      disappears once Captain is assigned/pending even if VC is still fully
-      unassigned.
+- [x] **2026-07-13 — FIXED.** Players added via admin "Add Player"
+      (`admin-team.tsx`'s `addPlayer()`) never got `divisionId` set on the player
+      doc, only `leagueId`/`teamId`. Every division-scoped query (the Players stat
+      card, the Teams table's per-team Players column, and most likely
+      `playerSeasonStats` once matches are confirmed) filters on `divisionId`, so
+      these players were invisible to all of it. Contrast with the claim/join-approval
+      path, which does set it correctly. While fixing, found the identical bug in the
+      captain-side "Add Player" flow (`(tabs)/captains.tsx`'s `addPlayer()`, using
+      `appUser.divisionId` since captains don't have the team doc loaded) — fixed
+      both. Live-verified the captain-side fix against real production Firestore
+      using the seeded Test Home Captain account: added a player through the real UI
+      and confirmed `divisionId: "test-division"` landed on the doc. That same check
+      also caught a pre-existing casualty of the bug — "Ollie Newman", a player added
+      to the test squad in an earlier session before this fix, has no `divisionId`
+      field at all — left as-is (not touched without Jake's say-so) as a live example
+      of what real admin/captain-added players may look like if this was used on the
+      real league before today. **Later the same session**, Jake set up a new test
+      admin account (`claude-admin-verify@chalkie-test.dev` — see credentials saved
+      in Claude's memory) with real admin access to "Bedford & Kempston District",
+      which also live-verified the admin-side fix (`admin-team.tsx`): added a player
+      to the real "The Foresters Arms" team and confirmed `divisionId` landed
+      correctly, then deleted the test player.
+      **Worth doing before the season:** audit real players already in Jake's real
+      league for missing `divisionId` (anyone added via admin "Add Player" before
+      today) and backfill them — this fix only prevents new occurrences.
+- [x] **2026-07-13 — FIXED & live-verified.** Standings tab showed a completely
+      blank page with no explanation when a division has teams but zero confirmed
+      matches yet — no empty-state message, unlike Results ("No results yet…") and
+      Inbox ("All caught up"). Fixed in `admin-standings-override.tsx`'s shared
+      `StandingsBody`: "No standings yet" / "No player stats yet" cards, matching the
+      Results pattern. Live-verified against Winter 26/27 → Division 3 (3 real teams,
+      zero confirmed matches) on both the Team Points and Player Stats sub-tabs.
+- [x] **2026-07-13 — FIXED & live-verified.** Nothing stopped two seasons being
+      marked "active" simultaneously (3 were active at once during testing) — the
+      Dashboard's "Active Season" card just silently picked one. Fixed at the source
+      in `admin-season.tsx`'s `setStatus()`: marking a season active now checks for
+      other active seasons in the league first and, if found, confirms with the admin
+      before demoting them to Completed in the same batch. Live-verified: clicking
+      "Active" on Winter 26/27 while Mock Mid-Season and Test Season were both already
+      active correctly popped "Mark this season active? Mock Mid-Season, Test Season
+      are currently marked active too…" (dismissed without confirming, so the
+      league's actual season statuses are untouched — Jake, worth deciding for
+      yourself whether to resolve that pre-existing double-active state, since I
+      deliberately didn't force it during verification). Also fixed the separate
+      issue where the Dashboard's "Teams" stat summed teams across every season the
+      league has ever had instead of just the active one — `admin.tsx` now scopes
+      that query by the active season's `seasonId`. Live-verified: Dashboard showed
+      "5 Teams", matching Mock Mid-Season's own division count exactly (the league
+      has 10+ teams total across all its seasons).
+- [x] **2026-07-13 — FIXED & live-verified.** On a team's page, the "waiting for
+      someone to request this role" hint under Vice Captain only checked whether
+      *Captain* had no pending assignment — it disappeared once Captain was
+      assigned/pending even if VC was still fully unassigned. Fixed in
+      `admin-team.tsx` by giving Captain and VC independent hint checks instead of
+      one shared footer gated on Captain's state only. Live-verified: The Foresters
+      Arms (real team, Captain assigned, VC unassigned) now correctly shows the hint
+      under Vice Captain.
 
 ## Suggested improvements (not bugs, raised 2026-07-10)
 
