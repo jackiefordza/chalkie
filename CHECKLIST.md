@@ -22,12 +22,29 @@ just started.
 - [x] Home simplified + "Captains" tab (My Team / Inbox)
 - [x] Push notifications — code complete (4 notification points + Cloud Function helper)
 - [x] Admin role management screen (per-team)
-- [x] Venue contact field (`Team.venuePhone`)
+- [x] Venue contact field (`Team.venuePhone`) — superseded 2026-07-22, see Venue entity below
 - [x] Desktop admin console (`AdminShell`, edit/delete confirmed matches, cascading deletes)
 - [x] Onboarding rewrite — request & approve, no invite/claim codes
 - [x] Admin dashboard revamp (real Teams data table, season→division picker, sidebar tree)
 - [ ] **Jake: real logged-in walkthrough** — the one thing blocking calling Phase 1 done. Confirm a push notification actually arrives, generate-fixtures round-trip, full results→confirm→standings loop, all against your real account/league.
 - [ ] Team/roster carry-over between seasons (raised, not built — also tracked under Suggested improvements)
+
+## Venue entity + fixture scheduling (2026-07-22, code complete — not deployed/migrated/live-verified)
+- [x] `Venue` collection (name, address, phone, board count) — `Team.address`/`venuePhone` replaced with `Team.venueId`
+- [x] `firestore.rules`/`firestore.indexes.json` updated for `venues` (league-scoped, admin write)
+- [x] `adminDeleteVenue` + `adminMigrateVenues` Cloud Functions
+- [x] Fixture generator: season start date + break-date ranges (Christmas etc.) skip-and-shift
+- [x] Fixture generator: venue board-count clash auto-resolution (shifts excess same-day home fixtures to following days), summary banner in Fixtures tab
+- [x] `admin-venues.tsx` screen + shared `VenuePickerSheet` (used by `admin-team.tsx`, `captains.tsx`, `admin-season.tsx` team creation)
+- [x] `admin-season.tsx` Schedule panel (start date + breaks editor)
+- [x] "Blank Test Season" dev tool (`admin-tools.tsx`) — 8 teams, 2 venues incl. a deliberate 3-teams-1-board conflict, no fixtures, for exercising Generate Fixtures live
+- [x] `npx tsc --noEmit` clean (mobile + functions), `expo export -p web` clean
+- [ ] **Not deployed**: `firestore.rules`, `firestore.indexes.json`, and the 2 new Cloud Functions need `firebase deploy` before any of this works live
+- [ ] **Jake: run "Migrate Teams to Venues"** (Tools screen, real one-off, not dev-gated) once deployed — your existing teams still have plain-text addresses, not venues, until this runs once
+- [ ] Fold into the real walkthrough above: generate fixtures against a division with a shared venue and confirm the clash-resolution banner/dates look right
+- [x] Add Team gets a Division dropdown (works from any entry point, incl. a new season-level "+ Add Team") instead of being locked to whichever division you clicked from
+- [x] `adminMoveTeamDivision` Cloud Function — move an existing team to a different division in the same season, blocked while it has any fixtures (not just confirmed ones)
+- [x] Rename season, rename division, rename team — all editable after creation, not just at setup time (`admin-season.tsx`, `admin-team.tsx`)
 
 ## Mobile testing & real device builds (2026-07-13 → ongoing)
 - [x] EAS project created & linked (`@fordza95/chalkie`)
@@ -35,11 +52,14 @@ just started.
 - [x] `expo-dev-client` installed
 - [x] Expo Go testing working via Codespaces public-port workaround (Expo's bundled tunnel ngrok is broken/deprecated)
 - [ ] Jake: test app in Expo Go on iPhone from work PC tomorrow
-- [ ] Apple Developer Program enrollment (Jake, $99/yr) — needed for any real iOS build/TestFlight
-- [ ] Google Play dev account — needed for any real Android build
 - [ ] FCM V1 service account credential (`eas credentials`, via Firebase Console) — needed for Android push specifically
 - [ ] Design Android notification icon asset (white/transparent, `expo-notifications` plugin)
-- [ ] Run a real `eas build` once accounts exist
+- [ ] Run a real Android `eas build` (dev/preview profile → sideloadable `.apk`, no store account needed) once the FCM cred + icon are in place
+
+**Deferred to Phase 3 (2026-07-22 — Jake not paying for Apple Developer Program yet):**
+- [ ] Apple Developer Program enrollment ($99/yr) — blocks any real iOS build, dev or prod (Apple requires a paid account to sign builds at all, unlike Android sideloading)
+- [ ] Google Play dev account — only needed for Play Store distribution, not for Android sideload testing
+- [ ] Real iOS `eas build` / TestFlight
 
 ## Phase 2 — Cup & individual competitions
 - [ ] Team knockout cup (single-elimination, cross-division)

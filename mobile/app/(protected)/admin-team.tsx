@@ -12,6 +12,8 @@ import { Alert } from '@/lib/alert';
 import { RAW } from '@/lib/theme';
 import { Screen, Heading, Body, Caption, Button, Card, Avatar, ListRow, Input, Label, Badge, Sheet } from '@/components/ui';
 import { AdminShell } from '@/components/admin/AdminShell';
+import { VenuePickerSheet } from '@/components/admin/VenuePickerSheet';
+import type { Venue } from '@/types';
 
 const DESKTOP_BREAKPOINT = 768;
 
@@ -43,8 +45,9 @@ export default function AdminTeamScreen() {
   const isDesktop = width >= DESKTOP_BREAKPOINT;
 
   const [teamName, setTeamName] = useState('');
-  const [teamAddress, setTeamAddress] = useState<string | null>(null);
-  const [teamVenuePhone, setTeamVenuePhone] = useState<string | null>(null);
+  const [teamVenueId, setTeamVenueId] = useState<string | null>(null);
+  const [teamVenue, setTeamVenue] = useState<Venue | null>(null);
+  const [showVenuePicker, setShowVenuePicker] = useState(false);
   const [seasonId, setSeasonId] = useState<string | null>(null);
   const [divisionId, setDivisionId] = useState<string | null>(null);
   const [seasonName, setSeasonName] = useState<string | null>(null);
@@ -58,17 +61,20 @@ export default function AdminTeamScreen() {
   const [players, setPlayers] = useState<Player[]>([]);
   const [otherTeams, setOtherTeams] = useState<OtherTeam[]>([]);
 
-  const [editingAddress, setEditingAddress] = useState(false);
-  const [addressDraft, setAddressDraft] = useState('');
-  const [venuePhoneDraft, setVenuePhoneDraft] = useState('');
-  const [isSavingAddress, setIsSavingAddress] = useState(false);
-
   const [showAddPlayer, setShowAddPlayer] = useState(false);
   const [newPlayerName, setNewPlayerName] = useState('');
   const [isAddingPlayer, setIsAddingPlayer] = useState(false);
 
   const [moveTarget, setMoveTarget] = useState<Player | null>(null);
   const [isMoving, setIsMoving] = useState(false);
+
+  const [editingName, setEditingName] = useState(false);
+  const [teamNameDraft, setTeamNameDraft] = useState('');
+  const [isSavingName, setIsSavingName] = useState(false);
+
+  const [siblingDivisions, setSiblingDivisions] = useState<{ id: string; name: string }[]>([]);
+  const [showMoveDivision, setShowMoveDivision] = useState(false);
+  const [isMovingDivision, setIsMovingDivision] = useState(false);
 
   useEffect(() => {
     if (!teamId) return;
@@ -77,8 +83,7 @@ export default function AdminTeamScreen() {
       if (!snap.exists()) return;
       const data = snap.data();
       setTeamName(data.name);
-      setTeamAddress(data.address ?? null);
-      setTeamVenuePhone(data.venuePhone ?? null);
+      setTeamVenueId(data.venueId ?? null);
 
       setCaptainUserId(data.captainUserId ?? null);
       setVcUserId(data.viceCaptainUserId ?? null);
@@ -118,6 +123,14 @@ export default function AdminTeamScreen() {
   }, [teamId]);
 
   useEffect(() => {
+    if (!teamVenueId) { setTeamVenue(null); return; }
+    const unsub = onSnapshot(doc(db, 'venues', teamVenueId), (snap) => {
+      setTeamVenue(snap.exists() ? ({ id: snap.id, ...snap.data() } as Venue) : null);
+    });
+    return unsub;
+  }, [teamVenueId]);
+
+  useEffect(() => {
     if (!appUser?.leagueId) return;
     const unsub = onSnapshot(
       query(collection(db, 'teams'), where('leagueId', '==', appUser.leagueId)),
@@ -133,17 +146,43 @@ export default function AdminTeamScreen() {
     return unsub;
   }, [appUser?.leagueId, teamId]);
 
-  async function saveAddress() {
+  useEffect(() => {
+    if (!seasonId) return;
+    const unsub = onSnapshot(
+      query(collection(db, 'divisions'), where('seasonId', '==', seasonId)),
+      (snap) => setSiblingDivisions(
+        snap.docs.map((d) => ({ id: d.id, name: d.data().name as string })).sort((a, b) => a.name.localeCompare(b.name)),
+      ),
+    );
+    return unsub;
+  }, [seasonId]);
+
+  async function selectVenue(venueId: string | null) {
     if (!teamId) return;
-    setIsSavingAddress(true);
+    await updateDoc(doc(db, 'teams', teamId), { venueId });
+  }
+
+  async function saveName() {
+    if (!teamId || !teamNameDraft.trim()) return;
+    setIsSavingName(true);
     try {
-      await updateDoc(doc(db, 'teams', teamId), {
-        address: addressDraft.trim() || null,
-        venuePhone: venuePhoneDraft.trim() || null,
-      });
-      setEditingAddress(false);
+      await updateDoc(doc(db, 'teams', teamId), { name: teamNameDraft.trim() });
+      setEditingName(false);
     } finally {
-      setIsSavingAddress(false);
+      setIsSavingName(false);
+    }
+  }
+
+  async function moveDivision(targetDivisionId: string) {
+    if (!teamId || targetDivisionId === divisionId) { setShowMoveDivision(false); return; }
+    setIsMovingDivision(true);
+    try {
+      await httpsCallable(functions, 'adminMoveTeamDivision')({ teamId, divisionId: targetDivisionId });
+      setShowMoveDivision(false);
+    } catch (e: unknown) {
+      Alert.alert("Can't move team", (e as Error).message ?? 'Something went wrong');
+    } finally {
+      setIsMovingDivision(false);
     }
   }
 
@@ -334,6 +373,40 @@ export default function AdminTeamScreen() {
   const pendingCaptain = players.find((p) => !p.claimedByUserId && p.designatedRole === 'captain');
   const pendingVc = players.find((p) => !p.claimedByUserId && p.designatedRole === 'viceCaptain');
 
+  const teamInfoCard = (
+    <Card className="mb-4">
+      <View className="flex-row items-center mb-2.5">
+        <Heading size="sm" className="flex-1">Team</Heading>
+        {!editingName && (
+          <Button variant="secondary" size="sm" onPress={() => { setTeamNameDraft(teamName); setEditingName(true); }}>
+            Rename
+          </Button>
+        )}
+      </View>
+      {editingName ? (
+        <View className="mb-3">
+          <Input value={teamNameDraft} onChangeText={setTeamNameDraft} autoCapitalize="words" autoFocus className="mb-2.5" />
+          <View className="flex-row gap-2">
+            <Button variant="ghost" className="flex-1" onPress={() => setEditingName(false)}>Cancel</Button>
+            <Button className="flex-1" disabled={isSavingName || !teamNameDraft.trim()} loading={isSavingName} onPress={saveName}>
+              Save
+            </Button>
+          </View>
+        </View>
+      ) : (
+        <Body tone="strong" weight="semibold" className="mb-3">{teamName}</Body>
+      )}
+
+      <View className="flex-row items-center justify-between">
+        <View>
+          <Caption className="mb-0.5">Division</Caption>
+          <Body size="sm" tone="strong">{divisionName ?? 'Unassigned'}</Body>
+        </View>
+        <Button variant="secondary" size="sm" onPress={() => setShowMoveDivision(true)}>Move</Button>
+      </View>
+    </Card>
+  );
+
   const captainCard = (
     <Card className="mb-4">
       <View className="mb-3">
@@ -363,53 +436,22 @@ export default function AdminTeamScreen() {
     <Card className="mb-5">
       <View className="flex-row items-center mb-2.5">
         <Heading size="sm" className="flex-1">Home Venue</Heading>
-        {!editingAddress && (
-          <Button
-            variant="secondary"
-            size="sm"
-            onPress={() => {
-              setAddressDraft(teamAddress ?? '');
-              setVenuePhoneDraft(teamVenuePhone ?? '');
-              setEditingAddress(true);
-            }}
-          >
-            {teamAddress ? 'Edit' : 'Add'}
-          </Button>
-        )}
+        <Button variant="secondary" size="sm" onPress={() => setShowVenuePicker(true)}>
+          {teamVenue ? 'Change' : 'Set'}
+        </Button>
       </View>
-      {editingAddress ? (
-        <>
-          <Input
-            value={addressDraft}
-            onChangeText={setAddressDraft}
-            placeholder="e.g. The Red Lion, 12 High St, Birmingham"
-            autoCapitalize="words"
-            autoFocus
-            className="mb-2.5"
-          />
-          <Input
-            value={venuePhoneDraft}
-            onChangeText={setVenuePhoneDraft}
-            placeholder="Venue contact number (optional)"
-            keyboardType="phone-pad"
-            className="mb-2.5"
-          />
-          <View className="flex-row gap-2">
-            <Button variant="ghost" className="flex-1" onPress={() => setEditingAddress(false)}>Cancel</Button>
-            <Button className="flex-1" disabled={isSavingAddress} loading={isSavingAddress} onPress={saveAddress}>Save</Button>
-          </View>
-        </>
-      ) : (
-        <>
-          <Body size="sm" tone={teamAddress ? 'strong' : 'dim'}>{teamAddress ?? 'No venue set'}</Body>
-          {teamVenuePhone && <Body size="sm" className="mt-1">{teamVenuePhone}</Body>}
-        </>
+      <Body size="sm" tone={teamVenue ? 'strong' : 'dim'}>{teamVenue?.name ?? 'No venue set'}</Body>
+      {teamVenue?.address && <Body size="sm" className="mt-1">{teamVenue.address}</Body>}
+      {teamVenue?.venuePhone && <Body size="sm" className="mt-1">{teamVenue.venuePhone}</Body>}
+      {teamVenue && (
+        <Caption className="mt-1">{teamVenue.boardCount} board{teamVenue.boardCount === 1 ? '' : 's'}</Caption>
       )}
     </Card>
   );
 
   const body = (
     <>
+      {teamInfoCard}
       {captainCard}
       {venueCard}
 
@@ -463,6 +505,17 @@ export default function AdminTeamScreen() {
 
   const modals = (
     <>
+      {appUser?.leagueId && (
+        <VenuePickerSheet
+          visible={showVenuePicker}
+          onClose={() => setShowVenuePicker(false)}
+          leagueId={appUser.leagueId}
+          value={teamVenueId}
+          onSelect={selectVenue}
+          allowCreate
+        />
+      )}
+
       <Sheet visible={!!roleSheetPlayer} onClose={() => setRoleSheetPlayer(null)}>
         {roleSheetPlayer && (
           <>
@@ -528,6 +581,29 @@ export default function AdminTeamScreen() {
         )}
         {isMoving && <ActivityIndicator color={RAW.brand} style={{ marginTop: 12 }} />}
         <Button variant="ghost" className="mt-4" disabled={isMoving} onPress={() => setMoveTarget(null)}>Cancel</Button>
+      </Sheet>
+
+      <Sheet visible={showMoveDivision} onClose={() => setShowMoveDivision(false)}>
+        <Heading size="lg" className="mb-1">Move to Division</Heading>
+        <Body size="sm" className="mb-4">
+          Blocked if this team already has any fixtures, played or not — delete those first if you need to move it.
+        </Body>
+        {siblingDivisions.length === 0 ? (
+          <Body size="sm" className="mb-2">No other divisions in this season yet.</Body>
+        ) : (
+          <View className="gap-2 mb-2">
+            {siblingDivisions.map((d) => (
+              <ListRow
+                key={d.id}
+                title={d.name}
+                trailing={d.id === divisionId ? <Body size="xs" tone="brand" weight="semibold">Current</Body> : undefined}
+                onPress={() => moveDivision(d.id)}
+              />
+            ))}
+          </View>
+        )}
+        {isMovingDivision && <ActivityIndicator color={RAW.brand} style={{ marginTop: 12 }} />}
+        <Button variant="ghost" className="mt-4" disabled={isMovingDivision} onPress={() => setShowMoveDivision(false)}>Cancel</Button>
       </Sheet>
     </>
   );

@@ -513,6 +513,14 @@ async function hasConfirmedMatch(teamId: string): Promise<boolean> {
   return !homeSnap.empty || !awaySnap.empty;
 }
 
+async function hasAnyMatch(teamId: string): Promise<boolean> {
+  const [homeSnap, awaySnap] = await Promise.all([
+    db.collection('matches').where('homeTeamId', '==', teamId).limit(1).get(),
+    db.collection('matches').where('awayTeamId', '==', teamId).limit(1).get(),
+  ]);
+  return !homeSnap.empty || !awaySnap.empty;
+}
+
 async function assertNoConfirmedMatches(teamIds: string[]): Promise<void> {
   for (const teamId of teamIds) {
     if (await hasConfirmedMatch(teamId)) {
@@ -597,6 +605,46 @@ export const adminDeleteTeam = onCall(async (request) => {
   await deleteTeamCascade(teamId);
 });
 
+// Moves a team to a different division within the *same season* (rejects
+// cross-season moves — a team's seasonId and its division's seasonId must
+// stay in sync). Blocked while the team has any match at all, not just
+// confirmed ones — even an unplayed 'scheduled' fixture was generated as
+// part of the old division's round-robin against the old division's teams,
+// so it'd be nonsensical once the team belongs to a different division.
+// Denormalizes the same divisionId onto every player on the team, since
+// players.divisionId is what several list queries filter on.
+export const adminMoveTeamDivision = onCall(async (request) => {
+  const { teamId, divisionId } = (request.data ?? {}) as { teamId?: string; divisionId?: string };
+  if (!teamId || !divisionId) throw new HttpsError('invalid-argument', 'teamId and divisionId are required.');
+
+  const teamSnap = await db.doc(`teams/${teamId}`).get();
+  if (!teamSnap.exists) throw new HttpsError('not-found', 'Team not found.');
+  const team = teamSnap.data()!;
+  await assertLeagueAdmin(request.auth?.uid, team.leagueId);
+
+  if (divisionId === team.divisionId) return;
+
+  const divisionSnap = await db.doc(`divisions/${divisionId}`).get();
+  if (!divisionSnap.exists) throw new HttpsError('not-found', 'Division not found.');
+  const division = divisionSnap.data()!;
+  if (division.leagueId !== team.leagueId || division.seasonId !== team.seasonId) {
+    throw new HttpsError('failed-precondition', "That division isn't in this team's season.");
+  }
+
+  if (await hasAnyMatch(teamId)) {
+    throw new HttpsError(
+      'failed-precondition',
+      'This team already has fixtures in its current division — delete those fixtures first, then move it.',
+    );
+  }
+
+  const playersSnap = await db.collection('players').where('teamId', '==', teamId).get();
+  const batch = db.batch();
+  batch.update(teamSnap.ref, { divisionId });
+  playersSnap.docs.forEach((d) => batch.update(d.ref, { divisionId }));
+  await batch.commit();
+});
+
 export const adminDeleteDivision = onCall(async (request) => {
   const { divisionId } = (request.data ?? {}) as { divisionId?: string };
   if (!divisionId) throw new HttpsError('invalid-argument', 'divisionId is required.');
@@ -613,4 +661,74 @@ export const adminDeleteSeason = onCall(async (request) => {
   if (!seasonSnap.exists) throw new HttpsError('not-found', 'Season not found.');
   await assertLeagueAdmin(request.auth?.uid, seasonSnap.data()!.leagueId);
   await deleteSeasonCascade(seasonId);
+});
+
+// One-time migration for leagues created before the Venue entity existed:
+// their teams still carry the old free-text `address`/`venuePhone` fields
+// directly in Firestore (the field itself was never deleted, just dropped
+// from the app's Team type/writes going forward — see PLAN.md). Groups teams
+// by exact address string, creates one Venue per distinct address
+// (boardCount defaults to 1 — admin corrects this afterward via the Venues
+// screen, since board counts can't be inferred from an address), and
+// re-points each team's venueId. Idempotent: skips any team that already has
+// a venueId (already migrated, or created after Venue existed).
+export const adminMigrateVenues = onCall(async (request) => {
+  const { leagueId } = (request.data ?? {}) as { leagueId?: string };
+  if (!leagueId) throw new HttpsError('invalid-argument', 'leagueId is required.');
+  await assertLeagueAdmin(request.auth?.uid, leagueId);
+
+  const teamsSnap = await db.collection('teams').where('leagueId', '==', leagueId).get();
+  const venueIdByAddress = new Map<string, string>();
+  let migratedTeams = 0;
+  let createdVenues = 0;
+
+  const batch = db.batch();
+  for (const teamDoc of teamsSnap.docs) {
+    const data = teamDoc.data() as { venueId?: string | null; address?: string | null; venuePhone?: string | null };
+    if (data.venueId) continue;
+    const address = (data.address ?? '').trim();
+    if (!address) continue;
+
+    let venueId = venueIdByAddress.get(address);
+    if (!venueId) {
+      const venueRef = db.collection('venues').doc();
+      batch.set(venueRef, {
+        leagueId,
+        name: address,
+        address,
+        venuePhone: data.venuePhone ?? null,
+        boardCount: 1,
+        createdAt: FieldValue.serverTimestamp(),
+      });
+      venueId = venueRef.id;
+      venueIdByAddress.set(address, venueId);
+      createdVenues += 1;
+    }
+    batch.update(teamDoc.ref, { venueId });
+    migratedTeams += 1;
+  }
+  await batch.commit();
+
+  return { createdVenues, migratedTeams };
+});
+
+// Unlike team/division/season, a venue is referenced by many teams rather
+// than owned by one — deleting it out from under them would silently drop
+// their home-venue assignment, so this blocks instead of cascading. Admin
+// must re-point every referencing team at a different venue first.
+export const adminDeleteVenue = onCall(async (request) => {
+  const { venueId } = (request.data ?? {}) as { venueId?: string };
+  if (!venueId) throw new HttpsError('invalid-argument', 'venueId is required.');
+  const venueSnap = await db.doc(`venues/${venueId}`).get();
+  if (!venueSnap.exists) throw new HttpsError('not-found', 'Venue not found.');
+  await assertLeagueAdmin(request.auth?.uid, venueSnap.data()!.leagueId);
+
+  const referencingTeams = await db.collection('teams').where('venueId', '==', venueId).limit(1).get();
+  if (!referencingTeams.empty) {
+    throw new HttpsError(
+      'failed-precondition',
+      'One or more teams still play out of this venue — re-assign them to a different venue first.',
+    );
+  }
+  await db.doc(`venues/${venueId}`).delete();
 });

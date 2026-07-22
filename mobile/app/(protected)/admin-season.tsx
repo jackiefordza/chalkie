@@ -15,13 +15,16 @@ import { RAW, type SemanticTone } from '@/lib/theme';
 import { FONT_DISPLAY } from '@/styles/typography';
 import { Screen, Heading, Body, Caption, Button, Card, Chip, ListRow, Input, Label, Sheet, StatTile, Badge, Avatar, AppIcon } from '@/components/ui';
 import { AdminShell } from '@/components/admin/AdminShell';
+import { VenuePickerSheet } from '@/components/admin/VenuePickerSheet';
+import { parseDateInput, formatDateInput, formatDate } from '@/lib/dates';
 import { FixturesTab, ResultsTab } from './admin-fixtures';
 import { StandingsTab } from './admin-standings-override';
+import type { Venue, SeasonBreak } from '@/types';
 
 const DESKTOP_BREAKPOINT = 768;
 
 interface Division { id: string; name: string; order: number }
-interface Team { id: string; name: string; divisionId: string; captainUserId: string | null; address: string | null }
+interface Team { id: string; name: string; divisionId: string; captainUserId: string | null; venueId: string | null }
 
 const STATUS_OPTIONS: { value: string; label: string; tone: SemanticTone }[] = [
   { value: 'upcoming', label: 'Upcoming', tone: 'butter' },
@@ -72,9 +75,9 @@ const TEAM_STATUS_TONE: Record<TeamStatus, SemanticTone> = { active: 'sage', pen
 const TEAM_STATUS_LABEL: Record<TeamStatus, string> = { active: 'Active', pending: 'Pending Approval', incomplete: 'Incomplete' };
 
 function TeamTableRow({
-  team, players, played, won, lost, status, onPress, isLast,
+  team, venueName, players, played, won, lost, status, onPress, isLast,
 }: {
-  team: Team; players: number; played: number; won: number; lost: number; status: TeamStatus;
+  team: Team; venueName: string | null; players: number; played: number; won: number; lost: number; status: TeamStatus;
   onPress: () => void; isLast: boolean;
 }) {
   const [hovered, setHovered] = useState(false);
@@ -98,7 +101,7 @@ function TeamTableRow({
           </Caption>
         </View>
       </View>
-      <Body size="sm" numberOfLines={1} style={{ flex: 2 }}>{team.address || 'Not set'}</Body>
+      <Body size="sm" numberOfLines={1} style={{ flex: 2 }}>{venueName ?? 'Not set'}</Body>
       <Body size="sm" className="text-right" style={{ flex: 0.8 }}>{players}</Body>
       <Body size="sm" className="text-right" style={{ flex: 0.5 }}>{played}</Body>
       <Body size="sm" className="text-right" style={{ flex: 0.5 }}>{won}</Body>
@@ -114,9 +117,10 @@ function TeamTableRow({
 }
 
 function TeamsTable({
-  teams, playerCountByTeam, tableRowByTeam, pendingTeamIds, onOpenTeam,
+  teams, venuesById, playerCountByTeam, tableRowByTeam, pendingTeamIds, onOpenTeam,
 }: {
   teams: Team[];
+  venuesById: Record<string, Venue>;
   playerCountByTeam: Record<string, number>;
   tableRowByTeam: Record<string, { played: number; won: number; lost: number }>;
   pendingTeamIds: Set<string>;
@@ -153,6 +157,7 @@ function TeamsTable({
               <TeamTableRow
                 key={team.id}
                 team={team}
+                venueName={team.venueId ? venuesById[team.venueId]?.name ?? null : null}
                 players={playerCountByTeam[team.id] ?? 0}
                 played={rowStat?.played ?? 0}
                 won={rowStat?.won ?? 0}
@@ -194,14 +199,38 @@ export default function AdminSeasonScreen() {
   const [teams, setTeams] = useState<Team[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
-  const [addTeamTarget, setAddTeamTarget] = useState<Division | null>(null);
+  const [showAddTeam, setShowAddTeam] = useState(false);
   const [newTeamName, setNewTeamName] = useState('');
-  const [newTeamAddress, setNewTeamAddress] = useState('');
+  const [newTeamDivisionId, setNewTeamDivisionId] = useState<string | null>(null);
+  const [showTeamDivisionPicker, setShowTeamDivisionPicker] = useState(false);
+  const [newTeamVenueId, setNewTeamVenueId] = useState<string | null>(null);
+  const [showNewTeamVenuePicker, setShowNewTeamVenuePicker] = useState(false);
   const [isAddingTeam, setIsAddingTeam] = useState(false);
+
+  const [venuesById, setVenuesById] = useState<Record<string, Venue>>({});
 
   const [showAddDivision, setShowAddDivision] = useState(false);
   const [newDivisionName, setNewDivisionName] = useState('');
   const [isAddingDivision, setIsAddingDivision] = useState(false);
+
+  const [renameDivisionTarget, setRenameDivisionTarget] = useState<Division | null>(null);
+  const [divisionNameDraft, setDivisionNameDraft] = useState('');
+  const [isRenamingDivision, setIsRenamingDivision] = useState(false);
+
+  const [showRenameSeason, setShowRenameSeason] = useState(false);
+  const [seasonNameDraft, setSeasonNameDraft] = useState('');
+  const [isRenamingSeason, setIsRenamingSeason] = useState(false);
+
+  const [seasonStartDate, setSeasonStartDate] = useState<Date | null>(null);
+  const [seasonBreaks, setSeasonBreaks] = useState<SeasonBreak[]>([]);
+  const [showSchedule, setShowSchedule] = useState(false);
+  const [startDateDraft, setStartDateDraft] = useState('');
+  const [breaksDraft, setBreaksDraft] = useState<SeasonBreak[]>([]);
+  const [newBreakLabel, setNewBreakLabel] = useState('');
+  const [newBreakStart, setNewBreakStart] = useState('');
+  const [newBreakEnd, setNewBreakEnd] = useState('');
+  const [scheduleError, setScheduleError] = useState<string | null>(null);
+  const [isSavingSchedule, setIsSavingSchedule] = useState(false);
 
   // Division-scoped stat-card and Teams-table data. Separate from the
   // season-wide `teams` query above since players/matches/tables/pending
@@ -248,12 +277,32 @@ export default function AdminSeasonScreen() {
   }, [divisionId, appUser?.leagueId, seasonId]);
 
   useEffect(() => {
+    if (!appUser?.leagueId) return;
+    const unsub = onSnapshot(
+      query(collection(db, 'venues'), where('leagueId', '==', appUser.leagueId)),
+      (snap) => {
+        const byId: Record<string, Venue> = {};
+        snap.docs.forEach((d) => { byId[d.id] = { id: d.id, ...d.data() } as Venue; });
+        setVenuesById(byId);
+      },
+    );
+    return unsub;
+  }, [appUser?.leagueId]);
+
+  useEffect(() => {
     if (!seasonId) return;
 
     const unsubSeason = onSnapshot(doc(db, 'seasons', seasonId), (snap) => {
       if (snap.exists()) {
-        setSeasonName(snap.data().name);
-        setSeasonStatus(snap.data().status);
+        const data = snap.data();
+        setSeasonName(data.name);
+        setSeasonStatus(data.status);
+        setSeasonStartDate(data.startDate?.toDate() ?? null);
+        setSeasonBreaks(
+          (data.breaks ?? []).map((b: { start: { toDate(): Date }; end: { toDate(): Date }; label: string }) => ({
+            start: b.start.toDate(), end: b.end.toDate(), label: b.label,
+          })),
+        );
       }
     });
 
@@ -338,26 +387,112 @@ export default function AdminSeasonScreen() {
   }
 
   async function addTeam() {
-    if (!newTeamName.trim() || !addTeamTarget || !appUser?.leagueId) return;
+    if (!newTeamName.trim() || !newTeamDivisionId || !appUser?.leagueId) return;
     setIsAddingTeam(true);
     try {
       await addDoc(collection(db, 'teams'), {
         leagueId: appUser.leagueId,
         seasonId,
-        divisionId: addTeamTarget.id,
+        divisionId: newTeamDivisionId,
         name: newTeamName.trim(),
-        address: newTeamAddress.trim() || null,
+        venueId: newTeamVenueId,
         captainUserId: null,
         viceCaptainUserId: null,
         createdAt: serverTimestamp(),
       });
-      setAddTeamTarget(null);
+      setShowAddTeam(false);
       setNewTeamName('');
-      setNewTeamAddress('');
+      setNewTeamDivisionId(null);
+      setNewTeamVenueId(null);
     } catch (e: unknown) {
       Alert.alert('Error', (e as Error).message ?? 'Something went wrong');
     } finally {
       setIsAddingTeam(false);
+    }
+  }
+
+  function openAddTeam(divisionId: string | null) {
+    setNewTeamName('');
+    setNewTeamDivisionId(divisionId);
+    setNewTeamVenueId(null);
+    setShowAddTeam(true);
+  }
+
+  function openRenameDivision(division: Division) {
+    setDivisionNameDraft(division.name);
+    setRenameDivisionTarget(division);
+  }
+
+  async function saveDivisionName() {
+    if (!renameDivisionTarget || !divisionNameDraft.trim()) return;
+    setIsRenamingDivision(true);
+    try {
+      await updateDoc(doc(db, 'divisions', renameDivisionTarget.id), { name: divisionNameDraft.trim() });
+      setRenameDivisionTarget(null);
+    } catch (e: unknown) {
+      Alert.alert('Error', (e as Error).message ?? 'Something went wrong');
+    } finally {
+      setIsRenamingDivision(false);
+    }
+  }
+
+  function openRenameSeason() {
+    setSeasonNameDraft(seasonName);
+    setShowRenameSeason(true);
+  }
+
+  async function saveSeasonName() {
+    if (!seasonId || !seasonNameDraft.trim()) return;
+    setIsRenamingSeason(true);
+    try {
+      await updateDoc(doc(db, 'seasons', seasonId), { name: seasonNameDraft.trim() });
+      setShowRenameSeason(false);
+    } catch (e: unknown) {
+      Alert.alert('Error', (e as Error).message ?? 'Something went wrong');
+    } finally {
+      setIsRenamingSeason(false);
+    }
+  }
+
+  function openScheduleEditor() {
+    setStartDateDraft(seasonStartDate ? formatDateInput(seasonStartDate) : '');
+    setBreaksDraft(seasonBreaks);
+    setNewBreakLabel('');
+    setNewBreakStart('');
+    setNewBreakEnd('');
+    setScheduleError(null);
+    setShowSchedule(true);
+  }
+
+  function addBreakDraft() {
+    const start = parseDateInput(newBreakStart);
+    const end = parseDateInput(newBreakEnd);
+    if (!start || !end) { setScheduleError('Enter both break dates as YYYY-MM-DD'); return; }
+    if (end < start) { setScheduleError('Break end date must be on or after the start date'); return; }
+    setScheduleError(null);
+    setBreaksDraft([...breaksDraft, { start, end, label: newBreakLabel.trim() || 'Break' }]);
+    setNewBreakLabel('');
+    setNewBreakStart('');
+    setNewBreakEnd('');
+  }
+
+  function removeBreakDraft(index: number) {
+    setBreaksDraft(breaksDraft.filter((_, i) => i !== index));
+  }
+
+  async function saveSchedule() {
+    const startDate = startDateDraft.trim() ? parseDateInput(startDateDraft) : null;
+    if (startDateDraft.trim() && !startDate) { setScheduleError('Enter the start date as YYYY-MM-DD, or leave it blank'); return; }
+    if (!seasonId) return;
+    setScheduleError(null);
+    setIsSavingSchedule(true);
+    try {
+      await updateDoc(doc(db, 'seasons', seasonId), { startDate, breaks: breaksDraft });
+      setShowSchedule(false);
+    } catch (e: unknown) {
+      setScheduleError((e as Error).message ?? 'Something went wrong');
+    } finally {
+      setIsSavingSchedule(false);
     }
   }
 
@@ -415,22 +550,49 @@ export default function AdminSeasonScreen() {
   }
 
   const addTeamSheet = (
-    <Sheet visible={!!addTeamTarget} onClose={() => setAddTeamTarget(null)}>
-      <Heading size="lg" className="mb-1">Add Team</Heading>
-      <Body size="sm" className="mb-5">{addTeamTarget?.name}</Body>
+    <Sheet visible={showAddTeam} onClose={() => setShowAddTeam(false)}>
+      <Heading size="lg" className="mb-4">Add Team</Heading>
 
       <Label>Team name</Label>
       <Input value={newTeamName} onChangeText={setNewTeamName} placeholder="e.g. The Arrows" autoCapitalize="words" autoFocus className="mb-4" />
 
-      <Label>Home venue / address (optional)</Label>
-      <Input value={newTeamAddress} onChangeText={setNewTeamAddress} placeholder="e.g. The Red Lion, 12 High St" autoCapitalize="words" className="mb-6" />
+      <Label>Division</Label>
+      <Button variant="secondary" className="mb-4" onPress={() => setShowTeamDivisionPicker(true)}>
+        {newTeamDivisionId ? divisions.find((d) => d.id === newTeamDivisionId)?.name ?? 'Selected' : 'Choose division'}
+      </Button>
+
+      <Label>Home venue (optional)</Label>
+      <Button variant="secondary" className="mb-6" onPress={() => setShowNewTeamVenuePicker(true)}>
+        {newTeamVenueId ? venuesById[newTeamVenueId]?.name ?? 'Selected' : 'Choose venue'}
+      </Button>
 
       <View className="flex-row gap-2.5">
-        <Button variant="ghost" className="flex-1" onPress={() => setAddTeamTarget(null)}>Cancel</Button>
-        <Button className="flex-1" disabled={isAddingTeam || !newTeamName.trim()} loading={isAddingTeam} onPress={addTeam}>
+        <Button variant="ghost" className="flex-1" onPress={() => setShowAddTeam(false)}>Cancel</Button>
+        <Button className="flex-1" disabled={isAddingTeam || !newTeamName.trim() || !newTeamDivisionId} loading={isAddingTeam} onPress={addTeam}>
           Add Team
         </Button>
       </View>
+    </Sheet>
+  );
+
+  const teamDivisionPicker = (
+    <Sheet visible={showTeamDivisionPicker} onClose={() => setShowTeamDivisionPicker(false)}>
+      <Heading size="lg" className="mb-4">Choose Division</Heading>
+      {divisions.length === 0 ? (
+        <Body size="sm" className="mb-4">No divisions in this season yet — add one first.</Body>
+      ) : (
+        <View className="gap-2 mb-2">
+          {divisions.map((d) => (
+            <ListRow
+              key={d.id}
+              title={d.name}
+              trailing={newTeamDivisionId === d.id ? <Body size="xs" tone="brand" weight="semibold">Selected</Body> : undefined}
+              onPress={() => { setNewTeamDivisionId(d.id); setShowTeamDivisionPicker(false); }}
+            />
+          ))}
+        </View>
+      )}
+      <Button variant="ghost" className="mt-2" onPress={() => setShowTeamDivisionPicker(false)}>Cancel</Button>
     </Sheet>
   );
 
@@ -448,6 +610,107 @@ export default function AdminSeasonScreen() {
     </Sheet>
   );
 
+  const renameDivisionSheet = (
+    <Sheet visible={!!renameDivisionTarget} onClose={() => setRenameDivisionTarget(null)}>
+      <Heading size="lg" className="mb-4">Rename Division</Heading>
+      <Label>Division name</Label>
+      <Input value={divisionNameDraft} onChangeText={setDivisionNameDraft} autoCapitalize="words" autoFocus className="mb-6" />
+      <View className="flex-row gap-2.5">
+        <Button variant="ghost" className="flex-1" onPress={() => setRenameDivisionTarget(null)}>Cancel</Button>
+        <Button className="flex-1" disabled={isRenamingDivision || !divisionNameDraft.trim()} loading={isRenamingDivision} onPress={saveDivisionName}>
+          Save
+        </Button>
+      </View>
+    </Sheet>
+  );
+
+  const renameSeasonSheet = (
+    <Sheet visible={showRenameSeason} onClose={() => setShowRenameSeason(false)}>
+      <Heading size="lg" className="mb-4">Rename Season</Heading>
+      <Label>Season name</Label>
+      <Input value={seasonNameDraft} onChangeText={setSeasonNameDraft} autoCapitalize="words" autoFocus className="mb-6" />
+      <View className="flex-row gap-2.5">
+        <Button variant="ghost" className="flex-1" onPress={() => setShowRenameSeason(false)}>Cancel</Button>
+        <Button className="flex-1" disabled={isRenamingSeason || !seasonNameDraft.trim()} loading={isRenamingSeason} onPress={saveSeasonName}>
+          Save
+        </Button>
+      </View>
+    </Sheet>
+  );
+
+  const newTeamVenuePicker = appUser?.leagueId && (
+    <VenuePickerSheet
+      visible={showNewTeamVenuePicker}
+      onClose={() => setShowNewTeamVenuePicker(false)}
+      leagueId={appUser.leagueId}
+      value={newTeamVenueId}
+      onSelect={setNewTeamVenueId}
+      allowCreate
+    />
+  );
+
+  const scheduleCard = (
+    <Card className="mb-5">
+      <View className="flex-row items-center mb-2.5">
+        <Heading size="sm" className="flex-1">Schedule</Heading>
+        <Button variant="secondary" size="sm" onPress={openScheduleEditor}>Edit</Button>
+      </View>
+      <Caption className="mb-1">Start date</Caption>
+      <Body size="sm" tone={seasonStartDate ? 'strong' : 'dim'} className="mb-3">
+        {seasonStartDate ? formatDate(seasonStartDate) : 'Not set'}
+      </Body>
+      <Caption className="mb-1">Breaks</Caption>
+      {seasonBreaks.length === 0 ? (
+        <Body size="sm" tone="dim">None — fixtures generate straight through</Body>
+      ) : (
+        <View className="gap-1">
+          {seasonBreaks.map((b, i) => (
+            <Body size="sm" key={i}>{b.label}: {formatDate(b.start)} – {formatDate(b.end)}</Body>
+          ))}
+        </View>
+      )}
+    </Card>
+  );
+
+  const scheduleSheet = (
+    <Sheet visible={showSchedule} onClose={() => setShowSchedule(false)}>
+      <Heading size="lg" className="mb-4">Edit Schedule</Heading>
+      <Label>Start date</Label>
+      <Input value={startDateDraft} onChangeText={setStartDateDraft} placeholder="YYYY-MM-DD" className="mb-4" />
+
+      <Label>Breaks (e.g. Christmas)</Label>
+      {breaksDraft.length > 0 && (
+        <View className="gap-2 mb-3">
+          {breaksDraft.map((b, i) => (
+            <View key={i} className="flex-row items-center justify-between p-2.5 rounded-xl bg-surface-2 dark:bg-surface-2-dark">
+              <View className="flex-1">
+                <Body size="sm" tone="strong" weight="semibold">{b.label}</Body>
+                <Caption className="normal-case tracking-normal font-normal mt-0.5">{formatDate(b.start)} – {formatDate(b.end)}</Caption>
+              </View>
+              <TouchableOpacity onPress={() => removeBreakDraft(i)}>
+                <Body size="xs" tone="coral" weight="semibold">Remove</Body>
+              </TouchableOpacity>
+            </View>
+          ))}
+        </View>
+      )}
+
+      <Input value={newBreakLabel} onChangeText={setNewBreakLabel} placeholder="Label, e.g. Christmas" autoCapitalize="words" className="mb-2" />
+      <View className="flex-row gap-2 mb-2">
+        <Input value={newBreakStart} onChangeText={setNewBreakStart} placeholder="Start YYYY-MM-DD" className="flex-1" />
+        <Input value={newBreakEnd} onChangeText={setNewBreakEnd} placeholder="End YYYY-MM-DD" className="flex-1" />
+      </View>
+      <Button variant="secondary" size="sm" className="mb-4" onPress={addBreakDraft}>+ Add Break</Button>
+
+      {scheduleError && <Body size="sm" tone="coral" className="mb-3">{scheduleError}</Body>}
+
+      <View className="flex-row gap-2.5">
+        <Button variant="ghost" className="flex-1" disabled={isSavingSchedule} onPress={() => setShowSchedule(false)}>Cancel</Button>
+        <Button className="flex-1" disabled={isSavingSchedule} loading={isSavingSchedule} onPress={saveSchedule}>Save</Button>
+      </View>
+    </Sheet>
+  );
+
   // ── Mobile: unchanged drill-down UX (own screens for Table/Fixtures/Adjust) ──
   if (!isDesktop) {
     return (
@@ -455,7 +718,12 @@ export default function AdminSeasonScreen() {
         <Stack.Screen options={{ title: seasonName || 'Season' }} />
 
         <Card className="mb-5">
-          <Caption className="mb-2.5">Season Status</Caption>
+          <View className="flex-row items-center mb-2.5">
+            <Caption className="flex-1">Season Status</Caption>
+            <TouchableOpacity onPress={openRenameSeason}>
+              <Body size="xs" tone="brand" weight="semibold">Rename</Body>
+            </TouchableOpacity>
+          </View>
           <View className="flex-row gap-2 mb-3">
             {STATUS_OPTIONS.map((opt) => (
               <Chip key={opt.value} label={opt.label} tone={opt.tone} selected={seasonStatus === opt.value} onPress={() => setStatus(opt.value)} className="flex-1" />
@@ -465,6 +733,8 @@ export default function AdminSeasonScreen() {
             Delete Season
           </Button>
         </Card>
+
+        {scheduleCard}
 
         {isLoading ? (
           <ActivityIndicator color={RAW.brand} />
@@ -489,15 +759,20 @@ export default function AdminSeasonScreen() {
                     <Button variant="secondary" size="sm" className="mr-2" onPress={() => router.push(`/(protected)/admin-standings-override?divisionId=${division.id}`)}>
                       Adjust
                     </Button>
-                    <Button size="sm" onPress={() => { setAddTeamTarget(division); setNewTeamName(''); setNewTeamAddress(''); }}>
+                    <Button size="sm" onPress={() => openAddTeam(division.id)}>
                       + Add Team
                     </Button>
                   </View>
-                  <TouchableOpacity onPress={() => confirmDeleteDivision(division)} disabled={deletingDivisionId === division.id} className="self-end mb-2">
-                    <Body size="xs" tone="coral" weight="semibold">
-                      {deletingDivisionId === division.id ? 'Deleting…' : 'Delete Division'}
-                    </Body>
-                  </TouchableOpacity>
+                  <View className="flex-row justify-end gap-4 mb-2">
+                    <TouchableOpacity onPress={() => openRenameDivision(division)}>
+                      <Body size="xs" tone="brand" weight="semibold">Rename</Body>
+                    </TouchableOpacity>
+                    <TouchableOpacity onPress={() => confirmDeleteDivision(division)} disabled={deletingDivisionId === division.id}>
+                      <Body size="xs" tone="coral" weight="semibold">
+                        {deletingDivisionId === division.id ? 'Deleting…' : 'Delete Division'}
+                      </Body>
+                    </TouchableOpacity>
+                  </View>
                   {divTeams.length === 0 ? (
                     <Body size="sm" className="pl-1">No teams yet</Body>
                   ) : (
@@ -536,6 +811,11 @@ export default function AdminSeasonScreen() {
         )}
 
         {addTeamSheet}
+        {teamDivisionPicker}
+        {newTeamVenuePicker}
+        {scheduleSheet}
+        {renameDivisionSheet}
+        {renameSeasonSheet}
       </Screen>
     );
   }
@@ -562,6 +842,9 @@ export default function AdminSeasonScreen() {
             { label: seasonName || 'Season', path: `/(protected)/admin-season?seasonId=${seasonId}` },
             { label: currentDivision.name },
           ]}
+          actions={(
+            <Button variant="secondary" size="sm" onPress={() => openRenameDivision(currentDivision)}>Rename Division</Button>
+          )}
         >
           <View style={{ maxWidth: 960 }}>
             <View className="flex-row gap-3 mb-6">
@@ -587,12 +870,13 @@ export default function AdminSeasonScreen() {
               <>
                 <View className="flex-row items-center mb-3">
                   <Heading size="sm" className="flex-1">{divTeams.length} teams</Heading>
-                  <Button size="sm" onPress={() => { setAddTeamTarget(currentDivision); setNewTeamName(''); setNewTeamAddress(''); }}>
+                  <Button size="sm" onPress={() => openAddTeam(currentDivision.id)}>
                     + Add Team
                   </Button>
                 </View>
                 <TeamsTable
                   teams={divTeams}
+                  venuesById={venuesById}
                   playerCountByTeam={playerCountByTeam}
                   tableRowByTeam={tableRowByTeam}
                   pendingTeamIds={pendingTeamIds}
@@ -620,6 +904,9 @@ export default function AdminSeasonScreen() {
           </View>
         </AdminShell>
         {addTeamSheet}
+        {teamDivisionPicker}
+        {newTeamVenuePicker}
+        {renameDivisionSheet}
       </>
     );
   }
@@ -635,13 +922,17 @@ export default function AdminSeasonScreen() {
             {STATUS_OPTIONS.map((opt) => (
               <Chip key={opt.value} label={opt.label} tone={opt.tone} selected={seasonStatus === opt.value} onPress={() => setStatus(opt.value)} />
             ))}
+            <Button variant="secondary" size="sm" onPress={openRenameSeason}>Rename Season</Button>
           </View>
         )}
       >
         <View style={{ maxWidth: 780 }}>
+          {scheduleCard}
+
           <View className="flex-row items-center mb-4">
             <Heading size="sm" className="flex-1">Divisions</Heading>
             <Button variant="secondary" size="sm" className="mr-2" onPress={() => setShowAddDivision(true)}>+ Add Division</Button>
+            <Button variant="secondary" size="sm" className="mr-2" onPress={() => openAddTeam(null)}>+ Add Team</Button>
             <Button variant="danger" size="sm" disabled={isDeletingSeason} loading={isDeletingSeason} onPress={confirmDeleteSeason}>
               Delete Season
             </Button>
@@ -659,6 +950,9 @@ export default function AdminSeasonScreen() {
                     <Body tone="strong" weight="semibold">{division.name}</Body>
                     <Caption className="mt-0.5">{teamsForDivision(division.id).length} teams</Caption>
                   </View>
+                  <TouchableOpacity onPress={() => openRenameDivision(division)} className="mr-4">
+                    <Body size="xs" tone="brand" weight="semibold">Rename</Body>
+                  </TouchableOpacity>
                   <TouchableOpacity
                     onPress={() => confirmDeleteDivision(division)}
                     disabled={deletingDivisionId === division.id}
@@ -689,7 +983,12 @@ export default function AdminSeasonScreen() {
         </View>
       </AdminShell>
       {addTeamSheet}
+      {teamDivisionPicker}
       {addDivisionSheet}
+      {renameDivisionSheet}
+      {renameSeasonSheet}
+      {newTeamVenuePicker}
+      {scheduleSheet}
     </>
   );
 }

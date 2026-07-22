@@ -173,7 +173,7 @@ export async function seedMockSeason(leagueId: string, onProgress?: (msg: string
 
   await Promise.all(TEAM_IDS.map((teamId, i) => setDoc(doc(db, 'teams', teamId), {
     leagueId, seasonId: SEASON_ID, divisionId: DIVISION_ID, name: TEAM_NAMES[i],
-    captainUserId: null, viceCaptainUserId: null, address: null, venuePhone: null,
+    captainUserId: null, viceCaptainUserId: null, venueId: null,
     createdAt: serverTimestamp(),
   }, { merge: true })));
 

@@ -72,12 +72,12 @@ export async function seedTestLeague(leagueId: string): Promise<void> {
   await Promise.all([
     setDoc(doc(db, 'teams', HOME_TEAM_ID), {
       leagueId, seasonId: SEASON_ID, divisionId: DIVISION_ID, name: 'Test Home Tigers',
-      captainUserId: null, viceCaptainUserId: null, address: null, venuePhone: null,
+      captainUserId: null, viceCaptainUserId: null, venueId: null,
       createdAt: serverTimestamp(),
     }, { merge: true }),
     setDoc(doc(db, 'teams', AWAY_TEAM_ID), {
       leagueId, seasonId: SEASON_ID, divisionId: DIVISION_ID, name: 'Test Away Eagles',
-      captainUserId: null, viceCaptainUserId: null, address: null, venuePhone: null,
+      captainUserId: null, viceCaptainUserId: null, venueId: null,
       createdAt: serverTimestamp(),
     }, { merge: true }),
     ...HOME_PLAYER_NAMES.map((name, i) => setDoc(doc(db, 'players', homePlayerId(i + 1)), {

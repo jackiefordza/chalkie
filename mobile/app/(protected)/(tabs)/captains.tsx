@@ -13,7 +13,8 @@ import { RAW } from '@/lib/theme';
 import {
   Screen, Heading, Body, Chip, Button, Card, Badge, Avatar, Input, Label, Sheet, VisibilityPicker, AppIcon,
 } from '@/components/ui';
-import type { Match, PhoneVisibility, JoinRequest } from '@/types';
+import { VenuePickerSheet } from '@/components/admin/VenuePickerSheet';
+import type { Match, PhoneVisibility, JoinRequest, Venue } from '@/types';
 
 interface Player {
   id: string; name: string;
@@ -53,17 +54,12 @@ export default function CaptainsScreen() {
   const [vcUserId, setVcUserId] = useState<string | null>(null);
   const [players, setPlayers] = useState<Player[]>([]);
   const [joinRequests, setJoinRequests] = useState<JoinRequest[]>([]);
-  const [teamAddress, setTeamAddress] = useState<string | null>(null);
-  const [teamVenuePhone, setTeamVenuePhone] = useState<string | null>(null);
+  const [teamVenueId, setTeamVenueId] = useState<string | null>(null);
+  const [teamVenue, setTeamVenue] = useState<Venue | null>(null);
+  const [showVenuePicker, setShowVenuePicker] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
 
   const [actionableMatches, setActionableMatches] = useState<ActionableMatch[]>([]);
-
-  // Venue (address + contact number) editing
-  const [editingAddress, setEditingAddress] = useState(false);
-  const [addressDraft, setAddressDraft] = useState('');
-  const [venuePhoneDraft, setVenuePhoneDraft] = useState('');
-  const [isSavingAddress, setIsSavingAddress] = useState(false);
 
   // Phone editing
   const [editingPhone, setEditingPhone] = useState(false);
@@ -89,8 +85,7 @@ export default function CaptainsScreen() {
         const data = snap.data();
         setTeamName(data.name ?? '');
         setTeamSeasonId(data.seasonId ?? null);
-        setTeamAddress(data.address ?? null);
-        setTeamVenuePhone(data.venuePhone ?? null);
+        setTeamVenueId(data.venueId ?? null);
         setCaptainUserId(data.captainUserId ?? null);
         setVcUserId(data.viceCaptainUserId ?? null);
       }
@@ -167,18 +162,17 @@ export default function CaptainsScreen() {
     return unsub;
   }, [teamId, appUser?.leagueId]);
 
-  async function saveAddress() {
+  useEffect(() => {
+    if (!teamVenueId) { setTeamVenue(null); return; }
+    const unsub = onSnapshot(doc(db, 'venues', teamVenueId), (snap) => {
+      setTeamVenue(snap.exists() ? ({ id: snap.id, ...snap.data() } as Venue) : null);
+    });
+    return unsub;
+  }, [teamVenueId]);
+
+  async function selectVenue(venueId: string | null) {
     if (!teamId) return;
-    setIsSavingAddress(true);
-    try {
-      await updateDoc(doc(db, 'teams', teamId), {
-        address: addressDraft.trim() || null,
-        venuePhone: venuePhoneDraft.trim() || null,
-      });
-      setEditingAddress(false);
-    } finally {
-      setIsSavingAddress(false);
-    }
+    await updateDoc(doc(db, 'teams', teamId), { venueId });
   }
 
   async function savePhone() {
@@ -379,52 +373,15 @@ export default function CaptainsScreen() {
           <Card className="mb-4">
             <View className="flex-row items-center mb-2.5">
               <Heading size="sm" className="flex-1">Home Venue</Heading>
-              {!editingAddress && (
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onPress={() => {
-                    setAddressDraft(teamAddress ?? '');
-                    setVenuePhoneDraft(teamVenuePhone ?? '');
-                    setEditingAddress(true);
-                  }}
-                >
-                  {teamAddress ? 'Edit' : 'Add'}
-                </Button>
-              )}
+              <Button variant="secondary" size="sm" onPress={() => setShowVenuePicker(true)}>
+                {teamVenue ? 'Change' : 'Set'}
+              </Button>
             </View>
-            {editingAddress ? (
-              <>
-                <Input
-                  value={addressDraft}
-                  onChangeText={setAddressDraft}
-                  placeholder="e.g. The Red Lion, 12 High St, Birmingham"
-                  autoCapitalize="words"
-                  autoFocus
-                  className="mb-2.5"
-                />
-                <Input
-                  value={venuePhoneDraft}
-                  onChangeText={setVenuePhoneDraft}
-                  placeholder="Venue contact number (optional)"
-                  keyboardType="phone-pad"
-                  className="mb-2.5"
-                />
-                <View className="flex-row gap-2">
-                  <Button variant="ghost" className="flex-1" onPress={() => setEditingAddress(false)}>Cancel</Button>
-                  <Button className="flex-1" disabled={isSavingAddress} loading={isSavingAddress} onPress={saveAddress}>
-                    Save
-                  </Button>
-                </View>
-              </>
-            ) : (
-              <>
-                <Body tone={teamAddress ? 'strong' : 'dim'}>
-                  {teamAddress ?? 'No venue set — tap Add to enter one'}
-                </Body>
-                {teamAddress && teamVenuePhone && <Body size="sm" className="mt-1">{teamVenuePhone}</Body>}
-              </>
-            )}
+            <Body tone={teamVenue ? 'strong' : 'dim'}>
+              {teamVenue?.name ?? 'No venue set — tap Set to pick one'}
+            </Body>
+            {teamVenue?.address && <Body size="sm" className="mt-1">{teamVenue.address}</Body>}
+            {teamVenue?.venuePhone && <Body size="sm" className="mt-1">{teamVenue.venuePhone}</Body>}
           </Card>
 
           {/* My contact details */}
@@ -543,6 +500,16 @@ export default function CaptainsScreen() {
           <Button className="mt-2" onPress={() => { setNewPlayerName(''); setModalPhase('input'); }}>
             + Add Player
           </Button>
+
+          {appUser?.leagueId && (
+            <VenuePickerSheet
+              visible={showVenuePicker}
+              onClose={() => setShowVenuePicker(false)}
+              leagueId={appUser.leagueId}
+              value={teamVenueId}
+              onSelect={selectVenue}
+            />
+          )}
 
           <Sheet visible={modalPhase !== 'closed'} onClose={() => setModalPhase('closed')}>
             {modalPhase === 'input' ? (

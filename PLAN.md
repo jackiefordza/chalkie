@@ -558,6 +558,56 @@ Functions. Flag this to Jake before starting Phase 1 build.
   one full match end to end (both captains submit → confirm or dispute → check
   standings/stats update) before trusting it further.
 
+- [x] **Venue entity + fixture scheduling (2026-07-22, code complete — not deployed).**
+      Grew out of planning the real walkthrough above: generating fixtures against
+      Jake's real league felt too risky to test on live data, and doing so surfaced a
+      real gap — the generator had no concept of a season start date, holiday breaks,
+      or venue clashes (nothing stopped 3 teams sharing one venue all being drawn home
+      the same day). Built as three pieces:
+      1. **Venue entity** — new `venues` collection (`name`, `address`, `venuePhone`,
+         `boardCount`), league-scoped, admin-write-only (mirrors the existing
+         `divisions` rule shape). `Team.address`/`venuePhone` replaced with
+         `Team.venueId`, since venuePhone/address are properties of the physical venue,
+         not the team relationship, and several teams can share one. Call sites reworked:
+         `admin-team.tsx`, `captains.tsx` (both now use a shared `VenuePickerSheet` —
+         captains can pick an existing venue but not create one, since venue creation is
+         admin-only per the rules), `admin-season.tsx` team creation + Teams table.
+         New `admin-venues.tsx` list/create/edit screen, reachable from a new sidebar
+         entry in `AdminShell`. `adminDeleteVenue` Cloud Function blocks deletion while
+         any team still references the venue (unlink pattern, not cascade — a venue is
+         shared, not owned by one team, unlike team/division/season).
+      2. **Season schedule** — `Season` gains `startDate` and `breaks` (an array of
+         `{start, end, label}` ranges, e.g. Christmas). New "Schedule" panel in
+         `admin-season.tsx`. `generateRoundRobinFixtures` (`mobile/src/lib/fixtures.ts`)
+         now walks a date cursor round-by-round and jumps it past any break range it
+         lands in, pushing every later round back rather than compressing the season.
+      3. **Venue-conflict auto-resolution** — the generator also takes each team's
+         `venueId` and a `venueId -> boardCount` map; for any round where more teams
+         share a venue than it has boards, the excess fixtures shift to consecutive
+         following days (deterministic tie-break by team id, so re-generating with the
+         same inputs is stable). `admin-fixtures.tsx` shows a summary banner ("moved N
+         fixtures to avoid a venue clash") after generating, rather than silently
+         rewriting dates.
+      Also added: `adminMigrateVenues` Cloud Function (one-time, idempotent — groups
+      existing teams by their old free-text address, creates one Venue per distinct
+      address at `boardCount: 1`, re-points `venueId`; skips teams that already have a
+      venueId or no address) and a **"Migrate Teams to Venues" button in
+      `admin-tools.tsx`** (real tool, not `__DEV__`-gated, since Jake's live league needs
+      this once) to trigger it. Also added a **"Blank Test Season" dev tool** — 8 teams
+      across 2 venues (one deliberately 3-teams-on-1-board, to demonstrate the
+      clash-resolution live) with rosters but zero fixtures, so the real Generate
+      Fixtures UI can be exercised safely instead of against Jake's live league data.
+      Shared `mobile/src/lib/dates.ts` factored out of what were duplicate
+      parseDateInput/formatDate helpers in `admin-fixtures.tsx` alone.
+      `npx tsc --noEmit` clean for both `mobile` and `functions`; `expo export -p web`
+      exports with no errors. **Not deployed, not pushed, not live-verified**: new
+      `firestore.rules` (`venues` block), `firestore.indexes.json` (`venues`
+      `leagueId+name`), and the two new Cloud Functions (`adminDeleteVenue`,
+      `adminMigrateVenues`) all need `firebase deploy` before any of this works live.
+      **Jake, once deployed:** run "Migrate Teams to Venues" once on your real league
+      (your existing teams still carry the old plain-text address until then), then fold
+      venue-aware fixture generation into the real walkthrough above.
+
 ### Phase 2 — Cup & individual competitions (build during the season, before they're needed mid-season — not required for the August demo or season kickoff)
 - [ ] Team knockout cup: single-elimination, one match per round, cross-division draw.
       Reuses the exact match/results/confirmation infrastructure from Phase 1 — just a
@@ -579,7 +629,13 @@ Functions. Flag this to Jake before starting Phase 1 build.
       breaking schema change — don't attempt it mid-trial.
 - [ ] Paid tiers: admin subscription/billing (Stripe), gated advanced fixture wizard.
 - [ ] Real app store builds: `eas.json`, Apple/Google dev accounts, TestFlight/Play
-      internal testing.
+      internal testing. **Explicitly deferred here 2026-07-22** — Jake isn't paying
+      for Apple Developer Program ($99/yr) yet, and since Apple requires a paid
+      account to sign *any* iOS build (dev or prod, unlike Android which can
+      sideload an unsigned `.apk` for free), that takes the whole iOS build/
+      TestFlight path with it. Google Play dev account moved here too, since it's
+      only needed for Play *Store* distribution, not for Android device testing —
+      that stays unblocked in the Mobile testing section above.
 
 ## Bugs found & fixed
 

@@ -23,11 +23,12 @@ import { FONT_DISPLAY, FONT_BODY } from '@/styles/typography';
 // color scheme, which would fight a background that never changes with it.
 
 type WorkspaceTab = 'teams' | 'fixtures' | 'results' | 'standings';
-type SectionKey = 'dashboard' | WorkspaceTab | 'inbox' | 'tools';
+type SectionKey = 'dashboard' | WorkspaceTab | 'inbox' | 'tools' | 'venues';
 
 function currentSection(pathname: string, tab: string | undefined): SectionKey | null {
   if (pathname.startsWith('/admin-inbox') || pathname.startsWith('/admin-dispute')) return 'inbox';
   if (pathname.startsWith('/admin-tools')) return 'tools';
+  if (pathname.startsWith('/admin-venues')) return 'venues';
   if (pathname.startsWith('/admin-team')) return 'teams';
   if (pathname.startsWith('/results-entry')) return 'results';
   if (pathname.startsWith('/admin-season')) {
@@ -268,6 +269,7 @@ export function AdminShell({ leagueName, title, breadcrumb, actions, children }:
 
           <SectionLabel>Support</SectionLabel>
           <SidebarRow icon="zap" label="Inbox" active={section === 'inbox'} onPress={() => router.push('/(protected)/admin-inbox')} />
+          <SidebarRow icon="map-pin" label="Venues" active={section === 'venues'} onPress={() => router.push('/(protected)/admin-venues' as never)} />
           <SidebarRow icon="settings" label="Tools" active={section === 'tools'} onPress={() => router.push('/(protected)/admin-tools')} />
         </ScrollView>
 

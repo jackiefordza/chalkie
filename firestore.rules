@@ -42,6 +42,16 @@ service cloud.firestore {
       allow update, delete: if isAdmin() && me().leagueId == resource.data.leagueId;
     }
 
+    // ── venues ────────────────────────────────────────────────────────────
+    // Shared many-to-one with teams (several teams can play out of the same
+    // venue) — creation/edits are admin-only so boardCount stays trustworthy
+    // for the fixture generator's clash detection; any league member can read.
+    match /venues/{venueId} {
+      allow read: if isSignedIn() && (me().leagueId == resource.data.leagueId || isAdmin());
+      allow create: if isAdmin() && me().leagueId == request.resource.data.leagueId;
+      allow update, delete: if isAdmin() && me().leagueId == resource.data.leagueId;
+    }
+
     // ── teams ─────────────────────────────────────────────────────────────
     match /teams/{teamId} {
       // Pending users need to browse teams; admins query by seasonId so need explicit permission

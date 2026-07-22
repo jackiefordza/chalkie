@@ -2,10 +2,13 @@ import { useState } from 'react';
 import { View, useWindowDimensions } from 'react-native';
 import { Stack } from 'expo-router';
 import { useColorScheme } from 'nativewind';
+import { httpsCallable } from 'firebase/functions';
+import { functions } from '@/config/firebase';
 import { useAuthStore } from '@/stores/authStore';
 import { Alert } from '@/lib/alert';
 import { seedTestLeague, TEST_HOME_EMAIL, TEST_AWAY_EMAIL, TEST_PASSWORD } from '@/lib/testData';
 import { seedMockSeason, MOCK_CAPTAIN_EMAILS } from '@/lib/mockSeason';
+import { seedBlankSeason } from '@/lib/blankSeason';
 import { RAW } from '@/lib/theme';
 import { Screen, Heading, Body, Button, Card, AppBar, AppIcon } from '@/components/ui';
 import { AdminShell } from '@/components/admin/AdminShell';
@@ -23,6 +26,8 @@ export default function AdminToolsScreen() {
   const [isSeeding, setIsSeeding] = useState(false);
   const [isSeedingMock, setIsSeedingMock] = useState(false);
   const [mockProgress, setMockProgress] = useState<string | null>(null);
+  const [isSeedingBlank, setIsSeedingBlank] = useState(false);
+  const [isMigratingVenues, setIsMigratingVenues] = useState(false);
 
   async function handleSeedTestLeague() {
     if (!leagueId) {
@@ -76,8 +81,90 @@ export default function AdminToolsScreen() {
     );
   }
 
+  async function handleSeedBlankSeason() {
+    if (!leagueId) {
+      Alert.alert('Not ready yet', 'Your account is still loading — wait a moment and try again.');
+      return;
+    }
+    setIsSeedingBlank(true);
+    try {
+      await seedBlankSeason(leagueId);
+      Alert.alert(
+        'Blank test season ready',
+        '"Blank Test Division" has 8 teams (with rosters, no accounts needed) and 2 venues — including 3 teams sharing a 1-board venue, so Generate Fixtures will demonstrate the auto-clash-resolution. No fixtures generated yet — that\'s the part to try yourself from the Fixtures tab.',
+      );
+    } catch (e: unknown) {
+      Alert.alert('Error', (e as Error).message ?? 'Something went wrong');
+    } finally {
+      setIsSeedingBlank(false);
+    }
+  }
+
+  function handleMigrateVenues() {
+    if (!leagueId) {
+      Alert.alert('Not ready yet', 'Your account is still loading — wait a moment and try again.');
+      return;
+    }
+    Alert.alert(
+      'Migrate teams to venues?',
+      "Creates a Venue for every distinct home address your teams already have set, and points each team at it (board count defaults to 1 — edit that afterward on the Venues screen). Teams with no address, or that already point at a venue, are left alone. Safe to re-run.",
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Migrate',
+          onPress: async () => {
+            setIsMigratingVenues(true);
+            try {
+              const result = await httpsCallable(functions, 'adminMigrateVenues')({ leagueId });
+              const { createdVenues, migratedTeams } = result.data as { createdVenues: number; migratedTeams: number };
+              Alert.alert('Done', `Created ${createdVenues} venue${createdVenues === 1 ? '' : 's'} and updated ${migratedTeams} team${migratedTeams === 1 ? '' : 's'}.`);
+            } catch (e: unknown) {
+              Alert.alert('Error', (e as Error).message ?? 'Something went wrong');
+            } finally {
+              setIsMigratingVenues(false);
+            }
+          },
+        },
+      ],
+    );
+  }
+
   const body = (
     <>
+      {/* Real one-off admin tool, not dev-gated — migrates teams created before the Venue entity existed */}
+      <Card className="mb-5">
+        <View className="flex-row items-center gap-1.5 mb-1">
+          <AppIcon name="map-pin" size={16} color={isDark ? RAW.brandInkDark : RAW.brandInk} />
+          <Heading size="sm">Migrate Teams to Venues</Heading>
+        </View>
+        <Body size="sm" className="mb-3">
+          If your teams still show a plain address instead of a proper venue, run this once to create a
+          Venue per distinct address and re-point your teams at them. Only needed if you had teams set up
+          before venues existed.
+        </Body>
+        <Button disabled={isMigratingVenues} loading={isMigratingVenues} onPress={handleMigrateVenues}>
+          Migrate Teams to Venues
+        </Button>
+      </Card>
+
+      {/* Dev-only: blank season + teams + venues (incl. a deliberate board clash), no fixtures — for exercising the real Generate Fixtures flow */}
+      {__DEV__ && (
+        <Card className="mb-5">
+          <View className="flex-row items-center gap-1.5 mb-1">
+            <AppIcon name="flask" size={16} color={isDark ? RAW.brandInkDark : RAW.brandInk} />
+            <Heading size="sm">Blank Test Season</Heading>
+          </View>
+          <Body size="sm" className="mb-3">
+            8 teams with full rosters, no fixtures — for trying the real Generate Fixtures flow yourself.
+            Includes a season start date, a sample Christmas break, and 2 venues (one with only 1 board
+            shared by 3 teams, to show off the venue-clash auto-resolve).
+          </Body>
+          <Button disabled={isSeedingBlank} loading={isSeedingBlank} onPress={handleSeedBlankSeason}>
+            Seed Blank Test Season
+          </Button>
+        </Card>
+      )}
+
       {/* Dev-only: seed a throwaway test league for QA */}
       {__DEV__ && (
         <Card className="mb-5">
@@ -122,12 +209,6 @@ export default function AdminToolsScreen() {
         </Card>
       )}
 
-      {!__DEV__ && (
-        <Card className="items-center py-8">
-          <Body tone="strong" weight="semibold">Nothing here yet</Body>
-          <Body size="sm" className="text-center mt-1">Admin tools will appear here as they're added.</Body>
-        </Card>
-      )}
     </>
   );
 

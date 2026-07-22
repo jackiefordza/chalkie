@@ -9,10 +9,11 @@ import { db } from '@/config/firebase';
 import { useAuthStore } from '@/stores/authStore';
 import { Alert } from '@/lib/alert';
 import { generateRoundRobinFixtures } from '@/lib/fixtures';
+import { parseDateInput, formatDateInput, formatDate } from '@/lib/dates';
 import { RAW, type SemanticTone } from '@/lib/theme';
 import { Screen, Heading, Body, Caption, Badge, Button, Card, ListRow, Input, Label, Sheet, AppBar } from '@/components/ui';
 import { AdminShell } from '@/components/admin/AdminShell';
-import type { Match } from '@/types';
+import type { Match, Venue, SeasonBreak } from '@/types';
 
 // Desktop-vs-mobile is a viewport-width call, not Platform.OS — a wide
 // browser window gets the table/wide-panel treatment, a narrow one (phone,
@@ -20,20 +21,7 @@ import type { Match } from '@/types';
 // state/handlers above are shared; only the JSX below this point branches.
 const DESKTOP_BREAKPOINT = 768;
 
-interface TeamInfo { id: string; name: string; address: string | null }
-
-function parseDateInput(text: string): Date | null {
-  const match = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(text.trim());
-  if (!match) return null;
-  const [, y, m, d] = match;
-  const date = new Date(Number(y), Number(m) - 1, Number(d));
-  if (Number.isNaN(date.getTime())) return null;
-  return date;
-}
-
-function formatDate(date: Date): string {
-  return date.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
-}
+interface TeamInfo { id: string; name: string; venueId: string | null }
 
 const STATUS_TONE: Record<Match['status'], SemanticTone | null> = {
   scheduled: null,
@@ -182,6 +170,11 @@ function useFixturesController(divisionId: string | undefined, leagueId: string 
   const [isGenerating, setIsGenerating] = useState(false);
   const [genError, setGenError] = useState<string | null>(null);
   const [isRegenerating, setIsRegenerating] = useState(false);
+  const [conflictCount, setConflictCount] = useState<number | null>(null);
+
+  const [venuesById, setVenuesById] = useState<Record<string, Venue>>({});
+  const [seasonBreaks, setSeasonBreaks] = useState<SeasonBreak[]>([]);
+  const [seasonStartDate, setSeasonStartDate] = useState<Date | null>(null);
 
   const [editTarget, setEditTarget] = useState<Match | null>(null);
   const [editDateText, setEditDateText] = useState('');
@@ -211,7 +204,7 @@ function useFixturesController(divisionId: string | undefined, leagueId: string 
       (snap) => {
         setTeams(
           snap.docs
-            .map((d) => ({ id: d.id, name: d.data().name, address: d.data().address ?? null }))
+            .map((d) => ({ id: d.id, name: d.data().name, venueId: d.data().venueId ?? null }))
             .sort((a, b) => a.name.localeCompare(b.name)),
         );
       },
@@ -241,6 +234,41 @@ function useFixturesController(divisionId: string | undefined, leagueId: string 
     return () => { unsubDivision(); unsubTeams(); unsubMatches(); };
   }, [divisionId, leagueId]);
 
+  useEffect(() => {
+    if (!leagueId) return;
+    const unsub = onSnapshot(
+      query(collection(db, 'venues'), where('leagueId', '==', leagueId)),
+      (snap) => {
+        const byId: Record<string, Venue> = {};
+        snap.docs.forEach((d) => { byId[d.id] = { id: d.id, ...d.data() } as Venue; });
+        setVenuesById(byId);
+      },
+    );
+    return unsub;
+  }, [leagueId]);
+
+  useEffect(() => {
+    if (!seasonId) return;
+    const unsub = onSnapshot(doc(db, 'seasons', seasonId), (snap) => {
+      if (!snap.exists()) return;
+      const data = snap.data();
+      setSeasonStartDate(data.startDate?.toDate() ?? null);
+      setSeasonBreaks(
+        (data.breaks ?? []).map((b: { start: { toDate(): Date }; end: { toDate(): Date }; label: string }) => ({
+          start: b.start.toDate(), end: b.end.toDate(), label: b.label,
+        })),
+      );
+    });
+    return unsub;
+  }, [seasonId]);
+
+  // Prefills the generator with the season's own start date the first time
+  // it's available — still just a starting point, not locked: admin can
+  // freely override per-division (e.g. a division that starts a week later).
+  useEffect(() => {
+    if (seasonStartDate && !startDateText) setStartDateText(formatDateInput(seasonStartDate));
+  }, [seasonStartDate, startDateText]);
+
   const teamName = (id: string) => teams.find((t) => t.id === id)?.name ?? 'Unknown';
 
   const rounds = useMemo(() => groupByRound(matches), [matches]);
@@ -255,15 +283,20 @@ function useFixturesController(divisionId: string | undefined, leagueId: string 
     if (!leagueId || !seasonId || !divisionId) { setGenError('Season not loaded yet — try again in a moment'); return; }
 
     setIsGenerating(true);
+    setConflictCount(null);
     try {
+      const venueBoardCounts: Record<string, number> = {};
+      Object.values(venuesById).forEach((v) => { venueBoardCounts[v.id] = v.boardCount; });
+
       const fixtures = generateRoundRobinFixtures(
-        teams.map((t) => ({ id: t.id })),
-        { startDate, intervalDays: interval },
+        teams.map((t) => ({ id: t.id, venueId: t.venueId })),
+        { startDate, intervalDays: interval, breaks: seasonBreaks, venueBoardCounts },
       );
 
       const batch = writeBatch(db);
       fixtures.forEach((fixture) => {
         const matchRef = doc(collection(db, 'matches'));
+        const homeVenueId = teams.find((t) => t.id === fixture.homeTeamId)?.venueId ?? null;
         batch.set(matchRef, {
           leagueId,
           seasonId,
@@ -272,7 +305,7 @@ function useFixturesController(divisionId: string | undefined, leagueId: string 
           homeTeamId: fixture.homeTeamId,
           awayTeamId: fixture.awayTeamId,
           scheduledDate: fixture.scheduledDate,
-          venue: teams.find((t) => t.id === fixture.homeTeamId)?.address ?? null,
+          venue: homeVenueId ? venuesById[homeVenueId]?.name ?? null : null,
           status: 'scheduled',
           homeGamesWon: null,
           awayGamesWon: null,
@@ -283,6 +316,7 @@ function useFixturesController(divisionId: string | undefined, leagueId: string 
       });
       await batch.commit();
       setIsRegenerating(false);
+      setConflictCount(fixtures.filter((f) => f.venueConflictShifted).length);
     } catch (e: unknown) {
       setGenError((e as Error).message ?? 'Something went wrong');
     } finally {
@@ -355,6 +389,7 @@ function useFixturesController(divisionId: string | undefined, leagueId: string 
   return {
     divisionName, teams, matches, isLoading, loadError,
     startDateText, setStartDateText, intervalDays, setIntervalDays, isGenerating, genError, isRegenerating, setIsRegenerating,
+    conflictCount,
     editTarget, setEditTarget, editDateText, setEditDateText, editVenue, setEditVenue, isSavingEdit,
     teamName, rounds, generateFixtures, deleteAllFixtures, openEdit, saveEdit, deleteFixture, showGenerator,
   };
@@ -373,6 +408,18 @@ function FixturesBody({ c, isDesktop, statusFilter }: { c: FixturesController; i
 
   return (
     <>
+      {c.conflictCount != null && c.conflictCount > 0 && (
+        <Card tone="butter" className="mb-4">
+          <Body weight="semibold" className="mb-1">
+            Moved {c.conflictCount} fixture{c.conflictCount === 1 ? '' : 's'} to avoid a venue clash
+          </Body>
+          <Body size="sm">
+            One or more venues had more teams drawn home on the same day than they have boards for —
+            those fixtures were pushed to the following day(s) instead. Check the dates below and adjust
+            manually if needed.
+          </Body>
+        </Card>
+      )}
       {c.loadError ? (
         <Card tone="coral">
           <Body tone="coral" weight="semibold" className="mb-1">Couldn't load fixtures</Body>

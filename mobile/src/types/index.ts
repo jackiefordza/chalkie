@@ -33,11 +33,24 @@ export interface League {
 
 export type SeasonStatus = 'upcoming' | 'active' | 'completed';
 
+// A blackout window fixtures should never be scheduled in (Christmas, a
+// venue closure, etc.) — the fixture generator's date cursor skips forward
+// past `end` whenever a round would otherwise land inside one.
+export interface SeasonBreak {
+  start: Date;
+  end: Date;
+  label: string;
+}
+
 export interface Season {
   id: string;
   leagueId: string;
   name: string;
   status: SeasonStatus;
+  // Both null until an admin sets them on the Schedule panel — older seasons
+  // (and the generator's own manual override) work fine without these.
+  startDate: Date | null;
+  breaks: SeasonBreak[];
   createdAt: Date;
 }
 
@@ -50,6 +63,19 @@ export interface Division {
   createdAt: Date;
 }
 
+// A physical location teams play home fixtures at. Shared many-to-one with
+// Team (several teams can share one venue) — boardCount is what the fixture
+// generator uses to detect and auto-resolve same-day home-fixture clashes.
+export interface Venue {
+  id: string;
+  leagueId: string;
+  name: string;
+  address: string | null;
+  venuePhone: string | null;
+  boardCount: number;
+  createdAt: Date;
+}
+
 export interface Team {
   id: string;
   leagueId: string;
@@ -58,8 +84,7 @@ export interface Team {
   name: string;
   captainUserId: string | null;
   viceCaptainUserId: string | null;
-  address: string | null;
-  venuePhone: string | null;
+  venueId: string | null;
   createdAt: Date;
 }
 
