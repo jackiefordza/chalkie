@@ -112,26 +112,37 @@ export default function StandingsScreen() {
           </Body>
         </Card>
       ) : (
-        <View className="rounded-2xl overflow-hidden shadow-sm bg-surface dark:bg-surface-dark">
+        <View className="rounded-2xl overflow-hidden border border-border dark:border-border-dark bg-surface dark:bg-surface-dark">
           {/* Header row */}
-          <View className="flex-row py-2.5 px-3 bg-surface-2 dark:bg-surface-2-dark">
-            <Caption className="w-6">#</Caption>
+          <View className="flex-row items-center py-2.5 px-3 bg-surface-2 dark:bg-surface-2-dark border-b border-border dark:border-border-dark">
+            <Caption className="w-7">#</Caption>
             <Caption className="flex-1">Team</Caption>
             {columns.map((c) => (
-              <Caption key={c.key} className="w-9 text-right">{c.label}</Caption>
+              <Caption
+                key={c.key}
+                className={['w-9 text-right', c.key === 'points' ? 'border-l border-border dark:border-border-dark pl-2' : ''].join(' ')}
+              >
+                {c.label}
+              </Caption>
             ))}
           </View>
           {rows.map((row, i) => {
             const isMine = row.teamId === appUser?.teamId;
+            const isLast = i === rows.length - 1;
             return (
               <View
                 key={row.id}
                 className={[
-                  'flex-row items-center py-3 px-3',
+                  'flex-row items-center py-2.5 px-3',
+                  isLast ? '' : 'border-b border-border dark:border-border-dark',
                   isMine ? 'bg-brand-fill dark:bg-brand-fill-dark' : i % 2 === 0 ? 'bg-surface-2/40 dark:bg-surface-2-dark/40' : '',
                 ].join(' ')}
               >
-                <Body size="sm" className="w-6">{row.position}</Body>
+                <View className="w-7">
+                  <View className="w-6 h-6 rounded-full items-center justify-center bg-surface-2 dark:bg-surface-2-dark">
+                    <Body size="xs" tone="strong" weight="bold">{row.position}</Body>
+                  </View>
+                </View>
                 <Body size="sm" tone={isMine ? 'strong' : 'dim'} weight={isMine ? 'bold' : 'normal'} className="flex-1" numberOfLines={1}>
                   {teamNames[row.teamId] ?? '…'}
                 </Body>
@@ -141,7 +152,9 @@ export default function StandingsScreen() {
                 <Stat size="sm" className="w-9 text-right">
                   {row.legDiff > 0 ? `+${row.legDiff}` : row.legDiff}
                 </Stat>
-                <Stat size="sm" tone="brand" className="w-9 text-right">{row.points}</Stat>
+                <Stat size="sm" tone="brand" className="w-9 text-right border-l border-border dark:border-border-dark pl-2">
+                  {row.points}
+                </Stat>
               </View>
             );
           })}
