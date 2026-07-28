@@ -797,6 +797,22 @@ just the checkable summary so they don't get lost.
       `HTTPS_PROXY`/`HTTP_PROXY` for just that one child process (not session-wide) fixed
       it, since that process has no legitimate external network need at all once running
       against a demo project.
+      **Used again same day** for `functions/src/index.integration.test.ts` (4 tests,
+      `npm run test:integration`) — closes the gap `index.test.ts`'s pure-unit-test
+      coverage explicitly couldn't reach (the Firestore triggers themselves:
+      `onSubmissionWrite`, `onMatchConfirmed` on both first-confirmation and
+      admin-correction, `onMatchDeleted`). Each test uses fully unique ids per test
+      rather than a shared fixture reset between tests — triggers run asynchronously
+      relative to the write that provoked them, so a shared-id + reset approach can let
+      one test's still-in-flight trigger write land during the next test and
+      cross-contaminate; this came up for real while writing these (see below) and unique
+      ids per test is the actual fix, not a timing workaround.
+      **One real bug caught in the test itself, not the app**: the first draft asserted
+      on `match.homeGamesWon` immediately after `onSubmissionWrite`'s
+      `status: 'confirmed'` write landed — but `onMatchConfirmed`'s own totals write
+      (`computeTotals`) is a *separate*, subsequent write that hadn't necessarily
+      finished yet, so the assertion raced it. Fixed by waiting for
+      `homeGamesWon != null` specifically, not just `status === 'confirmed'`.
 
 ## Open risks / things to revisit
 
@@ -809,7 +825,7 @@ just the checkable summary so they don't get lost.
 - Results entry UI is the biggest UX risk — captains are filling this in post-match,
   probably at a pub on a phone. Worth a quick paper-prototype/walkthrough with an
   actual captain before building the real screens.
-- **2026-07-28 — partially addressed.** Added Jest coverage (`functions/src/index.test.ts`,
+- **2026-07-28 — addressed (unit + integration).** Added Jest coverage (`functions/src/index.test.ts`,
   23 tests, `npm test` in `functions/`) for the Cloud Function aggregation logic:
   `computeTotals`, `computeMatchContribution`, `computePlayerAccum`, and
   `normalizeGames`/`gamesEqual`. These were already written as pure functions with no
@@ -822,10 +838,14 @@ just the checkable summary so they don't get lost.
   (games/players/180s array order, checkout whitespace) so two captains submitting the
   same result in a different order doesn't wrongly trigger a dispute, and real-mismatch
   detection (leg winner, 180 attribution, checkout value) so genuine disagreements don't
-  slip through as an auto-confirm. **Not yet covered:** the Firestore-touching parts —
-  `applyMatchResultDelta`'s actual `FieldValue.increment` writes, `onSubmissionWrite`/
-  `onMatchConfirmed`/`onMatchDeleted` as triggers, and `recomputeDivisionPositions` — would
-  need the Firebase Emulator Suite (`firebase-functions-test` + Firestore emulator) for
-  real trigger-level integration tests, not attempted here. `npx tsc --noEmit` clean,
-  `expo export -p web` unaffected (functions-only change), test files excluded from the
-  `tsc` build/deploy output via `tsconfig.json`.
+  slip through as an auto-confirm. `npx tsc --noEmit` clean, `expo export -p web`
+  unaffected (functions-only change), test files excluded from the `tsc` build/deploy
+  output via `tsconfig.json`.
+  **The Firestore-touching parts flagged as not-yet-covered here — now covered too**,
+  same day: `functions/src/index.integration.test.ts` (4 tests, `npm run test:integration`,
+  against the real Firebase Emulator Suite — see the "Firebase Local Emulator Suite" entry
+  above) confirms `onSubmissionWrite`'s auto-confirm/dispute behavior,
+  `onMatchConfirmed`'s totals/`divisionTables`/`playerSeasonStats` recompute on both first
+  confirmation and admin correction (without double-counting), and `onMatchDeleted`'s full
+  reversal — the actual triggers and `FieldValue.increment` writes, not just the pure math
+  around them.

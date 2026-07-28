@@ -13,7 +13,8 @@
     "shell": "npm run build && firebase functions:shell",
     "deploy": "firebase deploy --only functions",
     "logs": "firebase functions:log",
-    "test": "jest"
+    "test": "jest",
+    "test:integration": "npm run build && env -u HTTPS_PROXY -u HTTP_PROXY -u https_proxy -u http_proxy npx firebase-tools emulators:exec --project demo-chalkie --only firestore,functions \"jest --config jest.integration.config.js\""
   },
   "dependencies": {
     "firebase-admin": "^13.10.0",
