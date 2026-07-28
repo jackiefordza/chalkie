@@ -90,5 +90,5 @@ just started.
 ## Open risks — revisit
 - [ ] Phase 2 scope vs. timeline (sequenced after Phase 1 deliberately — don't compress Phase 1 to protect it)
 - [ ] Results entry UX — validate with a real captain before trusting it
-- [ ] No test coverage anywhere — Cloud Function aggregation logic (standings/stats) is the highest-priority gap given money/competitive stakes
+- [x] **2026-07-28 — Jest test coverage for the Cloud Function aggregation logic** (`functions/src/index.test.ts`, 23 tests): `computeTotals`, `computeMatchContribution` (2pts/0pts scoring, null-vs-false for "no result yet"), `computePlayerAccum` (singles/pairs attribution, 180s, high checkouts, multi-game accumulation), and `normalizeGames`/`gamesEqual` (the auto-confirm-vs-dispute comparison — order-independence across games/players/180s, and real-mismatch detection on leg winner/180s/checkout value). `npm test` in `functions/`; test files excluded from the `tsc` build/deploy output.
 - [ ] Audit real players in Jake's live league for missing `divisionId` from before the 2026-07-13 fix

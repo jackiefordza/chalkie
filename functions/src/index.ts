@@ -56,19 +56,19 @@ async function teamName(teamId: string): Promise<string> {
   return (snap.data()?.name as string | undefined) ?? 'Their team';
 }
 
-type MatchSide = 'home' | 'away';
-type GameType = 'singles' | 'pairs';
+export type MatchSide = 'home' | 'away';
+export type GameType = 'singles' | 'pairs';
 
-interface HighCheckout {
+export interface HighCheckout {
   playerId: string;
   value: string;
 }
-interface MatchLeg {
+export interface MatchLeg {
   winner: MatchSide;
   oneEighties: string[];
   highCheckout: HighCheckout | null;
 }
-interface MatchGame {
+export interface MatchGame {
   order: number;
   type: GameType;
   homePlayerIds: string[];
@@ -81,7 +81,7 @@ interface MatchSubmissionData {
   games: MatchGame[];
 }
 
-function normalizeGames(games: MatchGame[]) {
+export function normalizeGames(games: MatchGame[]) {
   return [...games]
     .sort((a, b) => a.order - b.order)
     .map((g) => ({
@@ -97,7 +97,7 @@ function normalizeGames(games: MatchGame[]) {
     }));
 }
 
-function gamesEqual(a: MatchGame[], b: MatchGame[]): boolean {
+export function gamesEqual(a: MatchGame[], b: MatchGame[]): boolean {
   if (a.length !== b.length) return false;
   return JSON.stringify(normalizeGames(a)) === JSON.stringify(normalizeGames(b));
 }
@@ -147,7 +147,7 @@ export const onSubmissionWrite = onDocumentWritten(
   },
 );
 
-function computeTotals(games: MatchGame[]) {
+export function computeTotals(games: MatchGame[]) {
   let homeGamesWon = 0, awayGamesWon = 0, homeLegsWon = 0, awayLegsWon = 0;
   for (const game of games) {
     let gameHomeLegs = 0, gameAwayLegs = 0;
@@ -159,8 +159,8 @@ function computeTotals(games: MatchGame[]) {
   return { homeGamesWon, awayGamesWon, homeLegsWon, awayLegsWon };
 }
 
-interface HighCheckoutEntry { value: string; matchId: string; date: Date }
-interface PlayerAccum {
+export interface HighCheckoutEntry { value: string; matchId: string; date: Date }
+export interface PlayerAccum {
   teamId: string;
   played: number;
   won: number;
@@ -172,7 +172,7 @@ interface PlayerAccum {
 // Pure — no Firestore calls. Reused for a match's first confirmation, a later
 // admin correction of an already-confirmed match, and a full reversal on
 // delete (by passing an empty games array as the "other side" of the diff).
-function computePlayerAccum(
+export function computePlayerAccum(
   games: MatchGame[], homeTeamId: string, awayTeamId: string, matchId: string, scheduledDate: Date,
 ): Map<string, PlayerAccum> {
   const accum = new Map<string, PlayerAccum>();
@@ -242,22 +242,26 @@ interface ResultDeltaParams {
 // whether this is the very first confirmation (old = zero contribution),
 // an admin correcting an already-confirmed result (old = the previous
 // games), or a full delete (new = zero contribution).
-async function applyMatchResultDelta(p: ResultDeltaParams): Promise<void> {
-  const oldTotals = computeTotals(p.oldGames);
-  const newTotals = computeTotals(p.newGames);
-  // null (not false) when there are no games at all — a false here would
-  // wrongly credit the away side with a "win" contribution against zero games.
-  const oldHomeWon = p.oldGames.length ? oldTotals.homeGamesWon > oldTotals.awayGamesWon : null;
-  const newHomeWon = p.newGames.length ? newTotals.homeGamesWon > newTotals.awayGamesWon : null;
-
-  const contrib = (homeWon: boolean | null) => (homeWon === null
+// 2 points for a win, 0 for a loss (see PLAN.md "Match format") — null (not
+// false) when there are no games at all, since a false here would wrongly
+// credit the away side with a "win" contribution against zero games played.
+export function computeMatchContribution(homeWon: boolean | null) {
+  return homeWon === null
     ? { homePoints: 0, homeWon: 0, homeLost: 0, awayPoints: 0, awayWon: 0, awayLost: 0 }
     : {
       homePoints: homeWon ? 2 : 0, homeWon: homeWon ? 1 : 0, homeLost: homeWon ? 0 : 1,
       awayPoints: homeWon ? 0 : 2, awayWon: homeWon ? 0 : 1, awayLost: homeWon ? 1 : 0,
-    });
-  const oldContrib = contrib(oldHomeWon);
-  const newContrib = contrib(newHomeWon);
+    };
+}
+
+async function applyMatchResultDelta(p: ResultDeltaParams): Promise<void> {
+  const oldTotals = computeTotals(p.oldGames);
+  const newTotals = computeTotals(p.newGames);
+  const oldHomeWon = p.oldGames.length ? oldTotals.homeGamesWon > oldTotals.awayGamesWon : null;
+  const newHomeWon = p.newGames.length ? newTotals.homeGamesWon > newTotals.awayGamesWon : null;
+
+  const oldContrib = computeMatchContribution(oldHomeWon);
+  const newContrib = computeMatchContribution(newHomeWon);
 
   const tableBatch = db.batch();
   tableBatch.set(db.doc(`divisionTables/${p.seasonId}_${p.divisionId}_${p.homeTeamId}`), {

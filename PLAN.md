@@ -749,6 +749,23 @@ just the checkable summary so they don't get lost.
 - Results entry UI is the biggest UX risk — captains are filling this in post-match,
   probably at a pub on a phone. Worth a quick paper-prototype/walkthrough with an
   actual captain before building the real screens.
-- No tests exist anywhere in the app currently. Given money/competitive stakes
-  (standings, cup seeding) ride on the Cloud Function aggregation logic being correct,
-  that logic in particular should get test coverage even if the UI doesn't.
+- **2026-07-28 — partially addressed.** Added Jest coverage (`functions/src/index.test.ts`,
+  23 tests, `npm test` in `functions/`) for the Cloud Function aggregation logic:
+  `computeTotals`, `computeMatchContribution`, `computePlayerAccum`, and
+  `normalizeGames`/`gamesEqual`. These were already written as pure functions with no
+  Firestore calls (good prior design), just not exported or tested — exporting them
+  needed no logic changes. One function (`computeMatchContribution`) was extracted from
+  an inline closure inside `applyMatchResultDelta` to make it independently testable;
+  behavior unchanged. Covers the actual scoring/attribution math (2pts/0pts, leg-diff
+  tiebreak inputs, singles/pairs player attribution, 180s, high checkouts) and — maybe
+  more importantly — the auto-confirm-vs-dispute comparison itself: order-independence
+  (games/players/180s array order, checkout whitespace) so two captains submitting the
+  same result in a different order doesn't wrongly trigger a dispute, and real-mismatch
+  detection (leg winner, 180 attribution, checkout value) so genuine disagreements don't
+  slip through as an auto-confirm. **Not yet covered:** the Firestore-touching parts —
+  `applyMatchResultDelta`'s actual `FieldValue.increment` writes, `onSubmissionWrite`/
+  `onMatchConfirmed`/`onMatchDeleted` as triggers, and `recomputeDivisionPositions` — would
+  need the Firebase Emulator Suite (`firebase-functions-test` + Firestore emulator) for
+  real trigger-level integration tests, not attempted here. `npx tsc --noEmit` clean,
+  `expo export -p web` unaffected (functions-only change), test files excluded from the
+  `tsc` build/deploy output via `tsconfig.json`.
