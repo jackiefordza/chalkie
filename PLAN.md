@@ -482,6 +482,24 @@ Functions. Flag this to Jake before starting Phase 1 build.
       plugin's `icon` option) — without one, Android falls back to the app icon in
       the notification shade, which usually renders poorly. Not blocking, just
       worth designing before the first real push notification ships.
+      **Done 2026-07-28**: `mobile/assets/notification-icon.png` — a white bullseye
+      silhouette on transparent, generated to Android's exact spec (verified against
+      the installed `expo-notifications` plugin source directly, since the docs site
+      was unreachable from this sandbox) and wired into `app.json`'s plugin config
+      with the app's brand purple as the tint color. Matches the `target` icon-font
+      glyph already used as Chalkie's de facto in-app mark, so it stays valid
+      regardless of the pending rename. Verified transparent, legible on dark
+      backgrounds, and still legible downscaled to actual notification-bar size.
+      **Bigger gap surfaced doing this, deliberately not fixed**: there is no real
+      app logo anywhere in this codebase. `assets/icon.png` (the actual home-screen
+      app icon) and `assets/android-icon-monochrome.png` are both still the
+      unmodified Expo scaffold placeholder (a generic blue chevron, complete with
+      visible design-tool guide lines) — never replaced. The "logo" seen throughout
+      the app's UI is just a generic `target` icon-font glyph tinted brand purple,
+      not a designed asset. Left alone here on purpose: a real app icon is a bigger
+      creative commitment than a notification icon, and makes more sense to design
+      once the pending rename (see Open Risks) is settled rather than for a name
+      that's about to change.
 - [x] Admin role management screen. Done 2026-07-08, scoped **per-team** (not a
       league-wide user browser — decided with Jake to keep captaincy transfer tied to
       the team it happens on): `admin-team.tsx`'s player roster now shows each claimed

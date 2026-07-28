@@ -53,7 +53,27 @@ just started.
 - [x] Expo Go testing working via Codespaces public-port workaround (Expo's bundled tunnel ngrok is broken/deprecated)
 - [ ] Jake: test app in Expo Go on iPhone from work PC tomorrow
 - [ ] FCM V1 service account credential (`eas credentials`, via Firebase Console) — needed for Android push specifically
-- [ ] Design Android notification icon asset (white/transparent, `expo-notifications` plugin)
+- [x] **2026-07-28 — Design Android notification icon asset.** `mobile/assets/notification-icon.png`:
+      a white bullseye/target silhouette on transparent, generated to match Android's
+      spec exactly (96x96 baseline, pure white, `resizeMode: cover` — verified against the
+      actual installed `expo-notifications` plugin source, not just docs, since those
+      were unreachable). Matches the "target" icon-font glyph already used as Chalkie's
+      de facto in-app mark (login screen, header) — reads as darts regardless of the
+      pending rename. Wired into `app.json`'s `expo-notifications` plugin config
+      (`icon`/`color: "#7A4FD1"`, the app's brand purple). Verified: renders correctly
+      transparent, reads clearly on a dark background, and stays legible even
+      downscaled to actual notification-bar size (24px). `npx expo config` resolves
+      clean, `npx tsc --noEmit` clean.
+      **Bigger thing found while doing this, flagged not fixed:** `assets/icon.png` (the
+      actual home-screen app icon) and `assets/android-icon-monochrome.png` are both
+      still the unmodified Expo scaffold placeholders — a generic blue chevron with
+      visible design-tool blueprint/guide lines still in the image, not a real Chalkie
+      mark. There is no bespoke app logo anywhere in the codebase; the "logo" seen
+      throughout the app's UI is just a generic `target` icon-font glyph tinted brand
+      purple (`AppIcon name="target"`), not a designed asset. Deliberately not fixed in
+      this pass — a real app icon is a bigger creative decision than a notification
+      icon, and reasonably belongs after the pending rename is settled rather than
+      designing a mark for a name that's about to change.
 - [ ] Run a real Android `eas build` (dev/preview profile → sideloadable `.apk`, no store account needed) once the FCM cred + icon are in place
 
 **Deferred to Phase 3 (2026-07-22 — Jake not paying for Apple Developer Program yet):**
