@@ -84,7 +84,23 @@ just started.
 - [x] VC "waiting for request" hint incorrectly gated on Captain's state (2026-07-13)
 
 ## Suggested improvements (not bugs)
-- [ ] Admin-side "enter/confirm a result" path for a stuck/offline captain
+- [x] **Admin-side "enter/confirm a result" path — 2026-07-28, code complete AND
+      live-verified.** `results-entry.tsx` now lets admin pick which team they're
+      entering on behalf of (a "Enter for [Home]" / "Enter for [Away]" choice, shown
+      whenever admin opens a not-yet-confirmed match) — everything after that point
+      reuses the exact same submission flow a captain would go through, so it goes
+      through the normal auto-confirm/dispute comparison rather than bypassing it.
+      `firestore.rules` broadened to let admin create/update a submission for either
+      of the match's two teams (previously captain/VC-of-that-team only) — still
+      guarded so admin can't submit for a team that isn't actually one of the two
+      sides. **Verified via the Firebase Emulator**: UI screenshots confirm the team
+      picker and "Entering on behalf of X" banner render correctly, and — the one
+      thing the earlier Cloud Function integration tests couldn't check, since Admin
+      SDK writes bypass security rules entirely — a client-SDK write test confirmed
+      the new rule actually allows admin's submission (match correctly moved to
+      `awaiting_confirmation`) and correctly **denies** a submission for a
+      non-participating team (`permission-denied`, guard is real not decorative).
+      `npx tsc --noEmit` clean.
 - [x] **Team/roster carry-over between seasons — 2026-07-28, code complete AND
       live-verified (against a local Firebase Emulator, not real production data).**
       New Season sheet (`admin.tsx`) now offers "Copy teams & players from" any existing

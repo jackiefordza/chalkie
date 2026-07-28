@@ -731,9 +731,38 @@ just the checkable summary so they don't get lost.
 
 ## Suggested improvements (not bugs, raised 2026-07-10)
 
-- [ ] Admin-side "enter/confirm a result" path — right now results only enter the
-      system via a captain's own mobile submission; no way for an admin to record
-      one on behalf of a captain who's stuck or offline.
+- [x] **Admin-side "enter/confirm a result" path — done 2026-07-28.** Right up until
+      now, results only entered the system via a captain's own mobile submission —
+      no way for an admin to record one on behalf of a captain who's stuck or
+      offline. `results-entry.tsx` gains a team-choice step for admin (shown whenever
+      admin opens a match that isn't confirmed yet): "Enter for [Home team]" / "Enter
+      for [Away team]". Deliberately built as "admin stands in as that team's
+      captain" rather than a separate bypass mechanism — once a side is chosen,
+      admin goes through the *exact same* lineup/legs/180s/checkouts form and
+      `submit()` call a real captain would, which means it naturally goes through
+      the existing `onSubmissionWrite` auto-confirm/dispute comparison rather than
+      needing new Cloud Function logic: if the other team already submitted and it
+      matches, this auto-confirms immediately (satisfying "confirm" as well as
+      "enter" from a single admin action); if it's the first submission, the match
+      moves to `awaiting_confirmation` exactly as normal. Also added a small "Switch
+      team" affordance and a reset-the-draft safeguard so a half-filled entry for
+      one side can't accidentally get submitted as the other.
+      `firestore.rules`: the `matches/{id}/submissions/{id}` create/update rule was
+      previously `isCaptainOrVC() && me().teamId == submittedByTeamId` only — broadened
+      to also allow `isAdmin() && submittedByTeamId in [homeTeamId, awayTeamId]`, so
+      admin can write a submission for either side of *that specific match* but not
+      for an arbitrary team.
+      **Live-verified via the Firebase Emulator** (see "Firebase Local Emulator Suite"
+      entry above): Playwright screenshots confirm the team-picker and "Entering on
+      behalf of X" banner render correctly end-to-end. More importantly, a
+      **client-SDK** script (not Admin SDK, which bypasses Firestore rules entirely —
+      the one gap the Cloud Function integration tests structurally couldn't close)
+      signed in as the seeded test admin and attempted the exact write `submit()`
+      performs: it succeeded for a real team in the match (and the match correctly
+      moved to `awaiting_confirmation`), and was correctly **denied**
+      (`permission-denied`) for a team that isn't one of the match's two sides —
+      proving the new rule's guard is real, not just written and hoped-for.
+      `npx tsc --noEmit` and `expo export -p web` both clean.
 - [x] **Team/roster carry-over between seasons — done 2026-07-28.** Jake's ask, made
       concrete: when creating a new season, admin is now asked whether to copy teams
       and players from an existing one. Implemented as `mobile/src/lib/seasonCarryOver.ts`,
