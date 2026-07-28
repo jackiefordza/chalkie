@@ -845,6 +845,41 @@ just the checkable summary so they don't get lost.
 
 ## Open risks / things to revisit
 
+- **⚠️ BLOCKER — the app must be renamed before any public launch (app stores, marketing,
+  anything visible outside the trial league).** Raised 2026-07-28: "Chalkie" conflicts
+  with [chalkie.ai](https://chalkie.ai), an established, actively-used AI lesson-planning
+  tool for teachers (20,000+ users per their own marketing) — confirmed via web search,
+  not just a guess. Different category (education vs. darts), but same name, real
+  product, real risk of confusion if we ship under "Chalkie" too. Jake is attached to the
+  name (it's genuine darts slang — the person who marks the chalkboard score — "fun but
+  not silly," per his own words) so this isn't a casual rename, it's actively unresolved.
+  **Do not publish to any app store or make the app publicly visible under the name
+  "Chalkie" until this is settled.**
+  Two separate decisions once a new name is picked, not one: (1) the *display name*
+  (cheap, low-risk — UI text, docs, README) vs. (2) whether to also migrate the
+  *technical* identity — `app.json`'s bundle identifier (`com.chalkie.chalkie`) and the
+  Firebase project itself (`chalkie-app` — project IDs are immutable, so this means
+  standing up a brand-new Firebase project and migrating Jake's real live league data
+  across, not a find-replace). (2) can be deferred past the trial if needed; (1) can't
+  ship publicly with the conflict live.
+  **Naming research done so far (2026-07-28), so it isn't repeated from scratch:** ruled
+  out Shanghai (Jake: too common), Robin Hood/Robinhood (Robinhood Markets actively
+  litigates this — they got a "Robin Hood" trademark application blocked in Canada as
+  confusing with theirs), Doubletop (a live competing "DoubleTop – Darts Scorer" app
+  already exists), Treble/"Treble Darts"/"Treble Bull" (live competing apps), Flight
+  (Flight Club is an established darts venue brand with its own app), Madhouse and Bogey
+  (both heavily saturated across unrelated categories), Legup (saturated by caregiver
+  apps), and the whole "Reel/Big Fish" fishing-metaphor direction (Reel: Instagram holds
+  a registered REELS trademark and was actually sued over it; Angler: a "Pro Angler"
+  fishing-app trademark exists; Hooked: Navico holds "HOOKED" specifically for
+  fishing-tracking apps — fishing-app naming turned out to be surprisingly crowded
+  territory). Best surviving candidates from that pass (screened via web search only —
+  not a formal trademark search, so verify again before committing): **Oche**, **Cork**,
+  **Ricochet**, **Annie**, **Marker**, **Spider**, **Niner** (all checked with nothing
+  conflicting found), plus a shortlist of coined blends (Chalkero, Bullero, Tonero,
+  Checkero, Legace, Ochero, Dartero) that are inherently lower-risk since they're
+  invented words, not existing brands. Jake hadn't picked a favorite yet as of this
+  session — resume the conversation from there, don't restart the brainstorm.
 - Including Phase 2 (cup + 4 individual competitions) is a lot of scope for the
   timeline. It's sequenced after Phase 1 deliberately — those competitions genuinely
   can't run until standings/stats exist anyway (Player Champ needs seeding data, 180

@@ -139,6 +139,11 @@ just started.
       way since it only ever creates new docs.
 
 ## Open risks — revisit
+- [ ] **⚠️ BLOCKER — rename the app before any public launch.** "Chalkie" conflicts with
+      chalkie.ai, an established teacher lesson-planning app. Do not publish to any app
+      store or make the app publicly visible under "Chalkie" until a new name is picked.
+      Full writeup, ruled-out names, and surviving candidates are in PLAN.md's Open Risks
+      section — pick up the conversation from there, don't restart the brainstorm.
 - [ ] Phase 2 scope vs. timeline (sequenced after Phase 1 deliberately — don't compress Phase 1 to protect it)
 - [ ] Results entry UX — validate with a real captain before trusting it
 - [x] **2026-07-28 — Jest test coverage for the Cloud Function aggregation logic** (`functions/src/index.test.ts`, 23 tests): `computeTotals`, `computeMatchContribution` (2pts/0pts scoring, null-vs-false for "no result yet"), `computePlayerAccum` (singles/pairs attribution, 180s, high checkouts, multi-game accumulation), and `normalizeGames`/`gamesEqual` (the auto-confirm-vs-dispute comparison — order-independence across games/players/180s, and real-mismatch detection on leg winner/180s/checkout value). `npm test` in `functions/`; test files excluded from the `tsc` build/deploy output.
