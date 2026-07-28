@@ -44,6 +44,7 @@ export default function StandingsScreen() {
         snap.docs.forEach((d) => { map[d.id] = d.data().name; });
         setTeamNames(map);
       },
+      (e) => setLoadError(e.message),
     );
 
     return () => { unsubDivisions(); unsubTeams(); };

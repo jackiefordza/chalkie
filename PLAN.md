@@ -680,6 +680,33 @@ Functions. Flag this to Jake before starting Phase 1 build.
   that also have no error handler — this exact failure mode (stuck spinner, no
   diagnostic) will recur anywhere a query needs an index that doesn't exist yet or a
   rule that doesn't match.
+  **Done 2026-07-28 — full app-wide audit completed.** Went through every `.tsx` file
+  under `mobile/app/` and `mobile/src/` that calls `onSnapshot` (18 files, ~40
+  individual call sites) and added a third (error-callback) argument to every site that
+  was missing one. Two patterns already existed in the codebase and this audit kept
+  whichever one a given file/effect was already using rather than introducing a third:
+  `(e) => setLoadError(e.message)` (screens with an inline error banner already wired
+  up) or `(e) => Alert.alert('Error', (e as Error).message ?? 'Something went wrong')`
+  (everywhere else) — a shared `const onErr = ...` declared once per `useEffect` when
+  multiple listeners in the same effect needed the same handler. Files touched:
+  `admin-team.tsx` (5 sites), `admin-season.tsx` (8), `admin-dispute.tsx` (1),
+  `admin-standings-override.tsx` (5), `results-entry.tsx` (1 of 3 — other 2 already
+  had handlers), `admin-inbox.tsx` (3), `admin-venues.tsx` (1), `admin-fixtures.tsx`
+  (2 of 5), `(tabs)/stats.tsx` (1 of 3), `(tabs)/captains.tsx` (5),
+  `(tabs)/admin.tsx` (4), `(tabs)/standings.tsx` (1 of 3),
+  `src/components/admin/VenuePickerSheet.tsx` (1), `src/components/admin/AdminShell.tsx`
+  (3 — this file had no prior `Alert` import at all, added it), `src/components/ui/
+  AccountMenu.tsx` (1, same missing-import situation), `src/components/
+  NextFixtureTile.tsx` (4). `(tabs)/fixtures.tsx` and `find-league.tsx` were already
+  fully compliant, no changes needed. Verified with a script that parses every
+  `onSnapshot(...)` call site and counts its top-level arguments — zero call sites
+  left with fewer than 3 args, across the whole `app/`/`src/` tree — plus `npx tsc
+  --noEmit` clean. **Note for future sessions:** an earlier pass at this same audit
+  tried counting `onSnapshot` arguments with a quick regex-based Python script and it
+  was unreliable in both directions (false "ok"s and false flags, and possibly
+  misattributing line numbers) — don't trust a naive regex here, `onSnapshot` calls
+  span multiple lines with nested parens/braces in the callback bodies. The verification
+  script used for the final confirmation does real paren-depth tracking, not a regex.
 - Also added an explicit header back button to both new screens rather than relying on
   platform default back-button behavior, which wasn't reliably showing.
 

@@ -51,6 +51,7 @@ function useStandingsOverrideController(seasonId: string | undefined, divisionId
   useEffect(() => {
     if (!divisionId || !leagueId) return;
 
+    const onErr = (e: unknown) => Alert.alert('Error', (e as Error).message ?? 'Something went wrong');
     const unsubTeams = onSnapshot(
       query(collection(db, 'teams'), where('leagueId', '==', leagueId), where('divisionId', '==', divisionId)),
       (snap) => {
@@ -58,6 +59,7 @@ function useStandingsOverrideController(seasonId: string | undefined, divisionId
         snap.docs.forEach((d) => { map[d.id] = d.data().name; });
         setTeamNames(map);
       },
+      onErr,
     );
 
     const unsubPlayers = onSnapshot(
@@ -67,6 +69,7 @@ function useStandingsOverrideController(seasonId: string | undefined, divisionId
         snap.docs.forEach((d) => { map[d.id] = d.data().name; });
         setPlayerNames(map);
       },
+      onErr,
     );
 
     return () => { unsubTeams(); unsubPlayers(); };
@@ -75,12 +78,14 @@ function useStandingsOverrideController(seasonId: string | undefined, divisionId
   useEffect(() => {
     if (!seasonId || !divisionId) return;
 
+    const onErr = (e: unknown) => { setIsLoading(false); Alert.alert('Error', (e as Error).message ?? 'Something went wrong'); };
     const unsubTables = onSnapshot(
       query(collection(db, 'divisionTables'), where('seasonId', '==', seasonId), where('divisionId', '==', divisionId)),
       (snap) => {
         setRawTeamRows(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
         setIsLoading(false);
       },
+      onErr,
     );
 
     const unsubStats = onSnapshot(
@@ -88,6 +93,7 @@ function useStandingsOverrideController(seasonId: string | undefined, divisionId
       (snap) => {
         setRawPlayerRows(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
       },
+      onErr,
     );
 
     return () => { unsubTables(); unsubStats(); };
@@ -335,7 +341,7 @@ export default function AdminStandingsOverrideScreen() {
         setDivisionName(snap.data().name ?? '');
         setSeasonId(snap.data().seasonId ?? undefined);
       }
-    });
+    }, (e) => Alert.alert('Error', (e as Error).message ?? 'Something went wrong'));
     return unsub;
   }, [divisionId]);
 

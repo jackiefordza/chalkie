@@ -4,6 +4,7 @@ import {
   collection, doc, onSnapshot, query, where, and, or, orderBy, getDoc,
 } from 'firebase/firestore';
 import { db } from '@/config/firebase';
+import { Alert } from '@/lib/alert';
 import { useAuthStore } from '@/stores/authStore';
 import { RAW } from '@/lib/theme';
 import { Heading, Body, Caption, Badge, Card, AppIcon } from '@/components/ui';
@@ -109,6 +110,7 @@ function FixtureCard({ match, teamId, opponentName, caption, tableRow, showTeamS
           });
         setOpponentForm(form);
       },
+      (e) => Alert.alert('Error', (e as Error).message ?? 'Something went wrong'),
     );
     return unsub;
   }, [opponentId, showTeamStatus, appUser?.leagueId]);
@@ -169,6 +171,7 @@ export function NextFixtureTile({ teamId, count = 2 }: { teamId: string; count?:
 
   useEffect(() => {
     if (!teamId || !appUser?.leagueId) return;
+    const onErr = (e: unknown) => Alert.alert('Error', (e as Error).message ?? 'Something went wrong');
 
     const unsubMatches = onSnapshot(
       query(
@@ -186,6 +189,7 @@ export function NextFixtureTile({ teamId, count = 2 }: { teamId: string; count?:
           scheduledDate: d.data().scheduledDate?.toDate() ?? new Date(),
         } as Match)));
       },
+      onErr,
     );
 
     const unsubTeams = onSnapshot(
@@ -195,6 +199,7 @@ export function NextFixtureTile({ teamId, count = 2 }: { teamId: string; count?:
         snap.docs.forEach((d) => { map[d.id] = d.data().name; });
         setTeamNames(map);
       },
+      onErr,
     );
 
     return () => { unsubMatches(); unsubTeams(); };
@@ -205,6 +210,7 @@ export function NextFixtureTile({ teamId, count = 2 }: { teamId: string; count?:
     const unsub = onSnapshot(
       doc(db, 'divisionTables', `${appUser.seasonId}_${appUser.divisionId}_${teamId}`),
       (snap) => setTableRow(snap.exists() ? ({ id: snap.id, ...snap.data() } as DivisionTable) : null),
+      (e) => Alert.alert('Error', (e as Error).message ?? 'Something went wrong'),
     );
     return unsub;
   }, [appUser?.seasonId, appUser?.divisionId, teamId]);

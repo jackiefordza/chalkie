@@ -243,6 +243,7 @@ function useFixturesController(divisionId: string | undefined, leagueId: string 
         snap.docs.forEach((d) => { byId[d.id] = { id: d.id, ...d.data() } as Venue; });
         setVenuesById(byId);
       },
+      (e) => setLoadError(e.message),
     );
     return unsub;
   }, [leagueId]);
@@ -258,7 +259,7 @@ function useFixturesController(divisionId: string | undefined, leagueId: string 
           start: b.start.toDate(), end: b.end.toDate(), label: b.label,
         })),
       );
-    });
+    }, (e) => setLoadError(e.message));
     return unsub;
   }, [seasonId]);
 

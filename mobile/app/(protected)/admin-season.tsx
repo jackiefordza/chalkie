@@ -243,9 +243,11 @@ export default function AdminSeasonScreen() {
 
   useEffect(() => {
     if (!divisionId || !appUser?.leagueId || !seasonId) return;
+    const onErr = (e: unknown) => Alert.alert('Error', (e as Error).message ?? 'Something went wrong');
     const unsubPlayers = onSnapshot(
       query(collection(db, 'players'), where('divisionId', '==', divisionId)),
       (snap) => setDivisionPlayers(snap.docs.map((d) => ({ id: d.id, teamId: d.data().teamId as string }))),
+      onErr,
     );
     // matches' read rule only checks leagueId (not divisionId), so that
     // filter has to be in the query too or Firestore rejects it outright —
@@ -257,6 +259,7 @@ export default function AdminSeasonScreen() {
         where('divisionId', '==', divisionId),
       ),
       (snap) => setDivisionMatches(snap.docs.map((d) => ({ status: d.data().status as string }))),
+      onErr,
     );
     const unsubTables = onSnapshot(
       query(collection(db, 'divisionTables'), where('seasonId', '==', seasonId), where('divisionId', '==', divisionId)),
@@ -266,12 +269,14 @@ export default function AdminSeasonScreen() {
         won: (d.data().won as number) ?? 0,
         lost: (d.data().lost as number) ?? 0,
       }))),
+      onErr,
     );
     // One query for the whole league rather than one per team — grouped by
     // teamId client-side to flag which teams have a request awaiting review.
     const unsubRequests = onSnapshot(
       query(collection(db, 'joinRequests'), where('leagueId', '==', appUser.leagueId), where('status', '==', 'pending')),
       (snap) => setPendingRequestTeamIds(snap.docs.map((d) => d.data().teamId as string).filter(Boolean)),
+      onErr,
     );
     return () => { unsubPlayers(); unsubMatches(); unsubTables(); unsubRequests(); };
   }, [divisionId, appUser?.leagueId, seasonId]);
@@ -285,12 +290,15 @@ export default function AdminSeasonScreen() {
         snap.docs.forEach((d) => { byId[d.id] = { id: d.id, ...d.data() } as Venue; });
         setVenuesById(byId);
       },
+      (e) => Alert.alert('Error', (e as Error).message ?? 'Something went wrong'),
     );
     return unsub;
   }, [appUser?.leagueId]);
 
   useEffect(() => {
     if (!seasonId) return;
+
+    const onErr = (e: unknown) => { setIsLoading(false); Alert.alert('Error', (e as Error).message ?? 'Something went wrong'); };
 
     const unsubSeason = onSnapshot(doc(db, 'seasons', seasonId), (snap) => {
       if (snap.exists()) {
@@ -304,7 +312,7 @@ export default function AdminSeasonScreen() {
           })),
         );
       }
-    });
+    }, onErr);
 
     const unsubDivisions = onSnapshot(
       query(collection(db, 'divisions'), where('seasonId', '==', seasonId)),
@@ -315,6 +323,7 @@ export default function AdminSeasonScreen() {
             .sort((a, b) => a.order - b.order),
         );
       },
+      onErr,
     );
 
     const unsubTeams = onSnapshot(
@@ -323,6 +332,7 @@ export default function AdminSeasonScreen() {
         setTeams(snap.docs.map((d) => ({ id: d.id, ...d.data() } as Team)));
         setIsLoading(false);
       },
+      onErr,
     );
 
     return () => { unsubSeason(); unsubDivisions(); unsubTeams(); };

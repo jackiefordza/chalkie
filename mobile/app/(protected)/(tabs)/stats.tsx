@@ -68,6 +68,7 @@ export default function StatsScreen() {
     const unsubPlayers = onSnapshot(
       query(collection(db, 'players'), where('leagueId', '==', appUser.leagueId)),
       (snap) => setPlayers(snap.docs.map((d) => ({ id: d.id, name: d.data().name } as PlayerInfo))),
+      (e) => setLoadError(e.message),
     );
 
     return () => { unsubMine?.(); unsubDivision?.(); unsubPlayers(); };

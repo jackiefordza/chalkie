@@ -102,6 +102,13 @@ just started.
 - [x] Blank Standings page with no empty state (2026-07-13)
 - [x] Multiple seasons could be "active" at once; Dashboard Teams count summed across all seasons (2026-07-13)
 - [x] VC "waiting for request" hint incorrectly gated on Captain's state (2026-07-13)
+- [x] **Missing `onSnapshot` error handlers, app-wide — 2026-07-28.** The same silent-stuck-spinner
+      failure mode as the 2026-07-02 indexes bug above, but audited across the *entire* app rather
+      than just the two screens that bug happened to hit. All ~40 `onSnapshot` call sites across 18
+      files now pass a 3rd error-callback argument (reusing whichever error-display pattern each
+      screen already had — inline banner or `Alert.alert`). Full detail + list of every file/site
+      touched in PLAN.md under "Bugs found & fixed". Verified via a paren-depth-aware script (not
+      a regex) confirming zero remaining 2-arg `onSnapshot` calls, plus `npx tsc --noEmit` clean.
 
 ## Suggested improvements (not bugs)
 - [x] **Admin-side "enter/confirm a result" path — 2026-07-28, code complete AND

@@ -181,6 +181,7 @@ export default function ResultsEntryScreen() {
             .sort((a, b) => a.name.localeCompare(b.name)),
         );
       },
+      (e) => setLoadError(e.message),
     );
 
     return () => { unsubMatch(); unsubPlayers(); };

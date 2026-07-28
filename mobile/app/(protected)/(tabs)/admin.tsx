@@ -107,6 +107,8 @@ export default function AdminHomeScreen() {
       }
     });
 
+    const onErr = (e: unknown) => Alert.alert('Error', (e as Error).message ?? 'Something went wrong');
+
     const unsubSeasons = onSnapshot(
       query(collection(db, 'seasons'), where('leagueId', '==', leagueId)),
       (snap) => {
@@ -115,6 +117,7 @@ export default function AdminHomeScreen() {
           .sort((a, b) => (b as any).createdAt?.seconds - (a as any).createdAt?.seconds);
         setSeasons(list);
       },
+      onErr,
     );
 
     // Lightweight — just counts, for the Inbox nav row badge. May slightly
@@ -129,10 +132,12 @@ export default function AdminHomeScreen() {
         where('status', '==', 'pending'),
       ),
       (snap) => setPendingCount(snap.size),
+      onErr,
     );
     const unsubDisputes = onSnapshot(
       query(collection(db, 'matches'), where('leagueId', '==', leagueId), where('status', '==', 'disputed')),
       (snap) => setDisputeCount(snap.size),
+      onErr,
     );
 
     return () => { cancelled = true; unsubSeasons(); unsubReqs(); unsubDisputes(); };
@@ -148,6 +153,7 @@ export default function AdminHomeScreen() {
     const unsub = onSnapshot(
       query(collection(db, 'teams'), where('seasonId', '==', activeSeason.id)),
       (snap) => setTeamsCount(snap.size),
+      (e) => Alert.alert('Error', (e as Error).message ?? 'Something went wrong'),
     );
     return unsub;
   }, [activeSeason?.id]);

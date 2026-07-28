@@ -32,6 +32,7 @@ export default function AdminVenuesScreen() {
     const unsub = onSnapshot(
       query(collection(db, 'venues'), where('leagueId', '==', leagueId), orderBy('name', 'asc')),
       (snap) => setVenues(snap.docs.map((d) => ({ id: d.id, ...d.data() } as Venue))),
+      (e) => Alert.alert('Error', (e as Error).message ?? 'Something went wrong'),
     );
     return unsub;
   }, [leagueId]);
