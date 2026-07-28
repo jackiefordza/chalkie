@@ -85,7 +85,8 @@ just started.
 
 ## Suggested improvements (not bugs)
 - [ ] Admin-side "enter/confirm a result" path for a stuck/offline captain
-- [x] **Team/roster carry-over between seasons — 2026-07-28, code complete, not live-verified.**
+- [x] **Team/roster carry-over between seasons — 2026-07-28, code complete AND
+      live-verified (against a local Firebase Emulator, not real production data).**
       New Season sheet (`admin.tsx`) now offers "Copy teams & players from" any existing
       season (defaults to "Start empty" — deliberately not pre-picking the most recent
       season, since this league has throwaway test/mock seasons that could get copied by
@@ -95,10 +96,31 @@ just started.
       having to re-find-and-claim themselves, not just saving admin's typing. Admin edits
       the copy afterward with the normal roster screens (remove players who left, add new
       signings) — no separate review step. `npx tsc --noEmit` and `expo export -p web`
-      both clean. **Not yet live-verified**: no admin test credentials in this sandbox,
-      same limitation as elsewhere in this doc — Jake, worth a real run once you're ready
-      to set up next season, since it writes real teams/players data (though only ever
-      creates new docs, never touches the source season).
+      both clean.
+      **Verified 2026-07-28** by standing up the Firebase Local Emulator Suite (new
+      one-time infra: `firebase.json` `emulators` block, `mobile/src/config/firebase.ts`
+      dev-only emulator connection gated behind `EXPO_PUBLIC_USE_FIREBASE_EMULATOR` — off
+      by default, no effect on production), seeding a fake league/season/2 divisions/3
+      teams/4 players, and driving the real app in a real browser (Playwright): logged in
+      as a seeded admin, opened New Season, picked the seeded season to copy from, hit
+      Create. Result matched exactly — "Copied 2 divisions, 3 teams, and 4 players"
+      — and a direct Firestore read afterward confirmed every cross-check: correct
+      division→team→player id remapping, the captain's `captainUserId` preserved, a
+      claimed player's `claimedByUserId`/`designatedRole` preserved, an unclaimed
+      player's `claimedByUserId` still null, and the source season completely untouched
+      (still 3 teams). **Caught and fixed one real bug this way**: the seed script's
+      first attempt used `role: 'admin'` on the test user, which silently hung on a
+      spinner forever — `app/index.tsx`'s post-login routing switch has no `'admin'`
+      case at all (a pure admin is modeled as `role: 'pending'` + `isLeagueAdmin: true`,
+      not a distinct role value) and had no `default:` case to catch the mismatch. Not
+      a real app bug (my seed data was wrong, not the app), but worth knowing: an
+      account with an unrecognized `role` value hangs silently with no error, same
+      class of gap as the historical "silent spinner" bugs elsewhere in this doc — if
+      you ever see a real account stuck on the loading spinner, check its Firestore
+      `role` field is exactly one of the four valid values.
+      **Still not run against Jake's real production data/account** — this proves the
+      logic is correct, not that it's been exercised on the real league. Low-risk either
+      way since it only ever creates new docs.
 
 ## Open risks — revisit
 - [ ] Phase 2 scope vs. timeline (sequenced after Phase 1 deliberately — don't compress Phase 1 to protect it)

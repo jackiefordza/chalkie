@@ -753,9 +753,50 @@ just the checkable summary so they don't get lost.
       signings, reassign captaincy) — deliberately no separate "review before committing"
       step, since that editing capability already exists and duplicating it would be
       scope creep for what was asked. `npx tsc --noEmit` and `expo export -p web` both
-      clean. **Not live-verified** — no admin test credentials in this sandbox (same
-      limitation noted throughout this doc); worth a real run when you set up the next
-      season, though low-risk since it only adds new docs.
+      clean.
+      **Live-verified 2026-07-28** — see "Firebase Local Emulator Suite" entry below for
+      the new testing infrastructure this used. Seeded a fake league (2 divisions, 3
+      teams, 4 players, one claimed player, one team with a captain assigned), drove the
+      real app in a real browser end-to-end (log in → New Season → pick source → Create),
+      and directly verified the resulting Firestore data: correct id remapping across
+      divisions/teams/players, captain assignment and claimed-player status preserved,
+      source season completely untouched. Caught one real issue in the process (see below
+      — a seed-data bug on my end, not an app bug, but exposed a genuine silent-failure
+      gap worth knowing about). **Not yet run against Jake's real production account/data**
+      — this proves the logic is correct in principle, not that it's been exercised on the
+      real league. Low-risk either way since it only ever creates new docs, never touches
+      the source season.
+
+- [x] **Firebase Local Emulator Suite — new testing infrastructure, 2026-07-28.** Added
+      specifically to verify the season carry-over feature above, but reusable for any
+      future feature: `firebase.json` gained an `emulators` block (Firestore/Auth/
+      Functions), and `mobile/src/config/firebase.ts` gained a dev-only branch that
+      connects to the emulator instead of the real `chalkie-app` project when
+      `EXPO_PUBLIC_USE_FIREBASE_EMULATOR=true` — off by default, zero effect on
+      production builds. Run locally with
+      `firebase emulators:start --only auth,firestore,functions --project demo-chalkie`
+      (the `demo-` project-id prefix matters — it tells the Emulator Suite this is a
+      fully offline project and skips every call to real Google Cloud endpoints, which
+      otherwise fail hard with no real GCP credentials available). Then
+      `EXPO_PUBLIC_USE_FIREBASE_EMULATOR=true EXPO_PUBLIC_FIREBASE_EMULATOR_HOST=127.0.0.1
+      npx expo start --web` to run the app against it. Seed fake data via the
+      `firebase-admin` SDK pointed at `FIRESTORE_EMULATOR_HOST=127.0.0.1:8080` /
+      `FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9099` — no real Firebase credentials needed
+      for any of this, and nothing it does can touch real league data. This is what
+      finally closes the gap behind every "not live-verified, no admin credentials in
+      this sandbox" note elsewhere in this doc — that limitation was specifically about
+      the *real* `chalkie-app` project; it was never a fundamental inability to run and
+      click through the app itself.
+      **One environment-specific wrinkle, not a Firebase issue**: the Functions emulator's
+      first attempt crashed outright trying to reach a real external endpoint
+      (`firebase-public.firebaseio.com`) to fetch Admin SDK config, which the sandbox's
+      network policy correctly rejected — the demo-project-id fix above avoids the call
+      entirely rather than routing around the block. A second, separate crash turned out
+      to be the *local* handshake between the Functions and Firestore emulators (both on
+      127.0.0.1) unnecessarily traversing the sandbox's outbound proxy; clearing
+      `HTTPS_PROXY`/`HTTP_PROXY` for just that one child process (not session-wide) fixed
+      it, since that process has no legitimate external network need at all once running
+      against a demo project.
 
 ## Open risks / things to revisit
 
