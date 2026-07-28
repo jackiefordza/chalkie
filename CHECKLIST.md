@@ -39,8 +39,8 @@ just started.
 - [x] `admin-season.tsx` Schedule panel (start date + breaks editor)
 - [x] "Blank Test Season" dev tool (`admin-tools.tsx`) — 8 teams, 2 venues incl. a deliberate 3-teams-1-board conflict, no fixtures, for exercising Generate Fixtures live
 - [x] `npx tsc --noEmit` clean (mobile + functions), `expo export -p web` clean
-- [ ] **Not deployed**: `firestore.rules`, `firestore.indexes.json`, and the 2 new Cloud Functions need `firebase deploy` before any of this works live
-- [ ] **Jake: run "Migrate Teams to Venues"** (Tools screen, real one-off, not dev-gated) once deployed — your existing teams still have plain-text addresses, not venues, until this runs once
+- [x] **Deployed 2026-07-28**: `firestore.rules`, `firestore.indexes.json`, and all Cloud Functions (incl. `adminDeleteVenue`, `adminMigrateVenues`) confirmed live on `chalkie-app` via `firebase deploy` (CI token) — verified with `firebase functions:list`
+- [ ] **Jake: run "Migrate Teams to Venues"** (Tools screen, real one-off, not dev-gated) — your existing teams still have plain-text addresses, not venues, until this runs once
 - [ ] Fold into the real walkthrough above: generate fixtures against a division with a shared venue and confirm the clash-resolution banner/dates look right
 - [x] Add Team gets a Division dropdown (works from any entry point, incl. a new season-level "+ Add Team") instead of being locked to whichever division you clicked from
 - [x] `adminMoveTeamDivision` Cloud Function — move an existing team to a different division in the same season, blocked while it has any fixtures (not just confirmed ones)
