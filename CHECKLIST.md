@@ -27,7 +27,7 @@ just started.
 - [x] Onboarding rewrite — request & approve, no invite/claim codes
 - [x] Admin dashboard revamp (real Teams data table, season→division picker, sidebar tree)
 - [ ] **Jake: real logged-in walkthrough** — the one thing blocking calling Phase 1 done. Confirm a push notification actually arrives, generate-fixtures round-trip, full results→confirm→standings loop, all against your real account/league.
-- [ ] Team/roster carry-over between seasons (raised, not built — also tracked under Suggested improvements)
+- [x] Team/roster carry-over between seasons (2026-07-28, see below)
 
 ## Venue entity + fixture scheduling (2026-07-22, code complete — not deployed/migrated/live-verified)
 - [x] `Venue` collection (name, address, phone, board count) — `Team.address`/`venuePhone` replaced with `Team.venueId`
@@ -85,7 +85,20 @@ just started.
 
 ## Suggested improvements (not bugs)
 - [ ] Admin-side "enter/confirm a result" path for a stuck/offline captain
-- [ ] Team/roster carry-over between seasons
+- [x] **Team/roster carry-over between seasons — 2026-07-28, code complete, not live-verified.**
+      New Season sheet (`admin.tsx`) now offers "Copy teams & players from" any existing
+      season (defaults to "Start empty" — deliberately not pre-picking the most recent
+      season, since this league has throwaway test/mock seasons that could get copied by
+      mistake). `mobile/src/lib/seasonCarryOver.ts` copies divisions → teams → players in
+      order, preserving each team's captain/VC assignment and each player's
+      `claimedByUserId`/`designatedRole` — the point is saving returning players from
+      having to re-find-and-claim themselves, not just saving admin's typing. Admin edits
+      the copy afterward with the normal roster screens (remove players who left, add new
+      signings) — no separate review step. `npx tsc --noEmit` and `expo export -p web`
+      both clean. **Not yet live-verified**: no admin test credentials in this sandbox,
+      same limitation as elsewhere in this doc — Jake, worth a real run once you're ready
+      to set up next season, since it writes real teams/players data (though only ever
+      creates new docs, never touches the source season).
 
 ## Open risks — revisit
 - [ ] Phase 2 scope vs. timeline (sequenced after Phase 1 deliberately — don't compress Phase 1 to protect it)

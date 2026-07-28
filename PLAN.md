@@ -734,9 +734,28 @@ just the checkable summary so they don't get lost.
 - [ ] Admin-side "enter/confirm a result" path — right now results only enter the
       system via a captain's own mobile submission; no way for an admin to record
       one on behalf of a captain who's stuck or offline.
-- [ ] Team/roster carry-over between seasons — every season's teams are built from
-      scratch today; a "copy teams from…" option on a new season/division would cut
-      most of the re-entry each season turnover.
+- [x] **Team/roster carry-over between seasons — done 2026-07-28.** Jake's ask, made
+      concrete: when creating a new season, admin is now asked whether to copy teams
+      and players from an existing one. Implemented as `mobile/src/lib/seasonCarryOver.ts`,
+      wired into the "New Season" sheet in `admin.tsx` — a season picker ("Start empty" or
+      any existing season, deliberately defaulting to empty rather than guessing "most
+      recent", since this league has throwaway test/mock seasons sitting alongside real
+      ones) appears once at least one season already exists. Copies divisions → teams →
+      players in that order (building an old→new id map as it goes so teams land in the
+      right new division and players on the right new team), batched in chunks of 400
+      writes to stay clear of Firestore's 500-op batch limit for a bigger league. Preserves
+      `captainUserId`/`viceCaptainUserId` on teams and `claimedByUserId`/`claimedAt`/
+      `designatedRole` on players — deliberately not just a typing-saver for admin, but a
+      re-registration-saver for every returning player/captain, who'd otherwise have to
+      search-and-claim themselves all over again each season. Only ever creates new docs;
+      never touches the source season, so there's no destructive path here. Admin edits the
+      copy afterward with the existing roster screens (remove players who left, add new
+      signings, reassign captaincy) — deliberately no separate "review before committing"
+      step, since that editing capability already exists and duplicating it would be
+      scope creep for what was asked. `npx tsc --noEmit` and `expo export -p web` both
+      clean. **Not live-verified** — no admin test credentials in this sandbox (same
+      limitation noted throughout this doc); worth a real run when you set up the next
+      season, though low-risk since it only adds new docs.
 
 ## Open risks / things to revisit
 
