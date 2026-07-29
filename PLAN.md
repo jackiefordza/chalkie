@@ -632,6 +632,19 @@ Functions. Flag this to Jake before starting Phase 1 build.
       venue-aware fixture generation into the real walkthrough above. **Also: revoke the
       CI token used for this deploy** (`firebase logout --token <token>` or from the
       Google Cloud Console) now that the deploy is confirmed — it was single-purpose.
+      **2026-07-29 — Hosting redeployed too.** Turned out Firebase Hosting
+      (`chalkie-app.web.app`) hadn't been redeployed since 2026-07-10 — the live web
+      app was still running the pre-venues build, so the Tools screen showed no
+      "Migrate Teams to Venues" button at all despite the code existing on this
+      branch. Built (`expo export -p web`) and deployed (`firebase deploy --only
+      hosting --project chalkie-app`) the current `claude/next-steps-dperni` branch to
+      `chalkie-app.web.app` using a second fresh CI token from Jake, then revoked it
+      the same way as above immediately after. This deploy happened from an unmerged
+      branch (PR #3 still open at the time) — hosting deploys aren't gated by what's
+      merged, just whatever's built locally, so worth remembering that "live" and
+      "merged to JakeDevBranch" can drift apart. **Worth revisiting:** hosting should
+      probably be redeployed again once PR #3 actually merges, so `chalkie-app.web.app`
+      stays in sync with `JakeDevBranch` rather than pointing at a branch tip.
 
 ### Phase 2 — Cup & individual competitions (build during the season, before they're needed mid-season — not required for the August demo or season kickoff)
 - [ ] Team knockout cup: single-elimination, one match per round, cross-division draw.
