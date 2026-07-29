@@ -4,6 +4,7 @@ import {
   computePlayerAccum,
   normalizeGames,
   gamesEqual,
+  sortableTeamName,
   MatchGame,
   MatchLeg,
 } from './index';
@@ -240,5 +241,31 @@ describe('normalizeGames', () => {
     const copy = JSON.parse(JSON.stringify(games));
     normalizeGames(games);
     expect(games).toEqual(copy);
+  });
+});
+
+describe('sortableTeamName', () => {
+  it('strips a leading "The " so it sorts under its next word', () => {
+    expect(sortableTeamName('The Anchor')).toBe('Anchor');
+  });
+
+  it('is case-insensitive on "the"', () => {
+    expect(sortableTeamName('the Bluebell')).toBe('Bluebell');
+  });
+
+  it('leaves names with no leading "The" unchanged', () => {
+    expect(sortableTeamName('Kings Arms')).toBe('Kings Arms');
+  });
+
+  it('does not strip "the" when it is not a standalone leading word', () => {
+    expect(sortableTeamName('Theatre Royal')).toBe('Theatre Royal');
+  });
+
+  it('sorts a mixed list ignoring leading "The"', () => {
+    const names = ['The Swan', 'Kings Arms', 'The Anchor', 'Bedford Ath'];
+    const sorted = [...names].sort(
+      (a, b) => sortableTeamName(a).localeCompare(sortableTeamName(b)),
+    );
+    expect(sorted).toEqual(['The Anchor', 'Bedford Ath', 'Kings Arms', 'The Swan']);
   });
 });

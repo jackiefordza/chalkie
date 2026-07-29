@@ -211,14 +211,33 @@ export function computePlayerAccum(
   return accum;
 }
 
+// Standings alphabetical tiebreak (e.g. two teams both on 0 played) ignores a
+// leading "The" per common league convention — "The Anchor" sorts under A,
+// not T.
+export function sortableTeamName(name: string): string {
+  return name.replace(/^the\s+/i, '').trim();
+}
+
 async function recomputeDivisionPositions(seasonId: string, divisionId: string): Promise<void> {
   const divisionRows = await db.collection('divisionTables')
     .where('seasonId', '==', seasonId)
     .where('divisionId', '==', divisionId)
     .get();
-  const sorted = divisionRows.docs
-    .map((d) => ({ ref: d.ref, points: d.data().points ?? 0, legDiff: d.data().legDiff ?? 0 }))
-    .sort((a, b) => (b.points - a.points) || (b.legDiff - a.legDiff));
+  const rows = await Promise.all(divisionRows.docs.map(async (d) => {
+    const data = d.data();
+    const teamSnap = await db.collection('teams').doc(data.teamId as string).get();
+    return {
+      ref: d.ref,
+      points: data.points ?? 0,
+      legDiff: data.legDiff ?? 0,
+      teamName: (teamSnap.data()?.name ?? '') as string,
+    };
+  }));
+  const sorted = rows.sort((a, b) => (
+    (b.points - a.points)
+    || (b.legDiff - a.legDiff)
+    || sortableTeamName(a.teamName).localeCompare(sortableTeamName(b.teamName))
+  ));
   const positionBatch = db.batch();
   sorted.forEach((row, i) => positionBatch.update(row.ref, { position: i + 1 }));
   await positionBatch.commit();
