@@ -17,6 +17,10 @@
 //    calendar week (round-robin's round order can be freely permuted without
 //    breaking the schedule — every team still plays every other exactly once
 //    per leg, regardless of which date that meeting happens to fall on).
+// A round only ever moves off its own natural week (i.e. leg 2 repeating leg
+// 1's pairings, home/away reversed, in the same week order — the shape
+// leagues already run by hand) when a real clash actually forces it; nothing
+// gets reshuffled just because reshuffling was an option.
 
 export interface FixtureTeam {
   id: string;
@@ -172,20 +176,26 @@ function computeHalfPreferences(
   return prefs;
 }
 
-// If exactly one side of this pair has a half-preference that matches (or
-// mismatches) the half this round falls in, that's a real signal for which
-// side should be home here — otherwise (both, neither, or a tie) there's no
+// Leg 1 *is* the first half of the season and leg 2 *is* the second, now that
+// week assignment prefers every round's own natural week (see
+// candidateWeeksFor) — so a team wanting its home games "front-loaded"
+// just needs to be the home side in *every* leg-1 round it plays, full
+// stop, not merely in whichever rounds happen to fall in some sub-slice of
+// leg 1's own round indices. (An earlier version only forced this for
+// `legRoundIndex < totalLegRounds / 2`, leaving the rest of that team's leg-1
+// rounds to a coin flip — which could still land it home the same week as
+// the very team it was supposed to avoid clashing with.) If exactly one side
+// of this pair has a half preference, that's a real signal for which side
+// should be home in leg 1 — otherwise (both, neither, or a tie) there's no
 // preference-based reason to prefer one side, so the caller falls back to
 // the seeded pseudo-random default.
-function preferredHomeIsA(
-  pair: RawPair, legRoundIndex: number, totalLegRounds: number, halfPrefs: Map<string, 'first' | 'second'>,
-): boolean | null {
-  const inFirstHalf = legRoundIndex < totalLegRounds / 2;
-  const thisHalf = inFirstHalf ? 'first' : 'second';
-  const aWantsThisHalf = halfPrefs.get(pair.a) === thisHalf;
-  const bWantsThisHalf = halfPrefs.get(pair.b) === thisHalf;
-  if (aWantsThisHalf && !bWantsThisHalf) return true;
-  if (bWantsThisHalf && !aWantsThisHalf) return false;
+function preferredHomeIsA(pair: RawPair, halfPrefs: Map<string, 'first' | 'second'>): boolean | null {
+  const aPref = halfPrefs.get(pair.a);
+  const bPref = halfPrefs.get(pair.b);
+  const aWantsHomeInLeg1 = aPref === 'first' || bPref === 'second';
+  const aWantsAwayInLeg1 = aPref === 'second' || bPref === 'first';
+  if (aWantsHomeInLeg1 && !aWantsAwayInLeg1) return true;
+  if (aWantsAwayInLeg1 && !aWantsHomeInLeg1) return false;
   return null;
 }
 
@@ -206,13 +216,11 @@ function resolveRoundHomeChoices(
   teamVenueId: Map<string, string | null | undefined>,
   venueBoardCounts: Record<string, number>,
   halfPrefs: Map<string, 'first' | 'second'>,
-  legRoundIndex: number,
-  totalLegRounds: number,
   seed: number,
   roundSalt: number,
 ): boolean[] {
   const defaultChoice = roundPairs.map((pair, i) => (
-    preferredHomeIsA(pair, legRoundIndex, totalLegRounds, halfPrefs) ?? pseudoRandomBool(seed, roundSalt, i)
+    preferredHomeIsA(pair, halfPrefs) ?? pseudoRandomBool(seed, roundSalt, i)
   ));
 
   const relevant: number[] = [];
@@ -281,7 +289,7 @@ function buildDivisionRounds(
   const leg2: Pairing[][] = [];
   legRounds.forEach((roundPairs, legRoundIndex) => {
     const homeIsA = resolveRoundHomeChoices(
-      roundPairs, teamVenueId, venueBoardCounts, halfPrefs, legRoundIndex, legRounds.length, seed, legRoundIndex,
+      roundPairs, teamVenueId, venueBoardCounts, halfPrefs, seed, legRoundIndex,
     );
     leg1.push(roundPairs.map((pair, i) => (homeIsA[i]
       ? { homeTeamId: pair.a, awayTeamId: pair.b }
@@ -325,6 +333,21 @@ function overflowAt(
     total += Math.max(0, already + count - venueBoardCounts[venueId]);
   });
   return total;
+}
+
+// Tries a round's own natural week (its roundIndex) first, before any other
+// week — so a round only ever moves off its natural calendar slot when a
+// real cross-division venue clash actually forces it to. Without this, the
+// search would happily reshuffle rounds that never needed to move at all
+// (see assignAllWeeks), scrambling the traditional "second half is the same
+// pairings as the first half, home/away reversed, same week-of-season" shape
+// leagues are used to for no reason — round-robin correctness never
+// depended on preserving that shape, but there's no reason to break it
+// either when nothing requires it.
+function candidateWeeksFor(naturalWeek: number, weekCount: number): number[] {
+  const order = [naturalWeek];
+  for (let w = 0; w < weekCount; w++) if (w !== naturalWeek) order.push(w);
+  return order;
 }
 
 function commitUsage(week: number, usage: Map<string, number>, globalUsage: Map<number, Map<string, number>>): void {
@@ -403,7 +426,7 @@ function assignAllWeeks(
     if (++steps > MAX_DFS_STEPS) return false;
     const task = tasks[taskIndex];
     const usedWeeks = usedWeeksByDivision.get(task.divisionId)!;
-    for (let week = 0; week < weekCount; week++) {
+    for (const week of candidateWeeksFor(task.roundIndex, weekCount)) {
       if (usedWeeks.has(week)) continue;
       if (overflowAt(week, task.usage, globalUsage, venueBoardCounts) > 0) continue;
       usedWeeks.add(week);
@@ -433,7 +456,7 @@ function assignAllWeeks(
     const usedWeeks = usedWeeksByDivision.get(task.divisionId)!;
     let bestWeek = -1;
     let bestOverflow = Infinity;
-    for (let week = 0; week < weekCount; week++) {
+    for (const week of candidateWeeksFor(task.roundIndex, weekCount)) {
       if (usedWeeks.has(week)) continue;
       const overflow = overflowAt(week, task.usage, globalUsage, venueBoardCounts);
       if (overflow < bestOverflow) { bestOverflow = overflow; bestWeek = week; }
@@ -445,6 +468,37 @@ function assignAllWeeks(
     weekByDivisionRound.get(task.divisionId)![task.roundIndex] = bestWeek;
   });
   return { weekByDivisionRound, ok: !anyOverflow };
+}
+
+// Every round's natural week (its own roundIndex) laid end to end, with no
+// reordering at all — the simplest possible calendar, and exactly the
+// traditional "second half repeats the first, home/away reversed, same
+// week-of-season" shape leagues already run by hand. Cheap to check (just a
+// running per-week venue tally, no search), so it's always worth trying
+// before paying for assignAllWeeks' backtracking search.
+function identityFits(
+  usagePerRoundByDivision: Map<string, Map<string, number>[]>,
+  venueBoardCounts: Record<string, number>,
+): boolean {
+  const weekUsage = new Map<number, Map<string, number>>();
+  for (const usagePerRound of usagePerRoundByDivision.values()) {
+    for (let week = 0; week < usagePerRound.length; week++) {
+      if (!weekUsage.has(week)) weekUsage.set(week, new Map());
+      const wm = weekUsage.get(week)!;
+      for (const [venueId, count] of usagePerRound[week]) {
+        const total = (wm.get(venueId) ?? 0) + count;
+        if (total > venueBoardCounts[venueId]) return false;
+        wm.set(venueId, total);
+      }
+    }
+  }
+  return true;
+}
+
+function identityWeekAssignment(roundsByDivision: Map<string, Pairing[][]>): Map<string, number[]> {
+  const map = new Map<string, number[]>();
+  roundsByDivision.forEach((rounds, divisionId) => map.set(divisionId, rounds.map((_, i) => i)));
+  return map;
 }
 
 function addDays(date: Date, days: number): Date {
@@ -487,14 +541,21 @@ function buildWeekDates(weekCount: number, startDate: Date, intervalDays: number
 // One full attempt: builds every division's rounds (home/away settled using
 // `flipByVenue` for the cross-division half-split, falling back to `seed`'s
 // pseudo-random default for whichever pairs have no conflict to resolve at
-// all) and finds a combined week assignment for the result.
+// all) and finds a combined week assignment for the result. Tries the plain
+// identity week assignment first (see identityFits) and only calls into
+// assignAllWeeks' backtracking search if this particular combo/seed actually
+// needs a round moved off its natural week. `identityOnly` skips that search
+// entirely and returns null instead — used by generateSeasonFixtures' first
+// pass, which would rather try a different flip combination than pay for a
+// reorder this combo doesn't strictly need.
 function attemptSeasonFixtures(
   divisions: DivisionFixtureInput[],
   opts: GenerateFixturesOptions,
   teamVenueId: Map<string, string | null | undefined>,
   flipByVenue: Map<string, boolean>,
   seed: number,
-): SeasonFixtureResult {
+  identityOnly: boolean,
+): SeasonFixtureResult | null {
   const breaks = opts.breaks ?? [];
   const venueBoardCounts = opts.venueBoardCounts ?? {};
   const halfPrefs = computeHalfPreferences(divisions, venueBoardCounts, flipByVenue);
@@ -511,7 +572,12 @@ function attemptSeasonFixtures(
     [...roundsByDivision.entries()].map(([id, rounds]) => [id, venueUsagePerRound(rounds, teamVenueId, venueBoardCounts)]),
   );
 
-  const { weekByDivisionRound, ok } = assignAllWeeks(roundsByDivision, usagePerRoundByDivision, weekCount, venueBoardCounts);
+  const usesIdentity = identityFits(usagePerRoundByDivision, venueBoardCounts);
+  if (!usesIdentity && identityOnly) return null;
+
+  const { weekByDivisionRound, ok } = usesIdentity
+    ? { weekByDivisionRound: identityWeekAssignment(roundsByDivision), ok: true }
+    : assignAllWeeks(roundsByDivision, usagePerRoundByDivision, weekCount, venueBoardCounts);
 
   const fixturesByDivision: Record<string, GeneratedFixtureWithDate[]> = {};
   const unresolvedClashes: VenueClash[] = [];
@@ -587,12 +653,29 @@ export function generateSeasonFixtures(
   const sharedVenues = sharedTrackedVenues(divisions, venueBoardCounts);
   const comboCount = Math.min(2 ** sharedVenues.length, MAX_FLIP_COMBOS);
 
+  // First pass: every flip combination gets one cheap, search-free try at
+  // the plain identity week assignment (see identityFits) — whichever combo
+  // hits a clean fit first wins outright, with every round left on its
+  // natural week. Only if *no* combination avoids every clash without
+  // reordering do we fall through to the second pass below, which brings in
+  // assignAllWeeks' backtracking search (and accepts a schedule with some
+  // rounds moved off their natural week, which the caller surfaces nothing
+  // special about — it's still a fully valid, clash-free schedule, just not
+  // the tidiest-looking one). Without this pass, the search below would
+  // happily settle for the first combo that resolves cleanly *after*
+  // reordering, even when a different combo needed no reordering at all.
+  for (let combo = 0; combo < comboCount; combo++) {
+    const flipByVenue = new Map(sharedVenues.map((venueId, i) => [venueId, ((combo >> i) & 1) === 1]));
+    const result = attemptSeasonFixtures(divisions, opts, teamVenueId, flipByVenue, combo * INNER_SEEDS_PER_COMBO, true);
+    if (result) return result;
+  }
+
   let best: SeasonFixtureResult | null = null;
   let stalled = 0;
   for (let combo = 0; combo < comboCount && stalled < STALL_LIMIT; combo++) {
     const flipByVenue = new Map(sharedVenues.map((venueId, i) => [venueId, ((combo >> i) & 1) === 1]));
     for (let innerSeed = 0; innerSeed < INNER_SEEDS_PER_COMBO; innerSeed++) {
-      const result = attemptSeasonFixtures(divisions, opts, teamVenueId, flipByVenue, combo * INNER_SEEDS_PER_COMBO + innerSeed);
+      const result = attemptSeasonFixtures(divisions, opts, teamVenueId, flipByVenue, combo * INNER_SEEDS_PER_COMBO + innerSeed, false)!;
       if (result.unresolvedClashes.length === 0) return result;
       if (!best || result.unresolvedClashes.length < best.unresolvedClashes.length) {
         best = result;
