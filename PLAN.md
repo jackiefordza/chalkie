@@ -934,6 +934,63 @@ just the checkable summary so they don't get lost.
       finished yet, so the assertion raced it. Fixed by waiting for
       `homeGamesWon != null` specifically, not just `status === 'confirmed'`.
 
+## 2026-07-29 — fixture generator now preserves the traditional "second half mirrors the first" shape
+
+Jake sent the real league's own printed schedule PDF and pointed out the convention
+it uses: play everyone once (the "first half"), then the second half is literally the
+same fixtures with home/away reversed, in the same week order (so week 8 mirrors week
+1, week 9 mirrors week 2, etc). He wasn't sure why it's done that way, just that it's
+the convention — but it was a good prompt to check whether our generator's real output
+actually honored that shape, since the venue-clash-avoidance rewrite earlier this
+session could reorder any round to any week.
+
+Checked directly: it didn't, for 3 of the 4 real divisions. Traced it to two real bugs
+in `mobile/src/lib/fixtures.ts`, both now fixed:
+1. **`assignAllWeeks` tried candidate weeks in plain ascending order (0, 1, 2, ...)
+   instead of trying a round's own natural week first.** Since tasks touching *any*
+   tracked shared venue got sorted to the front of the queue (to solve real clashes
+   first), they'd grab week 0, 1, 2... regardless of what their natural week actually
+   was — reshuffling rounds that had no real reason to move at all. Fixed by adding
+   `candidateWeeksFor(naturalWeek, weekCount)`, which always tries a round's own
+   `roundIndex` first, only falling through to other weeks if that natural slot
+   genuinely overflows a venue's capacity.
+2. **`preferredHomeIsA`'s "front-load your home games" preference only applied to
+   part of a team's rounds, not all of them.** It compared each round's own
+   `legRoundIndex` against `totalLegRounds / 2` to decide "is this round in the half
+   I prefer" — but leg 1 *is* the first half and leg 2 *is* the second (that's true by
+   construction, not something that needed rechecking per round), so this left a
+   chunk of a team's leg-1 rounds ungoverned, falling to a coin flip that could still
+   land it home the same week as the very team it was meant to avoid clashing with.
+   Fixed by making the preference apply to *every* round a team plays, unconditionally
+   — front-loaded means home in leg 1 full stop, not home in "whichever leg-1 rounds
+   happen to fall in the first half of leg 1's own numbering."
+Also added a genuinely new mechanism, not just a fix: `generateSeasonFixtures` now
+tries every flip combination's *plain, unreordered* week assignment first (cheap, no
+search — see `identityFits`/`identityWeekAssignment`), and only falls through to
+`assignAllWeeks`'s backtracking reorder search if literally none of them avoid every
+clash without reordering. Previously the search stopped at the first combo that
+resolved cleanly *after* reordering, even when a different, untried combo would have
+needed no reordering at all.
+
+**Verified against Jake's actual real league** (same 182-fixture, 4-division, 29-team,
+22-venue shape from the fixture-verification entry below) via a Node harness running
+the compiled generator directly: Division 1, 2, and 3 now reproduce the traditional
+mirror pattern with zero exceptions across all their rounds. Division 4 still needs a
+handful of rounds moved off their natural week — traced this to a genuine structural
+squeeze, not a further bug: it's the one division touching three separate shared-venue
+relationships at once (an internal one between two of its own teams, plus two more
+against Division 1's teams), and with only two possible preference labels
+("front-loaded" or "back-loaded") for four independently-flipped teams sharing venues
+with Division 1 alone, at least one coincidental clash is mathematically unavoidable
+by the pigeonhole principle, regardless of which combination is tried — confirmed
+empirically too, by checking all 64 possible flip combinations directly, none of which
+reach a zero-reorder fit for that division. The schedule this produces is still fully
+correct (re-ran the exact same round-robin-completeness/no-double-booking/venue-clash
+checks used for the earlier fixture verification below, all still pass) — it just
+can't always match the hand-drawn convention's exact week numbering when a division's
+shared-venue shape is tight enough to force real trade-offs. `npx tsc --noEmit` and
+`expo export -p web` both clean.
+
 ## 2026-07-29 — team fixtures view + real-league fixture verification
 
 - **Team fixtures view, `admin-team.tsx`.** Clicking a team from the admin dashboard
