@@ -11,6 +11,8 @@ import { useAuthStore } from '@/stores/authStore';
 import { RAW, type SemanticTone } from '@/lib/theme';
 import { Screen, Heading, Body, Caption, Button, Card, Badge, ListRow, Input, Label, Sheet, AppIcon, StatTile, type AppIconName } from '@/components/ui';
 import { AdminShell } from '@/components/admin/AdminShell';
+import { carryOverSeason } from '@/lib/seasonCarryOver';
+import { Alert } from '@/lib/alert';
 
 const DESKTOP_BREAKPOINT = 768;
 
@@ -57,6 +59,10 @@ export default function AdminHomeScreen() {
   const [showSeasonModal, setShowSeasonModal] = useState(false);
   const [newSeasonName, setNewSeasonName] = useState('');
   const [isCreatingSeason, setIsCreatingSeason] = useState(false);
+  // null = start empty. Defaults to empty rather than pre-picking the most
+  // recent season, since that's often a throwaway test/mock season, not the
+  // real previous one — admin should always choose deliberately.
+  const [copyFromSeasonId, setCopyFromSeasonId] = useState<string | null>(null);
 
   const [setupLeagueName, setSetupLeagueName] = useState('');
   const [isCreatingLeague, setIsCreatingLeague] = useState(false);
@@ -101,6 +107,8 @@ export default function AdminHomeScreen() {
       }
     });
 
+    const onErr = (e: unknown) => Alert.alert('Error', (e as Error).message ?? 'Something went wrong');
+
     const unsubSeasons = onSnapshot(
       query(collection(db, 'seasons'), where('leagueId', '==', leagueId)),
       (snap) => {
@@ -109,6 +117,7 @@ export default function AdminHomeScreen() {
           .sort((a, b) => (b as any).createdAt?.seconds - (a as any).createdAt?.seconds);
         setSeasons(list);
       },
+      onErr,
     );
 
     // Lightweight — just counts, for the Inbox nav row badge. May slightly
@@ -123,10 +132,12 @@ export default function AdminHomeScreen() {
         where('status', '==', 'pending'),
       ),
       (snap) => setPendingCount(snap.size),
+      onErr,
     );
     const unsubDisputes = onSnapshot(
       query(collection(db, 'matches'), where('leagueId', '==', leagueId), where('status', '==', 'disputed')),
       (snap) => setDisputeCount(snap.size),
+      onErr,
     );
 
     return () => { cancelled = true; unsubSeasons(); unsubReqs(); unsubDisputes(); };
@@ -142,6 +153,7 @@ export default function AdminHomeScreen() {
     const unsub = onSnapshot(
       query(collection(db, 'teams'), where('seasonId', '==', activeSeason.id)),
       (snap) => setTeamsCount(snap.size),
+      (e) => Alert.alert('Error', (e as Error).message ?? 'Something went wrong'),
     );
     return unsub;
   }, [activeSeason?.id]);
@@ -149,13 +161,26 @@ export default function AdminHomeScreen() {
   async function createSeason() {
     if (!newSeasonName.trim() || !leagueId) return;
     setIsCreatingSeason(true);
-    await addDoc(collection(db, 'seasons'), {
+    const seasonRef = await addDoc(collection(db, 'seasons'), {
       leagueId,
       name: newSeasonName.trim(),
       status: 'upcoming',
       createdAt: serverTimestamp(),
     });
+
+    if (copyFromSeasonId) {
+      const sourceName = seasons.find((s) => s.id === copyFromSeasonId)?.name ?? 'the selected season';
+      const result = await carryOverSeason(copyFromSeasonId, seasonRef.id, leagueId);
+      Alert.alert(
+        'Season created',
+        `Copied ${result.divisionsCreated} division${result.divisionsCreated === 1 ? '' : 's'}, `
+        + `${result.teamsCreated} team${result.teamsCreated === 1 ? '' : 's'}, and `
+        + `${result.playersCreated} player${result.playersCreated === 1 ? '' : 's'} from ${sourceName}.`,
+      );
+    }
+
     setNewSeasonName('');
+    setCopyFromSeasonId(null);
     setShowSeasonModal(false);
     setIsCreatingSeason(false);
   }
@@ -230,13 +255,45 @@ export default function AdminHomeScreen() {
     </>
   );
 
+  function closeSeasonModal() {
+    setShowSeasonModal(false);
+    setNewSeasonName('');
+    setCopyFromSeasonId(null);
+  }
+
   const newSeasonSheet = (
-    <Sheet visible={showSeasonModal} onClose={() => { setShowSeasonModal(false); setNewSeasonName(''); }}>
+    <Sheet visible={showSeasonModal} onClose={closeSeasonModal}>
       <Heading size="lg" className="mb-5">New Season</Heading>
       <Label>Season name</Label>
       <Input value={newSeasonName} onChangeText={setNewSeasonName} placeholder="e.g. 2025/26" autoFocus className="mb-5" />
+
+      {seasons.length > 0 && (
+        <>
+          <Label>Copy teams &amp; players from</Label>
+          <Caption className="mb-2">
+            Carries over divisions, teams, and rosters (including who's already claimed a spot) so you're
+            editing instead of starting from scratch. You can add/remove players afterward as normal.
+          </Caption>
+          <View className="gap-2 mb-5">
+            <ListRow
+              title="Start empty"
+              onPress={() => setCopyFromSeasonId(null)}
+              trailing={copyFromSeasonId === null ? <Body size="xs" tone="brand" weight="semibold">Selected</Body> : undefined}
+            />
+            {seasons.map((season) => (
+              <ListRow
+                key={season.id}
+                title={season.name}
+                onPress={() => setCopyFromSeasonId(season.id)}
+                trailing={copyFromSeasonId === season.id ? <Body size="xs" tone="brand" weight="semibold">Selected</Body> : undefined}
+              />
+            ))}
+          </View>
+        </>
+      )}
+
       <View className="flex-row gap-2.5">
-        <Button variant="ghost" className="flex-1" onPress={() => { setShowSeasonModal(false); setNewSeasonName(''); }}>Cancel</Button>
+        <Button variant="ghost" className="flex-1" onPress={closeSeasonModal}>Cancel</Button>
         <Button className="flex-1" disabled={isCreatingSeason || !newSeasonName.trim()} loading={isCreatingSeason} onPress={createSeason}>
           Create
         </Button>

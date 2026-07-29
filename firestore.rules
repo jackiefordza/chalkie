@@ -193,9 +193,17 @@ service cloud.firestore {
           || me().teamId == matchData().awayTeamId
         );
 
-        allow create, update: if isCaptainOrVC()
-          && me().teamId == request.resource.data.submittedByTeamId
-          && matchData().status != 'confirmed';
+        // Admin can also submit on behalf of either team — for a captain who's
+        // stuck or offline, someone still needs a way to get a result in.
+        // submittedByTeamId must still be one of the match's own two teams
+        // (not an arbitrary team), same constraint a captain's own submission
+        // already has implicitly via me().teamId.
+        allow create, update: if matchData().status != 'confirmed'
+          && (
+            (isCaptainOrVC() && me().teamId == request.resource.data.submittedByTeamId)
+            || (isAdmin() && me().leagueId == matchData().leagueId
+                && request.resource.data.submittedByTeamId in [matchData().homeTeamId, matchData().awayTeamId])
+          );
 
         // Admin needs this to reset test-league submissions between QA runs
         allow delete: if isAdmin() && me().leagueId == matchData().leagueId;

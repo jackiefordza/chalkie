@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { View, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { collection, onSnapshot, query, where, orderBy, addDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '@/config/firebase';
+import { Alert } from '@/lib/alert';
 import { RAW } from '@/lib/theme';
 import { Sheet, Heading, Body, Caption, Button, Input, Label, ListRow } from '@/components/ui';
 import type { Venue } from '@/types';
@@ -32,6 +33,7 @@ export function VenuePickerSheet({ visible, onClose, leagueId, value, onSelect, 
     const unsub = onSnapshot(
       query(collection(db, 'venues'), where('leagueId', '==', leagueId), orderBy('name', 'asc')),
       (snap) => setVenues(snap.docs.map((d) => ({ id: d.id, ...d.data() } as Venue))),
+      (e) => Alert.alert('Error', (e as Error).message ?? 'Something went wrong'),
     );
     return unsub;
   }, [visible, leagueId]);

@@ -44,6 +44,7 @@ export default function AdminInboxScreen() {
     // All pending requests, not just captainRole — claim/join requests need
     // admin's eyes too when the team they're for has no captain or VC yet to
     // review them normally (see actionableClaimJoinRequests below).
+    const onErr = (e: unknown) => Alert.alert('Error', (e as Error).message ?? 'Something went wrong');
     const unsubReqs = onSnapshot(
       query(
         collection(db, 'joinRequests'),
@@ -51,11 +52,13 @@ export default function AdminInboxScreen() {
         where('status', '==', 'pending'),
       ),
       (snap) => setPendingRequests(snap.docs.map((d) => ({ id: d.id, ...d.data() } as JoinRequest))),
+      onErr,
     );
 
     const unsubDisputes = onSnapshot(
       query(collection(db, 'matches'), where('leagueId', '==', leagueId), where('status', '==', 'disputed')),
       (snap) => setDisputes(snap.docs.map((d) => ({ id: d.id, ...d.data() } as DisputedMatch))),
+      onErr,
     );
 
     const unsubTeams = onSnapshot(
@@ -72,6 +75,7 @@ export default function AdminInboxScreen() {
         });
         setTeams(map);
       },
+      onErr,
     );
 
     return () => { unsubReqs(); unsubDisputes(); unsubTeams(); };

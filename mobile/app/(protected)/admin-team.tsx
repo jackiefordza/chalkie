@@ -112,11 +112,12 @@ export default function AdminTeamScreen() {
       } else {
         setVcName(null);
       }
-    });
+    }, (e) => Alert.alert('Error', (e as Error).message ?? 'Something went wrong'));
 
     const unsubPlayers = onSnapshot(
       query(collection(db, 'players'), where('teamId', '==', teamId)),
       (snap) => setPlayers(snap.docs.map((d) => ({ id: d.id, ...d.data() } as Player))),
+      (e) => Alert.alert('Error', (e as Error).message ?? 'Something went wrong'),
     );
 
     return () => { unsubTeam(); unsubPlayers(); };
@@ -126,7 +127,7 @@ export default function AdminTeamScreen() {
     if (!teamVenueId) { setTeamVenue(null); return; }
     const unsub = onSnapshot(doc(db, 'venues', teamVenueId), (snap) => {
       setTeamVenue(snap.exists() ? ({ id: snap.id, ...snap.data() } as Venue) : null);
-    });
+    }, (e) => Alert.alert('Error', (e as Error).message ?? 'Something went wrong'));
     return unsub;
   }, [teamVenueId]);
 
@@ -142,6 +143,7 @@ export default function AdminTeamScreen() {
             .sort((a, b) => a.name.localeCompare(b.name)),
         );
       },
+      (e) => Alert.alert('Error', (e as Error).message ?? 'Something went wrong'),
     );
     return unsub;
   }, [appUser?.leagueId, teamId]);
@@ -153,6 +155,7 @@ export default function AdminTeamScreen() {
       (snap) => setSiblingDivisions(
         snap.docs.map((d) => ({ id: d.id, name: d.data().name as string })).sort((a, b) => a.name.localeCompare(b.name)),
       ),
+      (e) => Alert.alert('Error', (e as Error).message ?? 'Something went wrong'),
     );
     return unsub;
   }, [seasonId]);

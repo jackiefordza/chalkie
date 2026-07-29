@@ -80,6 +80,8 @@ export default function CaptainsScreen() {
   useEffect(() => {
     if (!teamId) return;
 
+    const onErr = (e: unknown) => { setIsLoading(false); Alert.alert('Error', (e as Error).message ?? 'Something went wrong'); };
+
     const unsubTeam = onSnapshot(doc(db, 'teams', teamId), (snap) => {
       if (snap.exists()) {
         const data = snap.data();
@@ -89,7 +91,7 @@ export default function CaptainsScreen() {
         setCaptainUserId(data.captainUserId ?? null);
         setVcUserId(data.viceCaptainUserId ?? null);
       }
-    });
+    }, onErr);
 
     const unsubPlayers = onSnapshot(
       query(collection(db, 'players'), where('teamId', '==', teamId)),
@@ -101,11 +103,13 @@ export default function CaptainsScreen() {
         );
         setIsLoading(false);
       },
+      onErr,
     );
 
     const unsubRequests = onSnapshot(
       query(collection(db, 'joinRequests'), where('teamId', '==', teamId), where('status', '==', 'pending')),
       (snap) => setJoinRequests(snap.docs.map((d) => ({ id: d.id, ...d.data() } as JoinRequest))),
+      onErr,
     );
 
     return () => { unsubTeam(); unsubPlayers(); unsubRequests(); };
@@ -157,6 +161,7 @@ export default function CaptainsScreen() {
 
         setActionableMatches(resolved.filter((m): m is ActionableMatch => m !== null));
       },
+      (e) => Alert.alert('Error', (e as Error).message ?? 'Something went wrong'),
     );
 
     return unsub;
@@ -166,7 +171,7 @@ export default function CaptainsScreen() {
     if (!teamVenueId) { setTeamVenue(null); return; }
     const unsub = onSnapshot(doc(db, 'venues', teamVenueId), (snap) => {
       setTeamVenue(snap.exists() ? ({ id: snap.id, ...snap.data() } as Venue) : null);
-    });
+    }, (e) => Alert.alert('Error', (e as Error).message ?? 'Something went wrong'));
     return unsub;
   }, [teamVenueId]);
 

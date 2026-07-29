@@ -94,6 +94,7 @@ export default function AdminDisputeScreen() {
       (snap) => {
         setPlayers(snap.docs.map((p) => ({ id: p.id, name: p.data().name, teamId: p.data().teamId } as Player)));
       },
+      (e) => setLoadError((e as Error).message ?? 'Something went wrong'),
     );
     return () => unsubPlayers();
   }, [matchId, appUser?.leagueId]);

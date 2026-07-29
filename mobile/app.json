@@ -29,7 +29,13 @@
       "expo-router",
       "expo-asset",
       "expo-font",
-      "expo-notifications"
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/notification-icon.png",
+          "color": "#7A4FD1"
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true

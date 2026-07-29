@@ -17,6 +17,7 @@ import { Screen, Heading, Body, Caption, Button, Card, Chip, ListRow, Input, Lab
 import { AdminShell } from '@/components/admin/AdminShell';
 import { VenuePickerSheet } from '@/components/admin/VenuePickerSheet';
 import { parseDateInput, formatDateInput, formatDate } from '@/lib/dates';
+import { generateSeasonFixtures } from '@/lib/fixtures';
 import { FixturesTab, ResultsTab } from './admin-fixtures';
 import { StandingsTab } from './admin-standings-override';
 import type { Venue, SeasonBreak } from '@/types';
@@ -243,9 +244,11 @@ export default function AdminSeasonScreen() {
 
   useEffect(() => {
     if (!divisionId || !appUser?.leagueId || !seasonId) return;
+    const onErr = (e: unknown) => Alert.alert('Error', (e as Error).message ?? 'Something went wrong');
     const unsubPlayers = onSnapshot(
       query(collection(db, 'players'), where('divisionId', '==', divisionId)),
       (snap) => setDivisionPlayers(snap.docs.map((d) => ({ id: d.id, teamId: d.data().teamId as string }))),
+      onErr,
     );
     // matches' read rule only checks leagueId (not divisionId), so that
     // filter has to be in the query too or Firestore rejects it outright —
@@ -257,6 +260,7 @@ export default function AdminSeasonScreen() {
         where('divisionId', '==', divisionId),
       ),
       (snap) => setDivisionMatches(snap.docs.map((d) => ({ status: d.data().status as string }))),
+      onErr,
     );
     const unsubTables = onSnapshot(
       query(collection(db, 'divisionTables'), where('seasonId', '==', seasonId), where('divisionId', '==', divisionId)),
@@ -266,12 +270,14 @@ export default function AdminSeasonScreen() {
         won: (d.data().won as number) ?? 0,
         lost: (d.data().lost as number) ?? 0,
       }))),
+      onErr,
     );
     // One query for the whole league rather than one per team — grouped by
     // teamId client-side to flag which teams have a request awaiting review.
     const unsubRequests = onSnapshot(
       query(collection(db, 'joinRequests'), where('leagueId', '==', appUser.leagueId), where('status', '==', 'pending')),
       (snap) => setPendingRequestTeamIds(snap.docs.map((d) => d.data().teamId as string).filter(Boolean)),
+      onErr,
     );
     return () => { unsubPlayers(); unsubMatches(); unsubTables(); unsubRequests(); };
   }, [divisionId, appUser?.leagueId, seasonId]);
@@ -285,12 +291,15 @@ export default function AdminSeasonScreen() {
         snap.docs.forEach((d) => { byId[d.id] = { id: d.id, ...d.data() } as Venue; });
         setVenuesById(byId);
       },
+      (e) => Alert.alert('Error', (e as Error).message ?? 'Something went wrong'),
     );
     return unsub;
   }, [appUser?.leagueId]);
 
   useEffect(() => {
     if (!seasonId) return;
+
+    const onErr = (e: unknown) => { setIsLoading(false); Alert.alert('Error', (e as Error).message ?? 'Something went wrong'); };
 
     const unsubSeason = onSnapshot(doc(db, 'seasons', seasonId), (snap) => {
       if (snap.exists()) {
@@ -304,7 +313,7 @@ export default function AdminSeasonScreen() {
           })),
         );
       }
-    });
+    }, onErr);
 
     const unsubDivisions = onSnapshot(
       query(collection(db, 'divisions'), where('seasonId', '==', seasonId)),
@@ -315,6 +324,7 @@ export default function AdminSeasonScreen() {
             .sort((a, b) => a.order - b.order),
         );
       },
+      onErr,
     );
 
     const unsubTeams = onSnapshot(
@@ -323,10 +333,28 @@ export default function AdminSeasonScreen() {
         setTeams(snap.docs.map((d) => ({ id: d.id, ...d.data() } as Team)));
         setIsLoading(false);
       },
+      onErr,
     );
 
     return () => { unsubSeason(); unsubDivisions(); unsubTeams(); };
   }, [seasonId]);
+
+  // Season-wide fixture count (every division, not just whichever one is
+  // currently open) — purely to warn "Generate Fixtures for All Divisions"
+  // isn't a clean slate if some fixtures already exist. Both fields need to
+  // be in the query itself, not just leagueId: same reason as the per-
+  // division matches query elsewhere in this codebase — Firestore requires
+  // the fields the rule checks to appear as query constraints.
+  const [seasonMatchCount, setSeasonMatchCount] = useState<number | null>(null);
+  useEffect(() => {
+    if (!seasonId || !appUser?.leagueId) return;
+    const unsub = onSnapshot(
+      query(collection(db, 'matches'), where('leagueId', '==', appUser.leagueId), where('seasonId', '==', seasonId)),
+      (snap) => setSeasonMatchCount(snap.size),
+      (e) => Alert.alert('Error', (e as Error).message ?? 'Something went wrong'),
+    );
+    return unsub;
+  }, [seasonId, appUser?.leagueId]);
 
   async function setStatus(status: string) {
     if (!seasonId) return;
@@ -502,6 +530,92 @@ export default function AdminSeasonScreen() {
 
   const [deletingDivisionId, setDeletingDivisionId] = useState<string | null>(null);
   const [isDeletingSeason, setIsDeletingSeason] = useState(false);
+
+  const [showGenerateAll, setShowGenerateAll] = useState(false);
+  const [generateAllStartDateText, setGenerateAllStartDateText] = useState('');
+  const [generateAllIntervalDays, setGenerateAllIntervalDays] = useState('7');
+  const [isGeneratingAll, setIsGeneratingAll] = useState(false);
+  const [generateAllError, setGenerateAllError] = useState<string | null>(null);
+
+  // Prefills from the season's own start date the first time it's
+  // available — still just a starting point, admin can override.
+  useEffect(() => {
+    if (seasonStartDate && !generateAllStartDateText) setGenerateAllStartDateText(formatDateInput(seasonStartDate));
+  }, [seasonStartDate, generateAllStartDateText]);
+
+  async function generateAllFixtures() {
+    setGenerateAllError(null);
+    const startDate = parseDateInput(generateAllStartDateText);
+    if (!startDate) { setGenerateAllError('Enter the start date as YYYY-MM-DD'); return; }
+    const interval = Number(generateAllIntervalDays);
+    if (!Number.isFinite(interval) || interval <= 0) { setGenerateAllError('Enter a valid number of days between rounds'); return; }
+    if (!appUser?.leagueId || !seasonId) { setGenerateAllError('Season not loaded yet — try again in a moment'); return; }
+    const eligibleDivisions = divisions.filter((d) => teamsForDivision(d.id).length >= 2);
+    if (eligibleDivisions.length === 0) { setGenerateAllError('No division has 2+ teams yet'); return; }
+
+    setIsGeneratingAll(true);
+    try {
+      const venueBoardCounts: Record<string, number> = {};
+      Object.values(venuesById).forEach((v) => { venueBoardCounts[v.id] = v.boardCount; });
+
+      const { fixturesByDivision, unresolvedClashes } = generateSeasonFixtures(
+        eligibleDivisions.map((d) => ({
+          divisionId: d.id,
+          teams: teamsForDivision(d.id).map((t) => ({ id: t.id, venueId: t.venueId })),
+        })),
+        { startDate, intervalDays: interval, breaks: seasonBreaks, venueBoardCounts },
+      );
+
+      const writes: Array<(batch: ReturnType<typeof writeBatch>) => void> = [];
+      eligibleDivisions.forEach((division) => {
+        const divTeams = teamsForDivision(division.id);
+        (fixturesByDivision[division.id] ?? []).forEach((fixture) => {
+          const matchRef = doc(collection(db, 'matches'));
+          // Home team's own name, not the venue's — see the note on this in
+          // admin-fixtures.tsx's generateFixtures.
+          const homeTeamName = divTeams.find((t) => t.id === fixture.homeTeamId)?.name ?? null;
+          writes.push((batch) => batch.set(matchRef, {
+            leagueId: appUser.leagueId,
+            seasonId,
+            divisionId: division.id,
+            round: fixture.round,
+            homeTeamId: fixture.homeTeamId,
+            awayTeamId: fixture.awayTeamId,
+            scheduledDate: fixture.scheduledDate,
+            venue: homeTeamName,
+            status: 'scheduled',
+            homeGamesWon: null,
+            awayGamesWon: null,
+            homeLegsWon: null,
+            awayLegsWon: null,
+            createdAt: serverTimestamp(),
+          }));
+        });
+      });
+
+      // Firestore batches cap at 500 writes — chunk defensively rather than
+      // assume this league's size (or a bigger future one) always fits.
+      const BATCH_LIMIT = 400;
+      for (let i = 0; i < writes.length; i += BATCH_LIMIT) {
+        const batch = writeBatch(db);
+        writes.slice(i, i + BATCH_LIMIT).forEach((w) => w(batch));
+        await batch.commit();
+      }
+
+      setShowGenerateAll(false);
+      Alert.alert(
+        'Fixtures generated',
+        `Created ${writes.length} fixtures across ${eligibleDivisions.length} division${eligibleDivisions.length === 1 ? '' : 's'}.`
+        + (unresolvedClashes.length > 0
+          ? `\n\n${unresolvedClashes.length} venue clash${unresolvedClashes.length === 1 ? '' : 'es'} couldn't be fully avoided even across the whole season — check the affected divisions' Fixtures tabs and adjust manually.`
+          : ''),
+      );
+    } catch (e: unknown) {
+      setGenerateAllError((e as Error).message ?? 'Something went wrong');
+    } finally {
+      setIsGeneratingAll(false);
+    }
+  }
 
   function confirmDeleteDivision(division: Division) {
     Alert.alert(
@@ -711,6 +825,55 @@ export default function AdminSeasonScreen() {
     </Sheet>
   );
 
+  const generateAllSheet = (
+    <Sheet visible={showGenerateAll} onClose={() => setShowGenerateAll(false)}>
+      <Heading size="lg" className="mb-1">Generate Fixtures for All Divisions</Heading>
+      <Body size="sm" className="mb-5">
+        {divisions.length} division{divisions.length === 1 ? '' : 's'}, {teams.length} teams total.
+        Generating every division together — rather than one at a time — lets the scheduler avoid venue
+        clashes between teams in *different* divisions that share a venue, which generating one division
+        at a time can't see at all. Every fixture stays on its designated match night; clashes are avoided
+        by choosing which week each pairing falls in, never by moving a match to a different day.
+      </Body>
+
+      {generateAllError ? (
+        <Card tone="coral" className="mb-4" padded={false}>
+          <Body tone="coral" className="p-3">{generateAllError}</Body>
+        </Card>
+      ) : null}
+
+      {seasonMatchCount != null && seasonMatchCount > 0 && (
+        <Card tone="butter" className="mb-4">
+          <Body size="sm">
+            This season already has {seasonMatchCount} fixture{seasonMatchCount === 1 ? '' : 's'}. Generating
+            again adds more rather than replacing them — delete existing fixtures from each division's
+            Fixtures tab first if you want a clean slate.
+          </Body>
+        </Card>
+      )}
+
+      <Label>First round date (YYYY-MM-DD)</Label>
+      <Input
+        value={generateAllStartDateText}
+        onChangeText={setGenerateAllStartDateText}
+        placeholder="e.g. 2026-09-10"
+        autoCapitalize="none"
+        autoCorrect={false}
+        className="mb-4"
+      />
+
+      <Label>Days between rounds</Label>
+      <Input value={generateAllIntervalDays} onChangeText={setGenerateAllIntervalDays} placeholder="7" keyboardType="number-pad" className="mb-6" />
+
+      <View className="flex-row gap-2.5">
+        <Button variant="ghost" className="flex-1" disabled={isGeneratingAll} onPress={() => setShowGenerateAll(false)}>Cancel</Button>
+        <Button className="flex-1" disabled={isGeneratingAll} loading={isGeneratingAll} onPress={generateAllFixtures}>
+          Generate
+        </Button>
+      </View>
+    </Sheet>
+  );
+
   // ── Mobile: unchanged drill-down UX (own screens for Table/Fixtures/Adjust) ──
   if (!isDesktop) {
     return (
@@ -729,6 +892,9 @@ export default function AdminSeasonScreen() {
               <Chip key={opt.value} label={opt.label} tone={opt.tone} selected={seasonStatus === opt.value} onPress={() => setStatus(opt.value)} className="flex-1" />
             ))}
           </View>
+          <Button variant="secondary" size="sm" className="mb-2" onPress={() => setShowGenerateAll(true)}>
+            Generate Fixtures for All Divisions
+          </Button>
           <Button variant="danger" size="sm" disabled={isDeletingSeason} loading={isDeletingSeason} onPress={confirmDeleteSeason}>
             Delete Season
           </Button>
@@ -814,6 +980,7 @@ export default function AdminSeasonScreen() {
         {teamDivisionPicker}
         {newTeamVenuePicker}
         {scheduleSheet}
+        {generateAllSheet}
         {renameDivisionSheet}
         {renameSeasonSheet}
       </Screen>
@@ -933,6 +1100,7 @@ export default function AdminSeasonScreen() {
             <Heading size="sm" className="flex-1">Divisions</Heading>
             <Button variant="secondary" size="sm" className="mr-2" onPress={() => setShowAddDivision(true)}>+ Add Division</Button>
             <Button variant="secondary" size="sm" className="mr-2" onPress={() => openAddTeam(null)}>+ Add Team</Button>
+            <Button variant="secondary" size="sm" className="mr-2" onPress={() => setShowGenerateAll(true)}>Generate Fixtures</Button>
             <Button variant="danger" size="sm" disabled={isDeletingSeason} loading={isDeletingSeason} onPress={confirmDeleteSeason}>
               Delete Season
             </Button>
@@ -989,6 +1157,7 @@ export default function AdminSeasonScreen() {
       {renameSeasonSheet}
       {newTeamVenuePicker}
       {scheduleSheet}
+      {generateAllSheet}
     </>
   );
 }

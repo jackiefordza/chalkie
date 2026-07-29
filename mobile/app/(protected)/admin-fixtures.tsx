@@ -8,7 +8,7 @@ import {
 import { db } from '@/config/firebase';
 import { useAuthStore } from '@/stores/authStore';
 import { Alert } from '@/lib/alert';
-import { generateRoundRobinFixtures } from '@/lib/fixtures';
+import { generateSeasonFixtures, type VenueClash } from '@/lib/fixtures';
 import { parseDateInput, formatDateInput, formatDate } from '@/lib/dates';
 import { RAW, type SemanticTone } from '@/lib/theme';
 import { Screen, Heading, Body, Caption, Badge, Button, Card, ListRow, Input, Label, Sheet, AppBar } from '@/components/ui';
@@ -170,7 +170,7 @@ function useFixturesController(divisionId: string | undefined, leagueId: string 
   const [isGenerating, setIsGenerating] = useState(false);
   const [genError, setGenError] = useState<string | null>(null);
   const [isRegenerating, setIsRegenerating] = useState(false);
-  const [conflictCount, setConflictCount] = useState<number | null>(null);
+  const [unresolvedClashes, setUnresolvedClashes] = useState<VenueClash[] | null>(null);
 
   const [venuesById, setVenuesById] = useState<Record<string, Venue>>({});
   const [seasonBreaks, setSeasonBreaks] = useState<SeasonBreak[]>([]);
@@ -243,6 +243,7 @@ function useFixturesController(divisionId: string | undefined, leagueId: string 
         snap.docs.forEach((d) => { byId[d.id] = { id: d.id, ...d.data() } as Venue; });
         setVenuesById(byId);
       },
+      (e) => setLoadError(e.message),
     );
     return unsub;
   }, [leagueId]);
@@ -258,7 +259,7 @@ function useFixturesController(divisionId: string | undefined, leagueId: string 
           start: b.start.toDate(), end: b.end.toDate(), label: b.label,
         })),
       );
-    });
+    }, (e) => setLoadError(e.message));
     return unsub;
   }, [seasonId]);
 
@@ -283,20 +284,24 @@ function useFixturesController(divisionId: string | undefined, leagueId: string 
     if (!leagueId || !seasonId || !divisionId) { setGenError('Season not loaded yet — try again in a moment'); return; }
 
     setIsGenerating(true);
-    setConflictCount(null);
+    setUnresolvedClashes(null);
     try {
       const venueBoardCounts: Record<string, number> = {};
       Object.values(venuesById).forEach((v) => { venueBoardCounts[v.id] = v.boardCount; });
 
-      const fixtures = generateRoundRobinFixtures(
-        teams.map((t) => ({ id: t.id, venueId: t.venueId })),
+      const { fixturesByDivision, unresolvedClashes: clashes } = generateSeasonFixtures(
+        [{ divisionId: divisionId!, teams: teams.map((t) => ({ id: t.id, venueId: t.venueId })) }],
         { startDate, intervalDays: interval, breaks: seasonBreaks, venueBoardCounts },
       );
+      const fixtures = fixturesByDivision[divisionId!] ?? [];
 
       const batch = writeBatch(db);
       fixtures.forEach((fixture) => {
         const matchRef = doc(collection(db, 'matches'));
-        const homeVenueId = teams.find((t) => t.id === fixture.homeTeamId)?.venueId ?? null;
+        // Deliberately the home team's own name, not the physical venue's
+        // registered name (they often differ, e.g. team "Fox and Hounds" vs
+        // venue "The Fox & Hounds") — players know fixtures by team name.
+        const homeTeamName = teams.find((t) => t.id === fixture.homeTeamId)?.name ?? null;
         batch.set(matchRef, {
           leagueId,
           seasonId,
@@ -305,7 +310,7 @@ function useFixturesController(divisionId: string | undefined, leagueId: string 
           homeTeamId: fixture.homeTeamId,
           awayTeamId: fixture.awayTeamId,
           scheduledDate: fixture.scheduledDate,
-          venue: homeVenueId ? venuesById[homeVenueId]?.name ?? null : null,
+          venue: homeTeamName,
           status: 'scheduled',
           homeGamesWon: null,
           awayGamesWon: null,
@@ -316,7 +321,7 @@ function useFixturesController(divisionId: string | undefined, leagueId: string 
       });
       await batch.commit();
       setIsRegenerating(false);
-      setConflictCount(fixtures.filter((f) => f.venueConflictShifted).length);
+      setUnresolvedClashes(clashes);
     } catch (e: unknown) {
       setGenError((e as Error).message ?? 'Something went wrong');
     } finally {
@@ -333,11 +338,25 @@ function useFixturesController(divisionId: string | undefined, leagueId: string 
         {
           text: 'Delete All', style: 'destructive',
           onPress: async () => {
-            const snap = await getDocs(query(collection(db, 'matches'), where('divisionId', '==', divisionId)));
-            const batch = writeBatch(db);
-            snap.docs.forEach((d) => batch.delete(d.ref));
-            await batch.commit();
-            setIsRegenerating(true);
+            try {
+              // Both fields have to be explicit query filters, not just
+              // leagueId — matches' read rule checks leagueId only, but
+              // Firestore rejects a list query outright unless every field
+              // the rule touches is also a filter on the query itself (same
+              // reason unsubMatches above queries by both, not divisionId
+              // alone).
+              const snap = await getDocs(query(
+                collection(db, 'matches'),
+                where('leagueId', '==', leagueId),
+                where('divisionId', '==', divisionId),
+              ));
+              const batch = writeBatch(db);
+              snap.docs.forEach((d) => batch.delete(d.ref));
+              await batch.commit();
+              setIsRegenerating(true);
+            } catch (e: unknown) {
+              Alert.alert('Error', (e as Error).message ?? 'Something went wrong');
+            }
           },
         },
       ],
@@ -369,6 +388,8 @@ function useFixturesController(divisionId: string | undefined, leagueId: string 
         venue: editVenue.trim() || null,
       });
       setEditTarget(null);
+    } catch (e: unknown) {
+      Alert.alert('Error', (e as Error).message ?? 'Something went wrong');
     } finally {
       setIsSavingEdit(false);
     }
@@ -380,8 +401,12 @@ function useFixturesController(divisionId: string | undefined, leagueId: string 
       Alert.alert('Can’t delete', 'This fixture already has results submitted against it.');
       return;
     }
-    await deleteDoc(doc(db, 'matches', editTarget.id));
-    setEditTarget(null);
+    try {
+      await deleteDoc(doc(db, 'matches', editTarget.id));
+      setEditTarget(null);
+    } catch (e: unknown) {
+      Alert.alert('Error', (e as Error).message ?? 'Something went wrong');
+    }
   }
 
   const showGenerator = !isLoading && (matches.length === 0 || isRegenerating);
@@ -389,7 +414,7 @@ function useFixturesController(divisionId: string | undefined, leagueId: string 
   return {
     divisionName, teams, matches, isLoading, loadError,
     startDateText, setStartDateText, intervalDays, setIntervalDays, isGenerating, genError, isRegenerating, setIsRegenerating,
-    conflictCount,
+    unresolvedClashes,
     editTarget, setEditTarget, editDateText, setEditDateText, editVenue, setEditVenue, isSavingEdit,
     teamName, rounds, generateFixtures, deleteAllFixtures, openEdit, saveEdit, deleteFixture, showGenerator,
   };
@@ -408,15 +433,16 @@ function FixturesBody({ c, isDesktop, statusFilter }: { c: FixturesController; i
 
   return (
     <>
-      {c.conflictCount != null && c.conflictCount > 0 && (
-        <Card tone="butter" className="mb-4">
+      {c.unresolvedClashes != null && c.unresolvedClashes.length > 0 && (
+        <Card tone="coral" className="mb-4">
           <Body weight="semibold" className="mb-1">
-            Moved {c.conflictCount} fixture{c.conflictCount === 1 ? '' : 's'} to avoid a venue clash
+            Couldn't fully avoid {c.unresolvedClashes.length} venue clash{c.unresolvedClashes.length === 1 ? '' : 'es'}
           </Body>
           <Body size="sm">
-            One or more venues had more teams drawn home on the same day than they have boards for —
-            those fixtures were pushed to the following day(s) instead. Check the dates below and adjust
-            manually if needed.
+            One or more venues have more teams sharing them than boards, even spread across the whole
+            season — there weren't enough weeks to give every team a clash-free date. Every fixture is
+            still on its designated match night; find the affected rows below (same date, same venue,
+            more home teams than boards) and adjust manually.
           </Body>
         </Card>
       )}

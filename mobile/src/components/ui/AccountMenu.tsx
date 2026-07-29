@@ -8,6 +8,7 @@ import { router } from 'expo-router';
 import { doc, onSnapshot } from 'firebase/firestore';
 import * as Haptics from 'expo-haptics';
 import { db } from '@/config/firebase';
+import { Alert } from '@/lib/alert';
 import { useUiStore } from '@/stores/uiStore';
 import { useAuthStore } from '@/stores/authStore';
 import {
@@ -66,9 +67,11 @@ export function AccountMenu() {
       setTeamName(null);
       return;
     }
-    const unsub = onSnapshot(doc(db, 'teams', appUser.teamId), (snap) => {
-      setTeamName((snap.data()?.name as string | undefined) ?? null);
-    });
+    const unsub = onSnapshot(
+      doc(db, 'teams', appUser.teamId),
+      (snap) => setTeamName((snap.data()?.name as string | undefined) ?? null),
+      (e) => Alert.alert('Error', (e as Error).message ?? 'Something went wrong'),
+    );
     return unsub;
   }, [appUser?.teamId]);
 

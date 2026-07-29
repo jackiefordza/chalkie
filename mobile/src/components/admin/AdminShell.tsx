@@ -4,6 +4,7 @@ import { router, usePathname, useGlobalSearchParams } from 'expo-router';
 import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { useColorScheme } from 'nativewind';
 import { db } from '@/config/firebase';
+import { Alert } from '@/lib/alert';
 import { useAuthStore } from '@/stores/authStore';
 import { useAdminContextStore } from '@/stores/adminContextStore';
 import { AppIcon, Heading, Body, Caption, Badge, Sheet, type AppIconName } from '@/components/ui';
@@ -116,17 +117,21 @@ export function AdminShell({ leagueName, title, breadcrumb, actions, children }:
 
   useEffect(() => {
     if (!appUser?.leagueId) return;
+    const onErr = (e: unknown) => Alert.alert('Error', (e as Error).message ?? 'Something went wrong');
     const unsubSeasons = onSnapshot(
       query(collection(db, 'seasons'), where('leagueId', '==', appUser.leagueId)),
       (snap) => setSeasons(snap.docs.map((d) => ({ id: d.id, name: d.data().name })).sort((a, b) => b.name.localeCompare(a.name))),
+      onErr,
     );
     const unsubDivisions = onSnapshot(
       query(collection(db, 'divisions'), where('leagueId', '==', appUser.leagueId)),
       (snap) => setDivisions(snap.docs.map((d) => ({ id: d.id, name: d.data().name, seasonId: d.data().seasonId }))),
+      onErr,
     );
     const unsubTeams = onSnapshot(
       query(collection(db, 'teams'), where('leagueId', '==', appUser.leagueId)),
       (snap) => setTeams(snap.docs.map((d) => ({ id: d.id, divisionId: d.data().divisionId }))),
+      onErr,
     );
     return () => { unsubSeasons(); unsubDivisions(); unsubTeams(); };
   }, [appUser?.leagueId]);

@@ -2,11 +2,12 @@ name: Deploy Firebase
 
 on:
   push:
-    branches: [main]
+    branches: [JakeDevBranch]
     paths:
       - 'functions/**'
       - 'firestore.rules'
       - 'firestore.indexes.json'
+      - 'mobile/**'
   workflow_dispatch: {}
 
 jobs:
@@ -23,9 +24,29 @@ jobs:
         working-directory: functions
         run: npm ci
 
+      - name: Typecheck functions
+        working-directory: functions
+        run: npx tsc --noEmit
+
+      - name: Run function tests
+        working-directory: functions
+        run: npm test
+
       - name: Build functions
         working-directory: functions
         run: npm run build
+
+      - name: Install mobile dependencies
+        working-directory: mobile
+        run: npm ci
+
+      - name: Typecheck mobile
+        working-directory: mobile
+        run: npx tsc --noEmit
+
+      - name: Build web app
+        working-directory: mobile
+        run: npx expo export -p web
 
       - name: Write service account key
         run: printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > /tmp/service-account.json
@@ -33,6 +54,10 @@ jobs:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
 
       - name: Deploy to Firebase
-        run: npx firebase-tools deploy --only functions,firestore:rules,firestore:indexes --project chalkie-app --non-interactive --force
+        run: npx firebase-tools deploy --only hosting,functions,firestore:rules,firestore:indexes --project chalkie-app --non-interactive --force
         env:
           GOOGLE_APPLICATION_CREDENTIALS: /tmp/service-account.json
+
+      - name: Clean up service account key
+        if: always()
+        run: rm -f /tmp/service-account.json
