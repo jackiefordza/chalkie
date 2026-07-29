@@ -109,6 +109,23 @@ just started.
       screen already had — inline banner or `Alert.alert`). Full detail + list of every file/site
       touched in PLAN.md under "Bugs found & fixed". Verified via a paren-depth-aware script (not
       a regex) confirming zero remaining 2-arg `onSnapshot` calls, plus `npx tsc --noEmit` clean.
+- [x] **"Delete all & regenerate" fixtures silently doing nothing — 2026-07-29.** Its
+      Firestore query filtered by `divisionId` only; the security rule needs `leagueId`
+      as an explicit query filter too (same rule as everywhere else in this codebase),
+      so Firestore rejected the query outright — and with no error handling, that
+      vanished silently. Fixed the query and added error handling there plus on the
+      two neighboring actions (edit fixture, delete one fixture) that had the same
+      gap. Verified against the emulator: seeded 6 fixtures, deleted them all through
+      the real button, confirmed zero left in Firestore.
+
+## CI / deploy automation
+- [x] **2026-07-29 — automatic deploy on push to `JakeDevBranch`.** Retargeted the
+      existing (already-working, already-secreted) `deploy-firebase.yml` from `main`
+      (stale since 2026-07-09 — see PLAN.md) to `JakeDevBranch`, added `mobile/**` to
+      its path filter, and added the missing `hosting` deploy target alongside
+      `functions`/`firestore:rules`/`firestore:indexes`. Also added functions
+      typecheck/tests and a mobile typecheck as pre-deploy gates. No more manual
+      CI-token deploys needed for routine merges — see PLAN.md for the full writeup.
 
 ## Suggested improvements (not bugs)
 - [x] **Admin-side "enter/confirm a result" path — 2026-07-28, code complete AND

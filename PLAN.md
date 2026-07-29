@@ -645,6 +645,39 @@ Functions. Flag this to Jake before starting Phase 1 build.
       "merged to JakeDevBranch" can drift apart. **Worth revisiting:** hosting should
       probably be redeployed again once PR #3 actually merges, so `chalkie-app.web.app`
       stays in sync with `JakeDevBranch` rather than pointing at a branch tip.
+  - **2026-07-29 — automatic deploy wired up, ending the manual CI-token dance above.**
+    After several rounds of Jake generating a fresh `firebase login:ci` token per deploy
+    this session, he asked for a lasting fix rather than repeating that every time.
+    Turned out one already existed and half-worked: **`.github/workflows/deploy-firebase.yml`**
+    (created 2026-07-07, unrelated to any CI-token flow — it authenticates via a
+    `FIREBASE_SERVICE_ACCOUNT` GitHub Actions secret, already configured and confirmed
+    working: its 4 prior runs on `main` all succeeded) deploys `functions` +
+    `firestore:rules` + `firestore:indexes` on every push — but only on push to `main`,
+    and `main` and `JakeDevBranch` **diverged** back on 2026-07-09 (`main` has one
+    docs-only commit `JakeDevBranch` doesn't; `JakeDevBranch` has the 16 commits since
+    that hold basically everything built this session — push notifications, the venue
+    entity, fixture scheduling, the desktop admin console, standings redesign, all of
+    it). Since nothing's been pushed to `main` since, this workflow has been silently
+    inert for real work the whole time — not broken, just watching the wrong branch.
+    **Also never deployed hosting at all**, which is why the web app needed a manual
+    CI-token deploy specifically, every time.
+    Fixed both gaps: retargeted the trigger to `branches: [JakeDevBranch]`, broadened
+    the path filter to include `mobile/**` (was functions/rules/indexes only, so a
+    frontend-only change wouldn't have triggered it even once retargeted), added the
+    `mobile` install/typecheck/`expo export -p web` steps, and added `hosting` to the
+    `--only` deploy list alongside the existing three targets. Also added typecheck +
+    `npm test` steps for functions before deploying (mirroring `test-functions.yml`)
+    and a mobile typecheck, so a broken build fails the deploy instead of shipping it,
+    and an explicit cleanup step for the temporary service-account key file.
+    Once this merges into `JakeDevBranch` (both branches already carry a copy of this
+    workflow file, just the stale pre-fix version — so the merge commit itself is what
+    starts using the new one), every future push to `JakeDevBranch` deploys hosting +
+    functions + firestore rules/indexes automatically. No more CI tokens for routine
+    deploys — that flow stays available as a fallback for one-off/out-of-band deploys
+    only (e.g. testing a not-yet-merged branch, as done throughout this session).
+    **Flagging, not fixing:** `main` is still 1 commit ahead / 16 behind `JakeDevBranch`
+    — genuinely stale, not something to reconcile without Jake's say-so (could be
+    intentional, could just be forgotten). Left untouched.
 
 ### Phase 2 — Cup & individual competitions (build during the season, before they're needed mid-season — not required for the August demo or season kickoff)
 - [ ] Team knockout cup: single-elimination, one match per round, cross-division draw.
