@@ -338,11 +338,25 @@ function useFixturesController(divisionId: string | undefined, leagueId: string 
         {
           text: 'Delete All', style: 'destructive',
           onPress: async () => {
-            const snap = await getDocs(query(collection(db, 'matches'), where('divisionId', '==', divisionId)));
-            const batch = writeBatch(db);
-            snap.docs.forEach((d) => batch.delete(d.ref));
-            await batch.commit();
-            setIsRegenerating(true);
+            try {
+              // Both fields have to be explicit query filters, not just
+              // leagueId — matches' read rule checks leagueId only, but
+              // Firestore rejects a list query outright unless every field
+              // the rule touches is also a filter on the query itself (same
+              // reason unsubMatches above queries by both, not divisionId
+              // alone).
+              const snap = await getDocs(query(
+                collection(db, 'matches'),
+                where('leagueId', '==', leagueId),
+                where('divisionId', '==', divisionId),
+              ));
+              const batch = writeBatch(db);
+              snap.docs.forEach((d) => batch.delete(d.ref));
+              await batch.commit();
+              setIsRegenerating(true);
+            } catch (e: unknown) {
+              Alert.alert('Error', (e as Error).message ?? 'Something went wrong');
+            }
           },
         },
       ],
@@ -374,6 +388,8 @@ function useFixturesController(divisionId: string | undefined, leagueId: string 
         venue: editVenue.trim() || null,
       });
       setEditTarget(null);
+    } catch (e: unknown) {
+      Alert.alert('Error', (e as Error).message ?? 'Something went wrong');
     } finally {
       setIsSavingEdit(false);
     }
@@ -385,8 +401,12 @@ function useFixturesController(divisionId: string | undefined, leagueId: string 
       Alert.alert('Can’t delete', 'This fixture already has results submitted against it.');
       return;
     }
-    await deleteDoc(doc(db, 'matches', editTarget.id));
-    setEditTarget(null);
+    try {
+      await deleteDoc(doc(db, 'matches', editTarget.id));
+      setEditTarget(null);
+    } catch (e: unknown) {
+      Alert.alert('Error', (e as Error).message ?? 'Something went wrong');
+    }
   }
 
   const showGenerator = !isLoading && (matches.length === 0 || isRegenerating);
