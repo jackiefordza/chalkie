@@ -8,7 +8,7 @@ import {
 import { db } from '@/config/firebase';
 import { useAuthStore } from '@/stores/authStore';
 import { Alert } from '@/lib/alert';
-import { generateRoundRobinFixtures } from '@/lib/fixtures';
+import { generateSeasonFixtures, type VenueClash } from '@/lib/fixtures';
 import { parseDateInput, formatDateInput, formatDate } from '@/lib/dates';
 import { RAW, type SemanticTone } from '@/lib/theme';
 import { Screen, Heading, Body, Caption, Badge, Button, Card, ListRow, Input, Label, Sheet, AppBar } from '@/components/ui';
@@ -170,7 +170,7 @@ function useFixturesController(divisionId: string | undefined, leagueId: string 
   const [isGenerating, setIsGenerating] = useState(false);
   const [genError, setGenError] = useState<string | null>(null);
   const [isRegenerating, setIsRegenerating] = useState(false);
-  const [conflictCount, setConflictCount] = useState<number | null>(null);
+  const [unresolvedClashes, setUnresolvedClashes] = useState<VenueClash[] | null>(null);
 
   const [venuesById, setVenuesById] = useState<Record<string, Venue>>({});
   const [seasonBreaks, setSeasonBreaks] = useState<SeasonBreak[]>([]);
@@ -284,15 +284,16 @@ function useFixturesController(divisionId: string | undefined, leagueId: string 
     if (!leagueId || !seasonId || !divisionId) { setGenError('Season not loaded yet — try again in a moment'); return; }
 
     setIsGenerating(true);
-    setConflictCount(null);
+    setUnresolvedClashes(null);
     try {
       const venueBoardCounts: Record<string, number> = {};
       Object.values(venuesById).forEach((v) => { venueBoardCounts[v.id] = v.boardCount; });
 
-      const fixtures = generateRoundRobinFixtures(
-        teams.map((t) => ({ id: t.id, venueId: t.venueId })),
+      const { fixturesByDivision, unresolvedClashes: clashes } = generateSeasonFixtures(
+        [{ divisionId: divisionId!, teams: teams.map((t) => ({ id: t.id, venueId: t.venueId })) }],
         { startDate, intervalDays: interval, breaks: seasonBreaks, venueBoardCounts },
       );
+      const fixtures = fixturesByDivision[divisionId!] ?? [];
 
       const batch = writeBatch(db);
       fixtures.forEach((fixture) => {
@@ -320,7 +321,7 @@ function useFixturesController(divisionId: string | undefined, leagueId: string 
       });
       await batch.commit();
       setIsRegenerating(false);
-      setConflictCount(fixtures.filter((f) => f.venueConflictShifted).length);
+      setUnresolvedClashes(clashes);
     } catch (e: unknown) {
       setGenError((e as Error).message ?? 'Something went wrong');
     } finally {
@@ -393,7 +394,7 @@ function useFixturesController(divisionId: string | undefined, leagueId: string 
   return {
     divisionName, teams, matches, isLoading, loadError,
     startDateText, setStartDateText, intervalDays, setIntervalDays, isGenerating, genError, isRegenerating, setIsRegenerating,
-    conflictCount,
+    unresolvedClashes,
     editTarget, setEditTarget, editDateText, setEditDateText, editVenue, setEditVenue, isSavingEdit,
     teamName, rounds, generateFixtures, deleteAllFixtures, openEdit, saveEdit, deleteFixture, showGenerator,
   };
@@ -412,15 +413,16 @@ function FixturesBody({ c, isDesktop, statusFilter }: { c: FixturesController; i
 
   return (
     <>
-      {c.conflictCount != null && c.conflictCount > 0 && (
-        <Card tone="butter" className="mb-4">
+      {c.unresolvedClashes != null && c.unresolvedClashes.length > 0 && (
+        <Card tone="coral" className="mb-4">
           <Body weight="semibold" className="mb-1">
-            Moved {c.conflictCount} fixture{c.conflictCount === 1 ? '' : 's'} to avoid a venue clash
+            Couldn't fully avoid {c.unresolvedClashes.length} venue clash{c.unresolvedClashes.length === 1 ? '' : 'es'}
           </Body>
           <Body size="sm">
-            One or more venues had more teams drawn home on the same day than they have boards for —
-            those fixtures were pushed to the following day(s) instead. Check the dates below and adjust
-            manually if needed.
+            One or more venues have more teams sharing them than boards, even spread across the whole
+            season — there weren't enough weeks to give every team a clash-free date. Every fixture is
+            still on its designated match night; find the affected rows below (same date, same venue,
+            more home teams than boards) and adjust manually.
           </Body>
         </Card>
       )}
