@@ -40,8 +40,8 @@ just started.
 - [x] "Blank Test Season" dev tool (`admin-tools.tsx`) — 8 teams, 2 venues incl. a deliberate 3-teams-1-board conflict, no fixtures, for exercising Generate Fixtures live
 - [x] `npx tsc --noEmit` clean (mobile + functions), `expo export -p web` clean
 - [x] **Deployed 2026-07-28**: `firestore.rules`, `firestore.indexes.json`, and all Cloud Functions (incl. `adminDeleteVenue`, `adminMigrateVenues`) confirmed live on `chalkie-app` via `firebase deploy` (CI token) — verified with `firebase functions:list`
-- [ ] **Jake: run "Migrate Teams to Venues"** (Tools screen, real one-off, not dev-gated) — your existing teams still have plain-text addresses, not venues, until this runs once
-- [ ] Fold into the real walkthrough above: generate fixtures against a division with a shared venue and confirm the clash-resolution banner/dates look right
+- [x] **Jake: run "Migrate Teams to Venues"** — confirmed done: all 29 real teams have `venueId` set, none still carry the old plain-text address field (checked directly against production 2026-07-29)
+- [x] Fold into the real walkthrough above: generate fixtures against a division with a shared venue and confirm the clash-resolution banner/dates look right — verified 2026-07-29 against the real Summer 2026 season (182 matches/29 teams/22 venues across 4 divisions): zero venue clashes anywhere, every round on its correct single date, full round-robin math correct
 - [x] Add Team gets a Division dropdown (works from any entry point, incl. a new season-level "+ Add Team") instead of being locked to whichever division you clicked from
 - [x] `adminMoveTeamDivision` Cloud Function — move an existing team to a different division in the same season, blocked while it has any fixtures (not just confirmed ones)
 - [x] Rename season, rename division, rename team — all editable after creation, not just at setup time (`admin-season.tsx`, `admin-team.tsx`)
@@ -128,6 +128,9 @@ just started.
       CI-token deploys needed for routine merges — see PLAN.md for the full writeup.
 
 ## Suggested improvements (not bugs)
+- [x] **Team fixtures view on `admin-team.tsx` — 2026-07-29, live-verified.** Clicking a
+      team now shows all of its fixtures (home & away), each tapping through to the
+      result. Verified against the Firebase Emulator.
 - [x] **Admin-side "enter/confirm a result" path — 2026-07-28, code complete AND
       live-verified.** `results-entry.tsx` now lets admin pick which team they're
       entering on behalf of (a "Enter for [Home]" / "Enter for [Away]" choice, shown
