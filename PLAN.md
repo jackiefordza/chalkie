@@ -890,6 +890,23 @@ just the checkable summary so they don't get lost.
 
 ## Open risks / things to revisit
 
+- **Test admin account for real-league verification — password not stored here on
+  purpose.** `claude-admin-3@chalkie-test.dev` (created 2026-07-29) has `isLeagueAdmin:
+  true` and `leagueId` pointing at the real "Bedford & Kempston District" league in
+  production `chalkie-app` — set up specifically so a session can log in and verify
+  admin-only changes (e.g. the "Migrate Teams to Venues" migration, admin-side fixes)
+  against real data without needing Jake's own login. The password was deliberately
+  **not** written here or anywhere else in the repo — a real credential with admin
+  access to live league data doesn't belong in git history, regardless of how "test"
+  the account is. **If a future session needs it, ask Jake for the password fresh**
+  rather than assuming it's recoverable from anywhere in this repo or from "Claude's
+  memory" — that's exactly the situation that prompted creating this account in the
+  first place (the previous test admin, `claude-admin-verify@chalkie-test.dev` from
+  2026-07-13, still exists and still has the right permissions, but its password was
+  lost between sessions with no way to recover it — only reset it). If Jake ever wants
+  to retire these test accounts, they can be deleted from Firebase Console →
+  Authentication (the corresponding `users/{uid}` Firestore doc should be deleted too,
+  it won't clean up automatically).
 - **⚠️ BLOCKER — the app must be renamed before any public launch (app stores, marketing,
   anything visible outside the trial league).** Raised 2026-07-28: "Chalkie" conflicts
   with [chalkie.ai](https://chalkie.ai), an established, actively-used AI lesson-planning
