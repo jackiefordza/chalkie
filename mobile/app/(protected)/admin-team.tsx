@@ -1,19 +1,34 @@
 import { useState, useEffect } from 'react';
 import { View, TouchableOpacity, ActivityIndicator, useWindowDimensions } from 'react-native';
-import { Stack, useLocalSearchParams } from 'expo-router';
+import { router, Stack, useLocalSearchParams } from 'expo-router';
 import {
-  collection, doc, onSnapshot, query, where, updateDoc, getDoc, addDoc, writeBatch,
+  collection, doc, onSnapshot, query, where, and, or, orderBy, updateDoc, getDoc, addDoc, writeBatch,
 } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { db, functions } from '@/config/firebase';
 import { useAuthStore } from '@/stores/authStore';
 import { goBack } from '@/lib/navigation';
 import { Alert } from '@/lib/alert';
-import { RAW } from '@/lib/theme';
+import { formatDate } from '@/lib/dates';
+import { RAW, type SemanticTone } from '@/lib/theme';
 import { Screen, Heading, Body, Caption, Button, Card, Avatar, ListRow, Input, Label, Badge, Sheet } from '@/components/ui';
 import { AdminShell } from '@/components/admin/AdminShell';
 import { VenuePickerSheet } from '@/components/admin/VenuePickerSheet';
-import type { Venue } from '@/types';
+import type { Venue, Match } from '@/types';
+
+const MATCH_STATUS_LABEL: Record<Match['status'], string> = {
+  scheduled: 'Upcoming',
+  awaiting_confirmation: 'Awaiting confirmation',
+  disputed: 'Disputed',
+  confirmed: 'Final',
+};
+
+const MATCH_STATUS_TONE: Record<Match['status'], SemanticTone | null> = {
+  scheduled: null,
+  awaiting_confirmation: 'butter',
+  disputed: 'coral',
+  confirmed: 'sage',
+};
 
 const DESKTOP_BREAKPOINT = 768;
 
@@ -60,6 +75,8 @@ export default function AdminTeamScreen() {
   const [isChangingRole, setIsChangingRole] = useState(false);
   const [players, setPlayers] = useState<Player[]>([]);
   const [otherTeams, setOtherTeams] = useState<OtherTeam[]>([]);
+  const [matches, setMatches] = useState<Match[]>([]);
+  const [matchesLoading, setMatchesLoading] = useState(true);
 
   const [showAddPlayer, setShowAddPlayer] = useState(false);
   const [newPlayerName, setNewPlayerName] = useState('');
@@ -130,6 +147,30 @@ export default function AdminTeamScreen() {
     }, (e) => Alert.alert('Error', (e as Error).message ?? 'Something went wrong'));
     return unsub;
   }, [teamVenueId]);
+
+  useEffect(() => {
+    if (!teamId || !appUser?.leagueId) return;
+    const unsub = onSnapshot(
+      query(
+        collection(db, 'matches'),
+        and(
+          where('leagueId', '==', appUser.leagueId),
+          or(where('homeTeamId', '==', teamId), where('awayTeamId', '==', teamId)),
+        ),
+        orderBy('scheduledDate', 'asc'),
+      ),
+      (snap) => {
+        setMatches(snap.docs.map((d) => ({
+          id: d.id,
+          ...d.data(),
+          scheduledDate: d.data().scheduledDate?.toDate() ?? new Date(),
+        } as Match)));
+        setMatchesLoading(false);
+      },
+      (e) => { Alert.alert('Error', (e as Error).message ?? 'Something went wrong'); setMatchesLoading(false); },
+    );
+    return unsub;
+  }, [teamId, appUser?.leagueId]);
 
   useEffect(() => {
     if (!appUser?.leagueId) return;
@@ -452,11 +493,58 @@ export default function AdminTeamScreen() {
     </Card>
   );
 
+  const fixturesCard = (
+    <Card className="mb-4" padded={false}>
+      <View className="p-4 border-b border-border dark:border-border-dark">
+        <Heading size="sm">Fixtures ({matches.length})</Heading>
+      </View>
+      {matchesLoading ? (
+        <ActivityIndicator color={RAW.brand} style={{ marginVertical: 24 }} />
+      ) : matches.length === 0 ? (
+        <Body size="sm" className="text-center py-6">No fixtures yet</Body>
+      ) : (
+        <View>
+          {matches.map((match, i) => {
+            const isHome = match.homeTeamId === teamId;
+            const opponentId = isHome ? match.awayTeamId : match.homeTeamId;
+            const opponentName = otherTeams.find((t) => t.id === opponentId)?.name ?? '…';
+            const tone = MATCH_STATUS_TONE[match.status];
+            return (
+              <TouchableOpacity
+                key={match.id}
+                activeOpacity={0.6}
+                onPress={() => router.push(`/(protected)/results-entry?matchId=${match.id}`)}
+                className={[
+                  'flex-row items-center px-4 py-3',
+                  i < matches.length - 1 ? 'border-b border-border dark:border-border-dark' : '',
+                ].join(' ')}
+              >
+                <View className="flex-1">
+                  <Body tone="strong" weight="semibold">{isHome ? 'vs' : '@'} {opponentName}</Body>
+                  <Body size="xs" className="mt-0.5">
+                    {formatDate(match.scheduledDate)}{isHome ? ` · ${match.venue ?? 'No venue set'}` : ' · Away'}
+                  </Body>
+                </View>
+                {match.status === 'confirmed' && (
+                  <Body size="sm" weight="semibold" className="mr-3">
+                    {isHome ? `${match.homeLegsWon}-${match.awayLegsWon}` : `${match.awayLegsWon}-${match.homeLegsWon}`}
+                  </Body>
+                )}
+                {tone ? <Badge tone={tone}>{MATCH_STATUS_LABEL[match.status]}</Badge> : <Body size="sm">{MATCH_STATUS_LABEL[match.status]}</Body>}
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      )}
+    </Card>
+  );
+
   const body = (
     <>
       {teamInfoCard}
       {captainCard}
       {venueCard}
+      {fixturesCard}
 
       <View className="flex-row items-center mb-2.5">
         <Heading size="sm" className="flex-1">Players ({players.length})</Heading>
