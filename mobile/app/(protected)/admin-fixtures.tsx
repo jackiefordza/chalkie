@@ -297,7 +297,10 @@ function useFixturesController(divisionId: string | undefined, leagueId: string 
       const batch = writeBatch(db);
       fixtures.forEach((fixture) => {
         const matchRef = doc(collection(db, 'matches'));
-        const homeVenueId = teams.find((t) => t.id === fixture.homeTeamId)?.venueId ?? null;
+        // Deliberately the home team's own name, not the physical venue's
+        // registered name (they often differ, e.g. team "Fox and Hounds" vs
+        // venue "The Fox & Hounds") — players know fixtures by team name.
+        const homeTeamName = teams.find((t) => t.id === fixture.homeTeamId)?.name ?? null;
         batch.set(matchRef, {
           leagueId,
           seasonId,
@@ -306,7 +309,7 @@ function useFixturesController(divisionId: string | undefined, leagueId: string 
           homeTeamId: fixture.homeTeamId,
           awayTeamId: fixture.awayTeamId,
           scheduledDate: fixture.scheduledDate,
-          venue: homeVenueId ? venuesById[homeVenueId]?.name ?? null : null,
+          venue: homeTeamName,
           status: 'scheduled',
           homeGamesWon: null,
           awayGamesWon: null,
