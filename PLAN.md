@@ -934,6 +934,36 @@ just the checkable summary so they don't get lost.
       finished yet, so the assertion raced it. Fixed by waiting for
       `homeGamesWon != null` specifically, not just `status === 'confirmed'`.
 
+## 2026-07-29 — team fixtures view + real-league fixture verification
+
+- **Team fixtures view, `admin-team.tsx`.** Clicking a team from the admin dashboard
+  previously showed roster/captain/venue only — no way to see that team's own match
+  list without going through the division's Fixtures tab and scanning for it. Added a
+  "Fixtures (N)" card (same query pattern as the player-facing Fixtures tab:
+  `leagueId` + `or(homeTeamId, awayTeamId)`) listing every match, home and away, with
+  opponent, date, venue (home only), and status/score, tapping through to the result
+  screen. `npx tsc --noEmit` and `expo export -p web` both clean. **Live-verified**
+  against the Firebase Emulator: seeded a team with a confirmed home win, an away
+  match awaiting confirmation, and a disputed home match, confirmed all three render
+  correctly via Playwright screenshot.
+- **Real-league fixture verification, using the test admin account.** Jake gave the
+  `claude-admin-3@chalkie-test.dev` password fresh for this one check (per the note
+  below — not stored anywhere). Signed in via the Identity Toolkit REST API and read
+  the real "Bedford & Kempston District" league's Summer 2026 season directly (182
+  matches, 29 teams, 22 venues across 4 divisions) via the Firestore REST API.
+  Checked: every team plays every other team exactly once home and once away in every
+  division (no missing/duplicate pairings), no team ever double-booked within a round,
+  bye weeks spread evenly across the two 7-team-division byes, every round's fixtures
+  share one single date (nothing scattered across random days), 14 rounds per division
+  running 28 July → 28 October 2026, the `venue` field matches the home team's own
+  name on every fixture, and — checked across all 4 divisions combined, since venues
+  can be shared across divisions — zero venues have more home fixtures on one date
+  than they have boards. **All checks passed, nothing to fix.** Confirmed with Jake
+  that the 28 July start date is a deliberate test placeholder, not a real-season date
+  left over by accident. Deleted the temporary ID token/session file used for the
+  check immediately afterward — the account's password itself was never written to
+  disk anywhere in this repo.
+
 ## Open risks / things to revisit
 
 - **Test admin account for real-league verification — password not stored here on
