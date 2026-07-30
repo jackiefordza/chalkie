@@ -755,3 +755,314 @@ export const adminDeleteVenue = onCall(async (request) => {
   }
   await db.doc(`venues/${venueId}`).delete();
 });
+
+// ── Team Knockout Cup ────────────────────────────────────────────────────
+// Single-elimination, cross-division draw. A cup tie is deliberately its own
+// collection (cupTies), not folded into matches — same MatchGame/leg shape
+// and the exact same submission-comparison/confirm pattern (see
+// onCupTieSubmissionWrite/onCupTieConfirmed below, mirroring onSubmissionWrite/
+// onMatchConfirmed), but a tie's confirmation only ever advances the bracket,
+// never touches divisionTables/playerSeasonStats — a cup draw spans multiple
+// divisions, so crediting it toward any one division's table would be wrong.
+
+export function nextPowerOfTwo(n: number): number {
+  let p = 1;
+  while (p < n) p *= 2;
+  return p;
+}
+
+export function cupRoundName(teamsInRound: number): string {
+  if (teamsInRound === 2) return 'Final';
+  if (teamsInRound === 4) return 'Semi-Final';
+  if (teamsInRound === 8) return 'Quarter-Final';
+  return `Round of ${teamsInRound}`;
+}
+
+export interface BracketTie {
+  homeTeamId: string | null;
+  awayTeamId: string | null;
+  winnerTeamId: string | null; // set only for a bye — resolved with no games played
+  isBye: boolean;
+  nextTieIndex: number | null; // index into the following round's ties array
+  nextTieSlot: MatchSide | null;
+}
+export interface BracketRound {
+  round: number;
+  name: string;
+  ties: BracketTie[];
+}
+
+// Pure — no Firestore calls, so it's independently testable. `shuffled` is
+// the already-randomized draw order (the caller shuffles; this function just
+// arranges byes/pairings/advancement from whatever order it's given, so a
+// test can pass a fixed order for a deterministic result). Byes go to the
+// first `byeCount` teams in the shuffled order and are resolved immediately,
+// with their "win" propagated straight into the following round's slot —
+// including cascading into a round where *both* slots of a tie are filled
+// purely by two byes (a real, fair scenario once byeCount exceeds a quarter
+// of the bracket: those two teams simply play each other one round later
+// than everyone else, not a "double bye").
+export function buildCupBracket(shuffled: string[]): BracketRound[] {
+  const n = shuffled.length;
+  const bracketSize = nextPowerOfTwo(n);
+  const byeCount = bracketSize - n;
+  const totalRounds = Math.log2(bracketSize);
+
+  const round1Ties: BracketTie[] = [];
+  let cursor = 0;
+  for (let i = 0; i < byeCount; i++) {
+    const teamId = shuffled[cursor];
+    cursor += 1;
+    round1Ties.push({
+      homeTeamId: teamId, awayTeamId: null, winnerTeamId: teamId, isBye: true, nextTieIndex: null, nextTieSlot: null,
+    });
+  }
+  while (cursor < n) {
+    const a = shuffled[cursor];
+    const b = shuffled[cursor + 1];
+    cursor += 2;
+    round1Ties.push({
+      homeTeamId: a, awayTeamId: b, winnerTeamId: null, isBye: false, nextTieIndex: null, nextTieSlot: null,
+    });
+  }
+
+  const rounds: BracketRound[] = [
+    { round: 1, name: cupRoundName(round1Ties.length * 2), ties: round1Ties },
+  ];
+
+  let prevTies = round1Ties;
+  for (let r = 2; r <= totalRounds; r++) {
+    const ties: BracketTie[] = Array.from({ length: prevTies.length / 2 }, () => ({
+      homeTeamId: null, awayTeamId: null, winnerTeamId: null, isBye: false, nextTieIndex: null, nextTieSlot: null,
+    }));
+    prevTies.forEach((tie, i) => {
+      tie.nextTieIndex = Math.floor(i / 2);
+      tie.nextTieSlot = i % 2 === 0 ? 'home' : 'away';
+      if (tie.winnerTeamId) {
+        const target = ties[tie.nextTieIndex];
+        if (tie.nextTieSlot === 'home') target.homeTeamId = tie.winnerTeamId; else target.awayTeamId = tie.winnerTeamId;
+      }
+    });
+    rounds.push({ round: r, name: cupRoundName(ties.length * 2), ties });
+    prevTies = ties;
+  }
+
+  return rounds;
+}
+
+function shuffleArray<T>(arr: T[]): T[] {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+function addDaysUtc(date: Date, days: number): Date {
+  const d = new Date(date);
+  d.setDate(d.getDate() + days);
+  return d;
+}
+
+// Draws and creates the entire bracket in one go, including placeholder
+// ties for every future round (wired via nextTieId/nextTieSlot) — later
+// rounds' dates are already fully determined by team count + interval, only
+// which *teams* land in them is unknown until earlier rounds are played.
+export const adminCreateCup = onCall(async (request) => {
+  const { leagueId, seasonId, name, teamIds, startDate, intervalDays } = (request.data ?? {}) as {
+    leagueId?: string; seasonId?: string; name?: string; teamIds?: string[]; startDate?: string; intervalDays?: number;
+  };
+  if (!leagueId || !seasonId || !name || !teamIds || teamIds.length < 2 || !startDate || !intervalDays) {
+    throw new HttpsError('invalid-argument', 'leagueId, seasonId, name, at least 2 teamIds, startDate, and intervalDays are required.');
+  }
+  await assertLeagueAdmin(request.auth?.uid, leagueId);
+
+  const plan = buildCupBracket(shuffleArray(teamIds));
+
+  const teamDocs = await db.getAll(...teamIds.map((id) => db.doc(`teams/${id}`)));
+  const teamNameById = new Map(teamDocs.map((d) => [d.id, (d.data()?.name as string | undefined) ?? 'Unknown']));
+
+  const cupRef = db.collection('cups').doc();
+  const start = new Date(startDate);
+  const roundRefs = plan.map(() => db.collection('cupRounds').doc());
+  const tieRefsByRound = plan.map((round) => round.ties.map(() => db.collection('cupTies').doc()));
+
+  const batch = db.batch();
+  batch.set(cupRef, {
+    leagueId, seasonId, name, teamIds, status: 'active', winnerTeamId: null, createdAt: FieldValue.serverTimestamp(),
+  });
+
+  plan.forEach((round, roundIdx) => {
+    const roundDate = Timestamp.fromDate(addDaysUtc(start, intervalDays * roundIdx));
+    batch.set(roundRefs[roundIdx], {
+      leagueId, cupId: cupRef.id, name: round.name, order: round.round,
+      scheduledDate: roundDate, createdAt: FieldValue.serverTimestamp(),
+    });
+
+    round.ties.forEach((tie, tieIdx) => {
+      const nextTieRef = tie.nextTieIndex != null ? tieRefsByRound[roundIdx + 1][tie.nextTieIndex] : null;
+      const status: string = tie.isBye ? 'bye' : (tie.homeTeamId && tie.awayTeamId) ? 'scheduled' : 'pending';
+      batch.set(tieRefsByRound[roundIdx][tieIdx], {
+        leagueId, cupId: cupRef.id, cupRoundId: roundRefs[roundIdx].id, round: round.round,
+        homeTeamId: tie.homeTeamId, awayTeamId: tie.awayTeamId, winnerTeamId: tie.winnerTeamId,
+        scheduledDate: roundDate,
+        venue: tie.homeTeamId ? teamNameById.get(tie.homeTeamId) ?? null : null,
+        status,
+        homeGamesWon: null, awayGamesWon: null, homeLegsWon: null, awayLegsWon: null, games: null,
+        nextTieId: nextTieRef ? nextTieRef.id : null,
+        nextTieSlot: tie.nextTieSlot,
+        createdAt: FieldValue.serverTimestamp(),
+      });
+    });
+  });
+
+  await batch.commit();
+  return { cupId: cupRef.id };
+});
+
+// ── Cup submission comparison — identical logic to onSubmissionWrite above,
+// scoped to cupTies/{tieId}/submissions instead of matches/{id}/submissions.
+export const onCupTieSubmissionWrite = onDocumentWritten(
+  'cupTies/{tieId}/submissions/{submissionId}',
+  async (event) => {
+    const tieId = event.params.tieId;
+    const tieRef = db.doc(`cupTies/${tieId}`);
+    const tieSnap = await tieRef.get();
+    if (!tieSnap.exists) return;
+    const tie = tieSnap.data()!;
+    if (tie.status === 'confirmed') return;
+
+    const subsSnap = await tieRef.collection('submissions').get();
+    if (subsSnap.empty) return;
+
+    if (subsSnap.size === 1) {
+      if (tie.status === 'scheduled') {
+        await tieRef.update({ status: 'awaiting_confirmation' });
+        const submittedByTeamId = subsSnap.docs[0].data().submittedByTeamId as string;
+        const otherTeamId = submittedByTeamId === tie.homeTeamId ? tie.awayTeamId : tie.homeTeamId;
+        const [submittedName, tokens] = await Promise.all([
+          teamName(submittedByTeamId),
+          tokensForTeamRoles(otherTeamId, ['captain', 'viceCaptain']),
+        ]);
+        await sendExpoPush(
+          tokens,
+          'Cup result needs confirmation',
+          `${submittedName} submitted their cup result — check it matches yours.`,
+          { type: 'cup_awaiting_confirmation', cupTieId: tieId },
+        );
+      }
+      return;
+    }
+
+    const [subA, subB] = subsSnap.docs.map((d) => d.data() as MatchSubmissionData);
+    if (!gamesEqual(subA.games, subB.games)) {
+      await tieRef.update({ status: 'disputed' });
+      return;
+    }
+
+    await tieRef.update({ status: 'confirmed', games: normalizeGames(subA.games) });
+  },
+);
+
+// Fills the next round's slot with this tie's winner (in a transaction, since
+// two ties can confirm around the same time and both feed the same next
+// tie) — or, if there's no next tie at all, this was the Final: marks the
+// cup itself completed.
+async function advanceCupTieWinner(
+  cupId: string, nextTieId: string | null, nextTieSlot: MatchSide | null, winnerTeamId: string,
+): Promise<void> {
+  if (!nextTieId || !nextTieSlot) {
+    await db.doc(`cups/${cupId}`).update({ status: 'completed', winnerTeamId });
+    return;
+  }
+  const winnerName = await teamName(winnerTeamId);
+  const nextTieRef = db.doc(`cupTies/${nextTieId}`);
+  await db.runTransaction(async (tx) => {
+    const snap = await tx.get(nextTieRef);
+    if (!snap.exists) return;
+    const data = snap.data()!;
+    const field = nextTieSlot === 'home' ? 'homeTeamId' : 'awayTeamId';
+    const otherField = nextTieSlot === 'home' ? 'awayTeamId' : 'homeTeamId';
+    const update: Record<string, unknown> = { [field]: winnerTeamId };
+    if (data[otherField]) update.status = 'scheduled';
+    if (nextTieSlot === 'home') update.venue = winnerName;
+    tx.update(nextTieRef, update);
+  });
+}
+
+// ── On a cup tie confirming (or an admin correcting an already-confirmed
+// one's games — same trigger condition onMatchConfirmed uses, not gated to
+// a first-confirmation-only transition): compute the winner and advance the
+// bracket. No divisionTables/playerSeasonStats write at all — see the
+// section header above for why.
+// **Known limitation, deliberately out of scope for this pass**: if the
+// *next* round's tie has itself already been played by the time a
+// correction changes who won here, this only overwrites that tie's
+// home/awayTeamId slot — it doesn't cascade-reverse anything further down
+// the bracket. Reversing an entire sub-bracket is a meaningfully harder
+// problem than the delta-based divisionTables correction above (a
+// knockout tree has no equivalent simple delta), and correcting a result
+// after the round it feeds has already been played is expected to be rare
+// enough in practice not to need that machinery yet.
+export const onCupTieConfirmed = onDocumentUpdated('cupTies/{tieId}', async (event) => {
+  const before = event.data?.before.data();
+  const after = event.data?.after.data();
+  if (!before || !after) return;
+  if (after.status !== 'confirmed') return;
+
+  const beforeGames = (before.status === 'confirmed' ? (before.games ?? []) : []) as MatchGame[];
+  const afterGames = (after.games ?? []) as MatchGame[];
+  if (JSON.stringify(beforeGames) === JSON.stringify(afterGames)) return; // no actual result change
+
+  const tieId = event.params.tieId;
+  const totals = computeTotals(afterGames);
+  const winnerTeamId = (totals.homeGamesWon > totals.awayGamesWon ? after.homeTeamId : after.awayTeamId) as string;
+
+  await db.doc(`cupTies/${tieId}`).update({ ...totals, winnerTeamId });
+
+  const isFirstConfirmation = before.status !== 'confirmed';
+  if (isFirstConfirmation) {
+    const [homeName, awayName, tokens] = await Promise.all([
+      teamName(after.homeTeamId), teamName(after.awayTeamId), tokensForTeams([after.homeTeamId, after.awayTeamId]),
+    ]);
+    await sendExpoPush(
+      tokens, 'Cup result confirmed', `${homeName} vs ${awayName} is confirmed.`,
+      { type: 'cup_match_confirmed', cupTieId: tieId },
+    );
+  }
+
+  await advanceCupTieWinner(
+    after.cupId as string, (after.nextTieId ?? null) as string | null, (after.nextTieSlot ?? null) as MatchSide | null, winnerTeamId,
+  );
+});
+
+// Blocked while any tie has a confirmed result — same conservative
+// reasoning as deleteTeamCascade above (no bulk-reversal support here).
+export const adminDeleteCup = onCall(async (request) => {
+  const { cupId } = (request.data ?? {}) as { cupId?: string };
+  if (!cupId) throw new HttpsError('invalid-argument', 'cupId is required.');
+  const cupSnap = await db.doc(`cups/${cupId}`).get();
+  if (!cupSnap.exists) throw new HttpsError('not-found', 'Cup not found.');
+  await assertLeagueAdmin(request.auth?.uid, cupSnap.data()!.leagueId);
+
+  const tiesSnap = await db.collection('cupTies').where('cupId', '==', cupId).get();
+  if (tiesSnap.docs.some((d) => d.data().status === 'confirmed')) {
+    throw new HttpsError(
+      'failed-precondition',
+      "This cup has confirmed results — delete isn't supported while that history exists.",
+    );
+  }
+
+  const roundsSnap = await db.collection('cupRounds').where('cupId', '==', cupId).get();
+
+  const batch = db.batch();
+  for (const tieDoc of tiesSnap.docs) {
+    const subsSnap = await tieDoc.ref.collection('submissions').get();
+    subsSnap.docs.forEach((s) => batch.delete(s.ref));
+    batch.delete(tieDoc.ref);
+  }
+  roundsSnap.docs.forEach((d) => batch.delete(d.ref));
+  batch.delete(db.doc(`cups/${cupId}`));
+  await batch.commit();
+});

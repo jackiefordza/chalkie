@@ -121,9 +121,18 @@ describe('onSubmissionWrite + onMatchConfirmed (auto-confirm path)', () => {
     expect(match.homeLegsWon).toBe(21);
     expect(match.awayLegsWon).toBe(0);
 
-    const homeTable = await waitFor(() => getDivisionTable(f, f.homeTeamId));
+    // recomputeDivisionPositions is a separate write *after* applyMatchResultDelta's
+    // own divisionTables batch — wait for position specifically, not just any
+    // truthy doc, or this races the earlier (points/won/etc-only) write.
+    const homeTable = await waitFor(async () => {
+      const t = await getDivisionTable(f, f.homeTeamId);
+      return t?.position != null ? t : null;
+    });
     expect(homeTable).toMatchObject({ played: 1, won: 1, lost: 0, points: 2, legsFor: 21, legsAgainst: 0, legDiff: 21, position: 1 });
-    const awayTable = await waitFor(() => getDivisionTable(f, f.awayTeamId));
+    const awayTable = await waitFor(async () => {
+      const t = await getDivisionTable(f, f.awayTeamId);
+      return t?.position != null ? t : null;
+    });
     expect(awayTable).toMatchObject({ played: 1, won: 0, lost: 1, points: 0, legsFor: 0, legsAgainst: 21, legDiff: -21, position: 2 });
 
     const h1Stats = await waitFor(() => getPlayerStats(f, `${f.p}-h1`));
@@ -186,6 +195,161 @@ describe('onMatchConfirmed — admin correction of an already-confirmed match', 
       return t && t.won === 1 ? t : null;
     });
     expect(awayTable).toMatchObject({ played: 1, won: 1, lost: 0, points: 2, legsFor: 21, legsAgainst: 0 });
+  });
+});
+
+// ── Team Knockout Cup: onCupTieSubmissionWrite + onCupTieConfirmed ─────────
+// Seeds a small 4-team bracket by hand (Semi-Final x2 -> Final) — the exact
+// shape adminCreateCup itself would write, minus actually calling the onCall
+// wrapper (this only needs to exercise the Firestore triggers, same as the
+// league match tests above).
+interface CupFixture {
+  leagueId: string; cupId: string;
+  semiRoundId: string; finalRoundId: string;
+  tie1Id: string; tie2Id: string; finalTieId: string;
+  teamA: string; teamB: string; teamC: string; teamD: string;
+  p: string;
+}
+
+function makeCupFixture(): CupFixture {
+  const n = nonce();
+  return {
+    leagueId: `league-${n}`, cupId: `cup-${n}`,
+    semiRoundId: `semi-${n}`, finalRoundId: `final-${n}`,
+    tie1Id: `tie1-${n}`, tie2Id: `tie2-${n}`, finalTieId: `final-tie-${n}`,
+    teamA: `team-a-${n}`, teamB: `team-b-${n}`, teamC: `team-c-${n}`, teamD: `team-d-${n}`,
+    p: n,
+  };
+}
+
+async function seedCupBracket(f: CupFixture) {
+  const date = admin.firestore.Timestamp.fromDate(new Date('2026-06-01'));
+  await Promise.all([
+    db.doc(`teams/${f.teamA}`).set({ leagueId: f.leagueId, name: 'Team A' }),
+    db.doc(`teams/${f.teamB}`).set({ leagueId: f.leagueId, name: 'Team B' }),
+    db.doc(`teams/${f.teamC}`).set({ leagueId: f.leagueId, name: 'Team C' }),
+    db.doc(`teams/${f.teamD}`).set({ leagueId: f.leagueId, name: 'Team D' }),
+  ]);
+  await db.doc(`cups/${f.cupId}`).set({
+    leagueId: f.leagueId, seasonId: `season-${f.p}`, name: 'Test Cup', teamIds: [f.teamA, f.teamB, f.teamC, f.teamD],
+    status: 'active', winnerTeamId: null, createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+  await db.doc(`cupRounds/${f.semiRoundId}`).set({
+    leagueId: f.leagueId, cupId: f.cupId, name: 'Semi-Final', order: 1, scheduledDate: date,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+  await db.doc(`cupRounds/${f.finalRoundId}`).set({
+    leagueId: f.leagueId, cupId: f.cupId, name: 'Final', order: 2, scheduledDate: date,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+  const tieBase = {
+    leagueId: f.leagueId, cupId: f.cupId,
+    homeGamesWon: null, awayGamesWon: null, homeLegsWon: null, awayLegsWon: null, games: null,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  };
+  await db.doc(`cupTies/${f.tie1Id}`).set({
+    ...tieBase, cupRoundId: f.semiRoundId, round: 1,
+    homeTeamId: f.teamA, awayTeamId: f.teamB, winnerTeamId: null,
+    scheduledDate: date, venue: 'Team A', status: 'scheduled',
+    nextTieId: f.finalTieId, nextTieSlot: 'home',
+  });
+  await db.doc(`cupTies/${f.tie2Id}`).set({
+    ...tieBase, cupRoundId: f.semiRoundId, round: 1,
+    homeTeamId: f.teamC, awayTeamId: f.teamD, winnerTeamId: null,
+    scheduledDate: date, venue: 'Team C', status: 'scheduled',
+    nextTieId: f.finalTieId, nextTieSlot: 'away',
+  });
+  await db.doc(`cupTies/${f.finalTieId}`).set({
+    ...tieBase, cupRoundId: f.finalRoundId, round: 2,
+    homeTeamId: null, awayTeamId: null, winnerTeamId: null,
+    scheduledDate: date, venue: null, status: 'pending',
+    nextTieId: null, nextTieSlot: null,
+  });
+}
+
+async function submitCupTie(tieId: string, homeTeamId: string, awayTeamId: string, p: string, homeWins: boolean) {
+  const games = sweepGames(homeWins ? 'home' : 'away', p);
+  await db.doc(`cupTies/${tieId}/submissions/home`).set({ submittedByTeamId: homeTeamId, submittedByUserId: 'home-captain', games });
+  await db.doc(`cupTies/${tieId}/submissions/away`).set({ submittedByTeamId: awayTeamId, submittedByUserId: 'away-captain', games });
+}
+
+async function getCupTie(tieId: string) {
+  const snap = await db.doc(`cupTies/${tieId}`).get();
+  return snap.exists ? snap.data() : null;
+}
+async function getCup(cupId: string) {
+  const snap = await db.doc(`cups/${cupId}`).get();
+  return snap.exists ? snap.data() : null;
+}
+
+describe('Team Knockout Cup — onCupTieSubmissionWrite + onCupTieConfirmed', () => {
+  it('confirms a tie, advances its winner into the Final, and completes the cup once the Final confirms', async () => {
+    const f = makeCupFixture();
+    await seedCupBracket(f);
+
+    // Semi-Final 1: A beats B.
+    await submitCupTie(f.tie1Id, f.teamA, f.teamB, `${f.p}-1`, true);
+    const tie1 = await waitFor(async () => {
+      const t = await getCupTie(f.tie1Id);
+      return t?.status === 'confirmed' && t?.winnerTeamId ? t : null;
+    });
+    expect(tie1.winnerTeamId).toBe(f.teamA);
+
+    // Its win should already have landed in the Final's home slot.
+    const finalAfterTie1 = await waitFor(async () => {
+      const t = await getCupTie(f.finalTieId);
+      return t?.homeTeamId ? t : null;
+    });
+    expect(finalAfterTie1.homeTeamId).toBe(f.teamA);
+    expect(finalAfterTie1.status).toBe('pending'); // away slot still empty
+
+    // Semi-Final 2: C beats D.
+    await submitCupTie(f.tie2Id, f.teamC, f.teamD, `${f.p}-2`, true);
+    await waitFor(async () => {
+      const t = await getCupTie(f.tie2Id);
+      return t?.status === 'confirmed' ? t : null;
+    });
+
+    // Both Final slots now filled — should flip to 'scheduled'.
+    const finalReady = await waitFor(async () => {
+      const t = await getCupTie(f.finalTieId);
+      return t?.awayTeamId && t?.status === 'scheduled' ? t : null;
+    });
+    expect(finalReady.homeTeamId).toBe(f.teamA);
+    expect(finalReady.awayTeamId).toBe(f.teamC);
+    expect(finalReady.venue).toBe('Team A'); // home team's own name, same convention as league fixtures
+
+    // Play the Final: A beats C.
+    await submitCupTie(f.finalTieId, f.teamA, f.teamC, `${f.p}-3`, true);
+    await waitFor(async () => {
+      const t = await getCupTie(f.finalTieId);
+      return t?.status === 'confirmed' ? t : null;
+    });
+
+    // No next tie for the Final — the cup itself should complete.
+    const cup = await waitFor(async () => {
+      const c = await getCup(f.cupId);
+      return c?.status === 'completed' ? c : null;
+    });
+    expect(cup.winnerTeamId).toBe(f.teamA);
+  });
+
+  it('marks a tie disputed (not confirmed) when submissions disagree, and does not advance the bracket', async () => {
+    const f = makeCupFixture();
+    await seedCupBracket(f);
+
+    await db.doc(`cupTies/${f.tie1Id}/submissions/home`).set({
+      submittedByTeamId: f.teamA, submittedByUserId: 'home-captain', games: sweepGames('home', `${f.p}-1`),
+    });
+    await db.doc(`cupTies/${f.tie1Id}/submissions/away`).set({
+      submittedByTeamId: f.teamB, submittedByUserId: 'away-captain', games: sweepGames('away', `${f.p}-1`),
+    });
+    await waitFor(async () => (await getCupTie(f.tie1Id))?.status === 'disputed');
+
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    const finalTie = await getCupTie(f.finalTieId);
+    expect(finalTie?.homeTeamId).toBeNull();
+    expect(finalTie?.status).toBe('pending');
   });
 });
 

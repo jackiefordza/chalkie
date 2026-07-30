@@ -214,6 +214,75 @@ export interface PlayerHighCheckout {
   date: Date;
 }
 
+// Team Knockout Cup — single-elimination, cross-division draw. Reuses the
+// exact same match/results/confirmation shape as a league Match (see
+// CupTie below) so results-entry.tsx and the submission-comparison logic
+// work unmodified against either collection; cup ties never touch
+// divisionTables/playerSeasonStats, only their own bracket.
+export type CupStatus = 'draft' | 'active' | 'completed';
+
+export interface Cup {
+  id: string;
+  leagueId: string;
+  seasonId: string;
+  name: string;
+  teamIds: string[]; // the drawn field, fixed once the bracket is created
+  status: CupStatus;
+  winnerTeamId: string | null; // set once the Final is confirmed
+  createdAt: Date;
+}
+
+export interface CupRound {
+  id: string;
+  leagueId: string;
+  cupId: string;
+  name: string; // "Round of 16", "Quarter-Final", "Semi-Final", "Final", etc.
+  order: number; // 1-based, 1 = earliest round
+  scheduledDate: Date;
+  createdAt: Date;
+}
+
+export type CupTieStatus = 'pending' | 'scheduled' | 'awaiting_confirmation' | 'disputed' | 'confirmed' | 'bye';
+
+// A single bracket slot. homeTeamId/awayTeamId are null until the previous
+// round's winner (or the initial draw) fills them in — status stays
+// 'pending' until both sides are known. A 'bye' tie has exactly one side
+// filled and is resolved immediately (no games played) by adminCreateCup /
+// onCupTieConfirmed, advancing that team straight to nextTieId.
+export interface CupTie {
+  id: string;
+  leagueId: string;
+  cupId: string;
+  cupRoundId: string;
+  round: number; // = CupRound.order, denormalized for sorting without a join
+  homeTeamId: string | null;
+  awayTeamId: string | null;
+  winnerTeamId: string | null;
+  scheduledDate: Date | null;
+  venue: string | null; // home team's own name, same convention as Match.venue
+  status: CupTieStatus;
+  homeGamesWon: number | null;
+  awayGamesWon: number | null;
+  homeLegsWon: number | null;
+  awayLegsWon: number | null;
+  games: MatchGame[] | null;
+  // Where this tie's winner feeds into — null for the Final.
+  nextTieId: string | null;
+  nextTieSlot: MatchSide | null;
+  createdAt: Date;
+}
+
+// One captain/VC's version of a cup tie result — identical shape to
+// MatchSubmission, just scoped under cupTies/{tieId}/submissions instead of
+// matches/{id}/submissions.
+export interface CupTieSubmission {
+  id: string; // = submittedByTeamId
+  submittedByTeamId: string;
+  submittedByUserId: string;
+  games: MatchGame[];
+  createdAt: Date;
+}
+
 // Server-computed only (Cloud Function). played/won/lost count individual
 // games (singles + pairs), not matches — a player can play more than one
 // game per match.

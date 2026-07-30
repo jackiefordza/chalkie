@@ -24,14 +24,18 @@ import { FONT_DISPLAY, FONT_BODY } from '@/styles/typography';
 // color scheme, which would fight a background that never changes with it.
 
 type WorkspaceTab = 'teams' | 'fixtures' | 'results' | 'standings';
-type SectionKey = 'dashboard' | WorkspaceTab | 'inbox' | 'tools' | 'venues';
+type SectionKey = 'dashboard' | WorkspaceTab | 'inbox' | 'tools' | 'venues' | 'cup';
 
-function currentSection(pathname: string, tab: string | undefined): SectionKey | null {
+function currentSection(pathname: string, tab: string | undefined, cupTieId: string | undefined): SectionKey | null {
   if (pathname.startsWith('/admin-inbox') || pathname.startsWith('/admin-dispute')) return 'inbox';
   if (pathname.startsWith('/admin-tools')) return 'tools';
   if (pathname.startsWith('/admin-venues')) return 'venues';
+  if (pathname.startsWith('/admin-cup')) return 'cup';
   if (pathname.startsWith('/admin-team')) return 'teams';
-  if (pathname.startsWith('/results-entry')) return 'results';
+  // A cup tie's result reuses /results-entry (see results-entry.tsx) — belongs
+  // under "Cup" in the sidebar, not "Results", and shouldn't show the season/
+  // division picker a cup tie has no use for.
+  if (pathname.startsWith('/results-entry')) return cupTieId ? 'cup' : 'results';
   if (pathname.startsWith('/admin-season')) {
     if (tab === 'fixtures') return 'fixtures';
     if (tab === 'results') return 'results';
@@ -94,7 +98,7 @@ interface AdminShellProps {
 export function AdminShell({ leagueName, title, breadcrumb, actions, children }: AdminShellProps) {
   const { appUser, logOut } = useAuthStore();
   const pathname = usePathname();
-  const { tab, seasonId: urlSeasonId, divisionId: urlDivisionId } = useGlobalSearchParams<{ tab?: string; seasonId?: string; divisionId?: string }>();
+  const { tab, seasonId: urlSeasonId, divisionId: urlDivisionId, cupTieId } = useGlobalSearchParams<{ tab?: string; seasonId?: string; divisionId?: string; cupTieId?: string }>();
   const ctx = useAdminContextStore();
   const { colorScheme } = useColorScheme();
   const isDark = colorScheme === 'dark';
@@ -187,7 +191,7 @@ export function AdminShell({ leagueName, title, breadcrumb, actions, children }:
     router.push(`/(protected)/admin-season?seasonId=${seasonId}&divisionId=${divisionId}&tab=teams` as never);
   }
 
-  const section = currentSection(pathname, tab);
+  const section = currentSection(pathname, tab, cupTieId);
 
   return (
     <View className="flex-1 flex-row bg-admin-canvas dark:bg-admin-canvas-dark">
@@ -271,6 +275,9 @@ export function AdminShell({ leagueName, title, breadcrumb, actions, children }:
           <SidebarRow icon="calendar" label="Fixtures" active={section === 'fixtures'} onPress={() => goToTab('fixtures')} />
           <SidebarRow icon="check" label="Results" active={section === 'results'} onPress={() => goToTab('results')} />
           <SidebarRow icon="trending-up" label="Standings" active={section === 'standings'} onPress={() => goToTab('standings')} />
+
+          <SectionLabel>Competitions</SectionLabel>
+          <SidebarRow icon="trophy" label="Team Knockout Cup" active={section === 'cup'} onPress={() => router.push('/(protected)/admin-cup' as never)} />
 
           <SectionLabel>Support</SectionLabel>
           <SidebarRow icon="zap" label="Inbox" active={section === 'inbox'} onPress={() => router.push('/(protected)/admin-inbox')} />

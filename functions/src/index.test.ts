@@ -5,6 +5,9 @@ import {
   normalizeGames,
   gamesEqual,
   sortableTeamName,
+  nextPowerOfTwo,
+  cupRoundName,
+  buildCupBracket,
   MatchGame,
   MatchLeg,
 } from './index';
@@ -267,5 +270,108 @@ describe('sortableTeamName', () => {
       (a, b) => sortableTeamName(a).localeCompare(sortableTeamName(b)),
     );
     expect(sorted).toEqual(['The Anchor', 'Bedford Ath', 'Kings Arms', 'The Swan']);
+  });
+});
+
+describe('nextPowerOfTwo', () => {
+  it.each([[1, 1], [2, 2], [3, 4], [4, 4], [5, 8], [8, 8], [9, 16], [29, 32], [32, 32]])(
+    '%i teams -> bracket size %i', (input, expected) => {
+      expect(nextPowerOfTwo(input)).toBe(expected);
+    },
+  );
+});
+
+describe('cupRoundName', () => {
+  it('names the last few rounds by convention', () => {
+    expect(cupRoundName(2)).toBe('Final');
+    expect(cupRoundName(4)).toBe('Semi-Final');
+    expect(cupRoundName(8)).toBe('Quarter-Final');
+  });
+
+  it('falls back to "Round of N" for anything bigger', () => {
+    expect(cupRoundName(16)).toBe('Round of 16');
+    expect(cupRoundName(32)).toBe('Round of 32');
+  });
+});
+
+describe('buildCupBracket', () => {
+  it('pairs up a power-of-two field with no byes at all', () => {
+    const teams = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
+    const rounds = buildCupBracket(teams);
+
+    expect(rounds.map((r) => r.name)).toEqual(['Quarter-Final', 'Semi-Final', 'Final']);
+    expect(rounds[0].ties).toHaveLength(4);
+    expect(rounds[0].ties.every((t) => !t.isBye)).toBe(true);
+
+    // Every team appears in round 1 exactly once, as either side.
+    const round1TeamIds = rounds[0].ties.flatMap((t) => [t.homeTeamId, t.awayTeamId]);
+    expect([...round1TeamIds].sort()).toEqual([...teams].sort());
+
+    // Later rounds start fully empty (nothing to propagate — no byes).
+    expect(rounds[1].ties.every((t) => t.homeTeamId === null && t.awayTeamId === null)).toBe(true);
+    expect(rounds[2].ties).toHaveLength(1);
+    expect(rounds[2].ties[0].nextTieIndex).toBeNull();
+    expect(rounds[2].ties[0].nextTieSlot).toBeNull();
+  });
+
+  it('gives the extra teams a bye and propagates the win into round 2 immediately', () => {
+    // 5 teams -> bracket of 8 -> 3 byes, 1 real pair in round 1.
+    const teams = ['a', 'b', 'c', 'd', 'e'];
+    const rounds = buildCupBracket(teams);
+
+    expect(rounds[0].ties).toHaveLength(4);
+    const byes = rounds[0].ties.filter((t) => t.isBye);
+    const realPairs = rounds[0].ties.filter((t) => !t.isBye);
+    expect(byes).toHaveLength(3);
+    expect(realPairs).toHaveLength(1);
+    byes.forEach((t) => {
+      expect(t.winnerTeamId).toBe(t.homeTeamId);
+      expect(t.awayTeamId).toBeNull();
+    });
+    // The one real pair isn't resolved yet — no winner until it's actually played.
+    expect(realPairs[0].winnerTeamId).toBeNull();
+
+    // Round 2 (Semi-Final) has 2 ties; with 3 byes feeding 4 round-1 slots,
+    // one round-2 tie ends up with *both* sides already filled by two byes
+    // (a fair, real tie between the two bye-getters), the other has only
+    // one side filled (waiting on the real pair to be played).
+    expect(rounds[1].name).toBe('Semi-Final');
+    expect(rounds[1].ties).toHaveLength(2);
+    const bothFilled = rounds[1].ties.filter((t) => t.homeTeamId && t.awayTeamId);
+    const oneFilled = rounds[1].ties.filter((t) => (t.homeTeamId && !t.awayTeamId) || (!t.homeTeamId && t.awayTeamId));
+    expect(bothFilled).toHaveLength(1);
+    expect(oneFilled).toHaveLength(1);
+    // None of round 2's ties are themselves byes — these are real ties to play.
+    expect(rounds[1].ties.every((t) => !t.isBye)).toBe(true);
+
+    expect(rounds[2].name).toBe('Final');
+    expect(rounds[2].ties).toHaveLength(1);
+    expect(rounds[2].ties[0].homeTeamId).toBeNull();
+    expect(rounds[2].ties[0].awayTeamId).toBeNull();
+  });
+
+  it('every non-final tie points at a valid slot in the very next round', () => {
+    const teams = Array.from({ length: 11 }, (_, i) => `team-${i}`);
+    const rounds = buildCupBracket(teams);
+    rounds.slice(0, -1).forEach((round, i) => {
+      const nextRound = rounds[i + 1];
+      round.ties.forEach((tie) => {
+        expect(tie.nextTieIndex).not.toBeNull();
+        expect(tie.nextTieSlot).not.toBeNull();
+        expect(nextRound.ties[tie.nextTieIndex as number]).toBeDefined();
+      });
+    });
+    // Final round's tie has nowhere further to advance to.
+    const finalRound = rounds[rounds.length - 1];
+    expect(finalRound.ties).toHaveLength(1);
+    expect(finalRound.ties[0].nextTieIndex).toBeNull();
+  });
+
+  it('handles the smallest possible field: 2 teams, one Final, no earlier rounds', () => {
+    const rounds = buildCupBracket(['a', 'b']);
+    expect(rounds).toHaveLength(1);
+    expect(rounds[0].name).toBe('Final');
+    expect(rounds[0].ties).toHaveLength(1);
+    expect(rounds[0].ties[0].isBye).toBe(false);
   });
 });
