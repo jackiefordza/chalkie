@@ -24,13 +24,14 @@ import { FONT_DISPLAY, FONT_BODY } from '@/styles/typography';
 // color scheme, which would fight a background that never changes with it.
 
 type WorkspaceTab = 'teams' | 'fixtures' | 'results' | 'standings';
-type SectionKey = 'dashboard' | WorkspaceTab | 'inbox' | 'tools' | 'venues' | 'cup';
+type SectionKey = 'dashboard' | WorkspaceTab | 'inbox' | 'tools' | 'venues' | 'cup' | 'singles';
 
 function currentSection(pathname: string, tab: string | undefined, cupTieId: string | undefined): SectionKey | null {
   if (pathname.startsWith('/admin-inbox') || pathname.startsWith('/admin-dispute')) return 'inbox';
   if (pathname.startsWith('/admin-tools')) return 'tools';
   if (pathname.startsWith('/admin-venues')) return 'venues';
   if (pathname.startsWith('/admin-cup')) return 'cup';
+  if (pathname.startsWith('/admin-singles')) return 'singles';
   if (pathname.startsWith('/admin-team')) return 'teams';
   // A cup tie's result reuses /results-entry (see results-entry.tsx) — belongs
   // under "Cup" in the sidebar, not "Results", and shouldn't show the season/
@@ -278,6 +279,7 @@ export function AdminShell({ leagueName, title, breadcrumb, actions, children }:
 
           <SectionLabel>Competitions</SectionLabel>
           <SidebarRow icon="trophy" label="Team Knockout Cup" active={section === 'cup'} onPress={() => router.push('/(protected)/admin-cup' as never)} />
+          <SidebarRow icon="target" label="Singles Competition" active={section === 'singles'} onPress={() => router.push('/(protected)/admin-singles' as never)} />
 
           <SectionLabel>Support</SectionLabel>
           <SidebarRow icon="zap" label="Inbox" active={section === 'inbox'} onPress={() => router.push('/(protected)/admin-inbox')} />

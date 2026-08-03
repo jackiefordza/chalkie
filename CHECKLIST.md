@@ -83,7 +83,7 @@ just started.
 
 ## Phase 2 — Cup & individual competitions
 - [x] Team knockout cup (single-elimination, cross-division) — code complete, live-verified via emulator 2026-07-30, see PLAN.md
-- [ ] Singles knockout
+- [x] Singles knockout — code complete, live-verified via emulator 2026-08-03, see PLAN.md
 - [ ] Pairs knockout
 - [ ] Captains Cup
 - [ ] Player Championship (top 12/division, seeded from `playerSeasonStats`)

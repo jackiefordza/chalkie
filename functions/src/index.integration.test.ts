@@ -353,6 +353,119 @@ describe('Team Knockout Cup — onCupTieSubmissionWrite + onCupTieConfirmed', ()
   });
 });
 
+// ── Singles Knockout: onSinglesTieConfirmed ─────────────────────────────
+// Same 4-player Semi-Final x2 -> Final shape as the cup fixture above, but
+// admin writes the confirmed result directly (no submissions subcollection
+// to write through — see the "no captain on each side" reasoning in
+// functions/src/index.ts).
+interface SinglesFixture {
+  leagueId: string; competitionId: string;
+  tie1Id: string; tie2Id: string; finalTieId: string;
+  playerA: string; playerB: string; playerC: string; playerD: string;
+}
+
+function makeSinglesFixture(): SinglesFixture {
+  const n = nonce();
+  return {
+    leagueId: `league-${n}`, competitionId: `singles-${n}`,
+    tie1Id: `stie1-${n}`, tie2Id: `stie2-${n}`, finalTieId: `sfinal-${n}`,
+    playerA: `player-a-${n}`, playerB: `player-b-${n}`, playerC: `player-c-${n}`, playerD: `player-d-${n}`,
+  };
+}
+
+async function seedSinglesBracket(f: SinglesFixture) {
+  const date = admin.firestore.Timestamp.fromDate(new Date('2026-07-01'));
+  await db.doc(`singlesCompetitions/${f.competitionId}`).set({
+    leagueId: f.leagueId, seasonId: `season-${f.competitionId}`, name: 'Test Singles', eventDate: date,
+    playerIds: [f.playerA, f.playerB, f.playerC, f.playerD], status: 'active', winnerPlayerId: null,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+  const tieBase = {
+    leagueId: f.leagueId, competitionId: f.competitionId,
+    homeLegsWon: null, awayLegsWon: null, legs: null,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  };
+  await db.doc(`singlesTies/${f.tie1Id}`).set({
+    ...tieBase, round: 1, homePlayerId: f.playerA, awayPlayerId: f.playerB, winnerPlayerId: null,
+    status: 'ready', nextTieId: f.finalTieId, nextTieSlot: 'home',
+  });
+  await db.doc(`singlesTies/${f.tie2Id}`).set({
+    ...tieBase, round: 1, homePlayerId: f.playerC, awayPlayerId: f.playerD, winnerPlayerId: null,
+    status: 'ready', nextTieId: f.finalTieId, nextTieSlot: 'away',
+  });
+  await db.doc(`singlesTies/${f.finalTieId}`).set({
+    ...tieBase, round: 2, homePlayerId: null, awayPlayerId: null, winnerPlayerId: null,
+    status: 'pending', nextTieId: null, nextTieSlot: null,
+  });
+}
+
+// A straight 2-0 sweep, best of 3 legs.
+function sweepLegs(): { winner: 'home'; oneEighties: string[]; highCheckout: null }[] {
+  return [
+    { winner: 'home', oneEighties: [], highCheckout: null },
+    { winner: 'home', oneEighties: [], highCheckout: null },
+  ];
+}
+
+async function getSinglesTie(tieId: string) {
+  const snap = await db.doc(`singlesTies/${tieId}`).get();
+  return snap.exists ? snap.data() : null;
+}
+async function getSinglesCompetition(competitionId: string) {
+  const snap = await db.doc(`singlesCompetitions/${competitionId}`).get();
+  return snap.exists ? snap.data() : null;
+}
+
+describe('Singles Knockout — onSinglesTieConfirmed', () => {
+  it('confirms a tie from raw legs, advances the winner, and completes the competition once the Final confirms', async () => {
+    const f = makeSinglesFixture();
+    await seedSinglesBracket(f);
+
+    // Tie 1: A beats B 2-0.
+    await db.doc(`singlesTies/${f.tie1Id}`).update({ status: 'confirmed', legs: sweepLegs() });
+    const tie1 = await waitFor(async () => {
+      const t = await getSinglesTie(f.tie1Id);
+      return t?.winnerPlayerId ? t : null;
+    });
+    expect(tie1.winnerPlayerId).toBe(f.playerA);
+    expect(tie1.homeLegsWon).toBe(2);
+    expect(tie1.awayLegsWon).toBe(0);
+
+    const finalAfterTie1 = await waitFor(async () => {
+      const t = await getSinglesTie(f.finalTieId);
+      return t?.homePlayerId ? t : null;
+    });
+    expect(finalAfterTie1.homePlayerId).toBe(f.playerA);
+    expect(finalAfterTie1.status).toBe('pending');
+
+    // Tie 2: C beats D 2-1 (a real decider, not a straight sweep).
+    await db.doc(`singlesTies/${f.tie2Id}`).update({
+      status: 'confirmed',
+      legs: [
+        { winner: 'home', oneEighties: [], highCheckout: null },
+        { winner: 'away', oneEighties: [], highCheckout: null },
+        { winner: 'home', oneEighties: [], highCheckout: null },
+      ],
+    });
+    await waitFor(async () => (await getSinglesTie(f.tie2Id))?.winnerPlayerId ? true : null);
+
+    const finalReady = await waitFor(async () => {
+      const t = await getSinglesTie(f.finalTieId);
+      return t?.awayPlayerId && t?.status === 'ready' ? t : null;
+    });
+    expect(finalReady.homePlayerId).toBe(f.playerA);
+    expect(finalReady.awayPlayerId).toBe(f.playerC);
+
+    // Final: A beats C 2-0 — no next tie, so the competition itself completes.
+    await db.doc(`singlesTies/${f.finalTieId}`).update({ status: 'confirmed', legs: sweepLegs() });
+    const competition = await waitFor(async () => {
+      const c = await getSinglesCompetition(f.competitionId);
+      return c?.status === 'completed' ? c : null;
+    });
+    expect(competition.winnerPlayerId).toBe(f.playerA);
+  });
+});
+
 describe('onMatchDeleted', () => {
   it('fully reverses a confirmed match\'s contribution to divisionTables and playerSeasonStats', async () => {
     const f = makeFixture();

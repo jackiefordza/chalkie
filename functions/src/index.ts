@@ -1066,3 +1066,122 @@ export const adminDeleteCup = onCall(async (request) => {
   batch.delete(db.doc(`cups/${cupId}`));
   await batch.commit();
 });
+
+// ── Singles Knockout ─────────────────────────────────────────────────────
+// Individual-player single-elimination bracket, played through in one
+// sitting on one night (the real league's own printed schedule lists a
+// single date for this, unlike the Team K.O.'s separate date per round) —
+// so unlike cupTies there's no per-round scheduledDate and no submissions
+// subcollection at all. The admin/organiser running the night writes each
+// tie's raw leg-by-leg result directly (see onSinglesTieConfirmed below,
+// which — same principle as computeTotals elsewhere in this file — never
+// trusts a client-supplied winner/legsWon, always recomputes it from the
+// raw legs). Reuses buildCupBracket unchanged: it only ever operated on a
+// generic string[] of entrant ids, so a player id works exactly like a team
+// id did for the Team Cup — same bye/pairing/advancement logic, no
+// duplication needed.
+
+export const adminCreateSinglesCompetition = onCall(async (request) => {
+  const { leagueId, seasonId, name, playerIds, eventDate } = (request.data ?? {}) as {
+    leagueId?: string; seasonId?: string; name?: string; playerIds?: string[]; eventDate?: string;
+  };
+  if (!leagueId || !seasonId || !name || !playerIds || playerIds.length < 2 || !eventDate) {
+    throw new HttpsError('invalid-argument', 'leagueId, seasonId, name, at least 2 playerIds, and eventDate are required.');
+  }
+  await assertLeagueAdmin(request.auth?.uid, leagueId);
+
+  const plan = buildCupBracket(shuffleArray(playerIds));
+  const date = Timestamp.fromDate(new Date(eventDate));
+
+  const compRef = db.collection('singlesCompetitions').doc();
+  const tieRefsByRound = plan.map((round) => round.ties.map(() => db.collection('singlesTies').doc()));
+
+  const batch = db.batch();
+  batch.set(compRef, {
+    leagueId, seasonId, name, eventDate: date, playerIds, status: 'active', winnerPlayerId: null,
+    createdAt: FieldValue.serverTimestamp(),
+  });
+
+  plan.forEach((round, roundIdx) => {
+    round.ties.forEach((tie, tieIdx) => {
+      const nextTieRef = tie.nextTieIndex != null ? tieRefsByRound[roundIdx + 1][tie.nextTieIndex] : null;
+      const status: string = tie.isBye ? 'bye' : (tie.homeTeamId && tie.awayTeamId) ? 'ready' : 'pending';
+      batch.set(tieRefsByRound[roundIdx][tieIdx], {
+        leagueId, competitionId: compRef.id, round: round.round,
+        homePlayerId: tie.homeTeamId, awayPlayerId: tie.awayTeamId, winnerPlayerId: tie.winnerTeamId,
+        status, homeLegsWon: null, awayLegsWon: null, legs: null,
+        nextTieId: nextTieRef ? nextTieRef.id : null, nextTieSlot: tie.nextTieSlot,
+        createdAt: FieldValue.serverTimestamp(),
+      });
+    });
+  });
+
+  await batch.commit();
+  return { competitionId: compRef.id };
+});
+
+async function advanceSinglesTieWinner(
+  competitionId: string, nextTieId: string | null, nextTieSlot: MatchSide | null, winnerPlayerId: string,
+): Promise<void> {
+  if (!nextTieId || !nextTieSlot) {
+    await db.doc(`singlesCompetitions/${competitionId}`).update({ status: 'completed', winnerPlayerId });
+    return;
+  }
+  const nextTieRef = db.doc(`singlesTies/${nextTieId}`);
+  await db.runTransaction(async (tx) => {
+    const snap = await tx.get(nextTieRef);
+    if (!snap.exists) return;
+    const data = snap.data()!;
+    const field = nextTieSlot === 'home' ? 'homePlayerId' : 'awayPlayerId';
+    const otherField = nextTieSlot === 'home' ? 'awayPlayerId' : 'homePlayerId';
+    const update: Record<string, unknown> = { [field]: winnerPlayerId };
+    if (data[otherField]) update.status = 'ready';
+    tx.update(nextTieRef, update);
+  });
+}
+
+export const onSinglesTieConfirmed = onDocumentUpdated('singlesTies/{tieId}', async (event) => {
+  const before = event.data?.before.data();
+  const after = event.data?.after.data();
+  if (!before || !after) return;
+  if (after.status !== 'confirmed') return;
+
+  const beforeLegs = (before.status === 'confirmed' ? (before.legs ?? []) : []) as MatchLeg[];
+  const afterLegs = (after.legs ?? []) as MatchLeg[];
+  if (JSON.stringify(beforeLegs) === JSON.stringify(afterLegs)) return; // no actual result change
+
+  const tieId = event.params.tieId;
+  const homeLegsWon = afterLegs.filter((l) => l.winner === 'home').length;
+  const awayLegsWon = afterLegs.filter((l) => l.winner === 'away').length;
+  const winnerPlayerId = (homeLegsWon > awayLegsWon ? after.homePlayerId : after.awayPlayerId) as string;
+
+  await db.doc(`singlesTies/${tieId}`).update({ homeLegsWon, awayLegsWon, winnerPlayerId });
+
+  await advanceSinglesTieWinner(
+    after.competitionId as string, (after.nextTieId ?? null) as string | null, (after.nextTieSlot ?? null) as MatchSide | null,
+    winnerPlayerId,
+  );
+});
+
+// Blocked while any tie has a confirmed result — same conservative
+// reasoning as adminDeleteCup above.
+export const adminDeleteSinglesCompetition = onCall(async (request) => {
+  const { competitionId } = (request.data ?? {}) as { competitionId?: string };
+  if (!competitionId) throw new HttpsError('invalid-argument', 'competitionId is required.');
+  const compSnap = await db.doc(`singlesCompetitions/${competitionId}`).get();
+  if (!compSnap.exists) throw new HttpsError('not-found', 'Competition not found.');
+  await assertLeagueAdmin(request.auth?.uid, compSnap.data()!.leagueId);
+
+  const tiesSnap = await db.collection('singlesTies').where('competitionId', '==', competitionId).get();
+  if (tiesSnap.docs.some((d) => d.data().status === 'confirmed')) {
+    throw new HttpsError(
+      'failed-precondition',
+      "This competition has confirmed results — delete isn't supported while that history exists.",
+    );
+  }
+
+  const batch = db.batch();
+  tiesSnap.docs.forEach((d) => batch.delete(d.ref));
+  batch.delete(db.doc(`singlesCompetitions/${competitionId}`));
+  await batch.commit();
+});

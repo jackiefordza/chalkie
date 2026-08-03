@@ -158,6 +158,23 @@
         { "fieldPath": "cupId", "order": "ASCENDING" },
         { "fieldPath": "round", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "singlesCompetitions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "leagueId", "order": "ASCENDING" },
+        { "fieldPath": "seasonId", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "singlesTies",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "leagueId", "order": "ASCENDING" },
+        { "fieldPath": "competitionId", "order": "ASCENDING" },
+        { "fieldPath": "round", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

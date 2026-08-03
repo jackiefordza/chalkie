@@ -934,6 +934,79 @@ just the checkable summary so they don't get lost.
       finished yet, so the assertion raced it. Fixed by waiting for
       `homeGamesWon != null` specifically, not just `status === 'confirmed'`.
 
+## 2026-08-03 — Singles Knockout (Phase 2's second competition), code complete and live-verified
+
+Jake, still without Codespaces access, asked for another Phase 2 competition. Before
+building, checked two things with him rather than assuming: how the real event actually
+runs (all rounds in one sitting on one night — the printed schedule lists a single date
+for "Singles Competition", unlike the Team K.O.'s separate date per round) and who
+enters results (the admin/organiser running the night, live, not a submit-and-wait
+flow — there's no "other captain" for an individual tie the way a team match has one).
+Best of 3 legs, by his choice.
+
+These two answers meant Singles Knockout couldn't just be "the Team Cup with players
+instead of teams" — genuinely simpler in some ways (no submissions subcollection at
+all, no per-round scheduledDate, no lineup-picking since the two players are already
+fixed by the tie) and different in one real way (a tie *is* one game of up to 3 legs,
+not a 7-game match).
+
+**Reused, unchanged**: `buildCupBracket` (functions/src/index.ts) — it only ever
+operated on a generic `string[]` of entrant ids, so a player id slots in exactly like a
+team id did. Same bye/cascading-bye/advancement logic, zero duplication, still covered
+by the existing bracket unit tests.
+
+**New**: `singlesCompetitions`/`singlesTies` collections (types in
+`mobile/src/types/index.ts`) — a tie has `homePlayerId`/`awayPlayerId`/`winnerPlayerId`,
+`legs: MatchLeg[]` (the *same* leg shape as everywhere else, just not wrapped in a
+7-game Match — a singles tie *is* one game), and the same `nextTieId`/`nextTieSlot`
+wiring as cupTies. `adminCreateSinglesCompetition` (Cloud Function, same
+one-shot-atomic-action reasoning as `adminCreateCup`) draws the bracket in one action.
+Admin writes a confirmed tie's raw legs directly (no submission step); `onSinglesTieConfirmed`
+(mirroring `onCupTieConfirmed`) recomputes legsWon/winner from the raw legs server-side
+— never trusts a client-supplied winner, same principle as `computeTotals` elsewhere in
+this file — and advances the bracket via the same transaction-based slot-fill pattern,
+completing the competition once the Final confirms. No divisionTables/playerSeasonStats
+writes, ever — deliberately kept as its own self-contained dataset, same reasoning as
+the Team Cup (a knockout win/180/checkout here isn't a *league* result, and the 180
+Cup's planned eligibility rule is specifically about league-tracked 180s, not
+competition-night ones).
+**Eligibility**: only players with `playerSeasonStats.played > 0` this season can be
+drawn — someone who hasn't played a league game yet shouldn't be eligible for the
+knockout. Read directly off `playerSeasonStats` (already unrestricted-read in
+firestore.rules, so no new index needed) rather than scanning match history.
+
+**UI** (`mobile/app/(protected)/admin-singles.tsx`, new) — season picker, create-and-draw
+form (name, event date, an eligible-players multi-select that visibly excludes
+never-played players, the same live bracket-shape preview as the Cup), then the bracket
+itself. Result entry is a **Sheet embedded in the same screen**, not a separate route
+like `results-entry.tsx` — deliberately: there's no lineup to pick (the two players are
+already fixed), so the whole form is just leg-by-leg winner taps plus optional 180s/
+checkout, at most 3 legs. Leg 3 only appears once legs 1–2 split 1–1 (a straight 2–0
+never shows a dead-rubber decider). Added "Singles Competition" to `AdminShell`'s
+sidebar under the "Competitions" section next to the Team Cup.
+**One real bug caught during verification, not just review**: the "does this tie need a
+3rd leg" check recomputed from the *entire* legs array on every pick, not just legs 1–2
+— so the instant leg 3 itself got a winner, the overall tally stopped being 1–1 (now
+2–1), and the check flipped to "no decider needed," truncating leg 3 right back off
+before it could ever be saved. Recording a decider was structurally impossible until
+this was fixed. Fixed by checking only legs 1–2's own split, never the full array.
+
+**Verified three ways**, same bar as the Team Cup: `npx tsc --noEmit` (both projects)
+and `expo export -p web` clean; the shared `buildCupBracket` unit tests already cover
+the bracket math generically; 7 integration tests (`npm run test:integration`, up from
+6 — added one covering a full Semi-Final → Final traversal including a real 2-1 decider,
+not just straight sweeps) against the real Firebase Emulator; and a genuine end-to-end
+pass through the real UI (Firebase Emulator + Playwright): seeded 5 eligible players
+plus one deliberately-ineligible one (confirmed excluded from the picker), drew the
+bracket through the actual admin-singles screen (confirmed the 3-bye cascade), and
+entered a real decider result (1-1 then a 3rd leg) through the entry sheet — which is
+exactly the path that caught the leg-3 bug above; a straight-sweep-only test would have
+missed it entirely. Watched the Semi-Final's "Bob vs TBD / Waiting" row update live to
+"Bob vs Carol / Ready" with no reload.
+**Not yet built**: Pairs Knockout, Captains Cup, Player Championship, 180 Cup, and any
+player-facing view of either knockout competition — same deliberate per-session scoping
+as the Team Cup.
+
 ## 2026-07-30 — Team Knockout Cup (Phase 2, first competition), code complete and live-verified
 
 Jake asked to start on Phase 2 while waiting for his own Codespaces access to come back

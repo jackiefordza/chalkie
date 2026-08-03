@@ -276,6 +276,25 @@ service cloud.firestore {
       }
     }
 
+    // ── Singles Knockout ──────────────────────────────────────────────────
+    // Individual-player bracket, run as one event on one night — no captain
+    // on each side to submit a result independently, so unlike cupTies there
+    // is no submissions subcollection at all: the admin/organiser running
+    // the night writes each tie's result directly. Same admin-only pattern
+    // as everywhere else — creation/advancement is normally via the Admin
+    // SDK from Cloud Functions, this covers direct client reads/edits.
+    match /singlesCompetitions/{competitionId} {
+      allow read: if isSignedIn() && me().leagueId == resource.data.leagueId;
+      allow create: if isAdmin() && me().leagueId == request.resource.data.leagueId;
+      allow update, delete: if isAdmin() && me().leagueId == resource.data.leagueId;
+    }
+
+    match /singlesTies/{singlesTieId} {
+      allow read: if isSignedIn() && me().leagueId == resource.data.leagueId;
+      allow create: if isAdmin() && me().leagueId == request.resource.data.leagueId;
+      allow update, delete: if isAdmin() && me().leagueId == resource.data.leagueId;
+    }
+
     // ── fineDefinitions ───────────────────────────────────────────────────
     match /fineDefinitions/{fineDefId} {
       allow read: if isSignedIn() && me().teamId == resource.data.teamId;

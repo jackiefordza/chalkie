@@ -283,6 +283,48 @@ export interface CupTieSubmission {
   createdAt: Date;
 }
 
+// Singles Knockout — individual players, not teams, single-elimination.
+// Deliberately structured differently from the Team Cup rather than forced
+// into the same shape: this is run as one event on one night (the real
+// league's own printed schedule lists a single date for it, unlike the Team
+// K.O.'s separate date per round), so there's no per-round scheduledDate,
+// and the admin/organiser running the night enters each tie's result
+// directly and it's confirmed immediately — no dual-submission/dispute flow,
+// since there's no captain on each side to submit independently the way a
+// league or cup team match has. Best-of-3 legs, same MatchLeg shape
+// (winner/oneEighties/highCheckout) as everywhere else, just not wrapped in
+// a 7-game Match — a singles tie *is* one game.
+export type SinglesTieStatus = 'pending' | 'ready' | 'confirmed' | 'bye';
+
+export interface SinglesCompetition {
+  id: string;
+  leagueId: string;
+  seasonId: string;
+  name: string;
+  eventDate: Date;
+  playerIds: string[]; // the drawn field, fixed once the bracket is created
+  status: 'active' | 'completed';
+  winnerPlayerId: string | null; // set once the Final is confirmed
+  createdAt: Date;
+}
+
+export interface SinglesTie {
+  id: string;
+  leagueId: string;
+  competitionId: string;
+  round: number;
+  homePlayerId: string | null;
+  awayPlayerId: string | null;
+  winnerPlayerId: string | null;
+  status: SinglesTieStatus;
+  homeLegsWon: number | null;
+  awayLegsWon: number | null;
+  legs: MatchLeg[] | null; // 'home'/'away' here mean homePlayerId/awayPlayerId, not a team side
+  nextTieId: string | null;
+  nextTieSlot: MatchSide | null;
+  createdAt: Date;
+}
+
 // Server-computed only (Cloud Function). played/won/lost count individual
 // games (singles + pairs), not matches — a player can play more than one
 // game per match.
