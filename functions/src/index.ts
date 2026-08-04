@@ -870,6 +870,7 @@ function addDaysUtc(date: Date, days: number): Date {
 // rounds' dates are already fully determined by team count + interval, only
 // which *teams* land in them is unknown until earlier rounds are played.
 export const adminCreateCup = onCall(async (request) => {
+  // no-op touch: forces Firebase to re-set this function's IAM invoker permission after a flaky deploy left it unset.
   const { leagueId, seasonId, name, teamIds, startDate, intervalDays } = (request.data ?? {}) as {
     leagueId?: string; seasonId?: string; name?: string; teamIds?: string[]; startDate?: string; intervalDays?: number;
   };
@@ -1040,6 +1041,7 @@ export const onCupTieConfirmed = onDocumentUpdated('cupTies/{tieId}', async (eve
 // Blocked while any tie has a confirmed result — same conservative
 // reasoning as deleteTeamCascade above (no bulk-reversal support here).
 export const adminDeleteCup = onCall(async (request) => {
+  // no-op touch: forces Firebase to re-set this function's IAM invoker permission after a flaky deploy left it unset.
   const { cupId } = (request.data ?? {}) as { cupId?: string };
   if (!cupId) throw new HttpsError('invalid-argument', 'cupId is required.');
   const cupSnap = await db.doc(`cups/${cupId}`).get();
@@ -1142,6 +1144,7 @@ async function notifySinglesBoardAssignments(
 }
 
 export const adminCreateSinglesCompetition = onCall(async (request) => {
+  // no-op touch: forces Firebase to re-set this function's IAM invoker permission after a flaky deploy left it unset.
   const { leagueId, seasonId, name, eventDate, entryFeeCents } = (request.data ?? {}) as {
     leagueId?: string; seasonId?: string; name?: string; eventDate?: string; entryFeeCents?: number | null;
   };
@@ -1176,6 +1179,7 @@ async function assertSinglesRegistrationOpen(competitionId: string): Promise<Fir
 // manual-add list: must have actually played a league game this season
 // (playerSeasonStats.played > 0), not just be on a roster.
 export const registerForSinglesCompetition = onCall(async (request) => {
+  // no-op touch: forces Firebase to re-set this function's IAM invoker permission after a flaky deploy left it unset.
   const { competitionId } = (request.data ?? {}) as { competitionId?: string };
   const uid = request.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Sign in required.');
@@ -1221,6 +1225,7 @@ export const registerForSinglesCompetition = onCall(async (request) => {
 });
 
 export const adminAddSinglesRegistration = onCall(async (request) => {
+  // no-op touch: forces Firebase to re-set this function's IAM invoker permission after a flaky deploy left it unset.
   const { competitionId, playerId } = (request.data ?? {}) as { competitionId?: string; playerId?: string };
   if (!competitionId || !playerId) throw new HttpsError('invalid-argument', 'competitionId and playerId are required.');
 
@@ -1254,6 +1259,7 @@ export const adminAddSinglesRegistration = onCall(async (request) => {
 });
 
 export const adminRemoveSinglesRegistration = onCall(async (request) => {
+  // no-op touch: forces Firebase to re-set this function's IAM invoker permission after a flaky deploy left it unset.
   const { registrationId } = (request.data ?? {}) as { registrationId?: string };
   if (!registrationId) throw new HttpsError('invalid-argument', 'registrationId is required.');
   const regSnap = await db.doc(`singlesRegistrations/${registrationId}`).get();
@@ -1273,6 +1279,7 @@ export const adminRemoveSinglesRegistration = onCall(async (request) => {
 // Stripe webhook handler has one obvious place to call into instead of a
 // second, parallel write path.
 export const adminSetSinglesRegistrationPayment = onCall(async (request) => {
+  // no-op touch: forces Firebase to re-set this function's IAM invoker permission after a flaky deploy left it unset.
   const { registrationId, paymentStatus, paymentMethod } = (request.data ?? {}) as {
     registrationId?: string; paymentStatus?: string; paymentMethod?: string | null;
   };
@@ -1299,6 +1306,7 @@ export const adminSetSinglesRegistrationPayment = onCall(async (request) => {
 // either side) gets assigned a board right away, same as a tie becoming
 // newly ready mid-event does in onSinglesTieConfirmed below.
 export const adminBuildSinglesDraw = onCall(async (request) => {
+  // no-op touch: forces Firebase to re-set this function's IAM invoker permission after a flaky deploy left it unset.
   const { competitionId, boardCount, boardNames } = (request.data ?? {}) as {
     competitionId?: string; boardCount?: number; boardNames?: (string | null)[];
   };
@@ -1446,6 +1454,7 @@ export const onSinglesTieConfirmed = onDocumentUpdated('singlesTies/{tieId}', as
 // Blocked while any tie has a confirmed result — same conservative
 // reasoning as adminDeleteCup above.
 export const adminDeleteSinglesCompetition = onCall(async (request) => {
+  // no-op touch: forces Firebase to re-set this function's IAM invoker permission after a flaky deploy left it unset.
   const { competitionId } = (request.data ?? {}) as { competitionId?: string };
   if (!competitionId) throw new HttpsError('invalid-argument', 'competitionId is required.');
   const compSnap = await db.doc(`singlesCompetitions/${competitionId}`).get();
