@@ -934,6 +934,197 @@ just the checkable summary so they don't get lost.
       finished yet, so the assertion raced it. Fixed by waiting for
       `homeGamesWon != null` specifically, not just `status === 'confirmed'`.
 
+## 2026-08-03 — Singles Knockout (Phase 2's second competition), code complete and live-verified
+
+Jake, still without Codespaces access, asked for another Phase 2 competition. Before
+building, checked two things with him rather than assuming: how the real event actually
+runs (all rounds in one sitting on one night — the printed schedule lists a single date
+for "Singles Competition", unlike the Team K.O.'s separate date per round) and who
+enters results (the admin/organiser running the night, live, not a submit-and-wait
+flow — there's no "other captain" for an individual tie the way a team match has one).
+Best of 3 legs, by his choice.
+
+These two answers meant Singles Knockout couldn't just be "the Team Cup with players
+instead of teams" — genuinely simpler in some ways (no submissions subcollection at
+all, no per-round scheduledDate, no lineup-picking since the two players are already
+fixed by the tie) and different in one real way (a tie *is* one game of up to 3 legs,
+not a 7-game match).
+
+**Reused, unchanged**: `buildCupBracket` (functions/src/index.ts) — it only ever
+operated on a generic `string[]` of entrant ids, so a player id slots in exactly like a
+team id did. Same bye/cascading-bye/advancement logic, zero duplication, still covered
+by the existing bracket unit tests.
+
+**New**: `singlesCompetitions`/`singlesTies` collections (types in
+`mobile/src/types/index.ts`) — a tie has `homePlayerId`/`awayPlayerId`/`winnerPlayerId`,
+`legs: MatchLeg[]` (the *same* leg shape as everywhere else, just not wrapped in a
+7-game Match — a singles tie *is* one game), and the same `nextTieId`/`nextTieSlot`
+wiring as cupTies. `adminCreateSinglesCompetition` (Cloud Function, same
+one-shot-atomic-action reasoning as `adminCreateCup`) draws the bracket in one action.
+Admin writes a confirmed tie's raw legs directly (no submission step); `onSinglesTieConfirmed`
+(mirroring `onCupTieConfirmed`) recomputes legsWon/winner from the raw legs server-side
+— never trusts a client-supplied winner, same principle as `computeTotals` elsewhere in
+this file — and advances the bracket via the same transaction-based slot-fill pattern,
+completing the competition once the Final confirms. No divisionTables/playerSeasonStats
+writes, ever — deliberately kept as its own self-contained dataset, same reasoning as
+the Team Cup (a knockout win/180/checkout here isn't a *league* result, and the 180
+Cup's planned eligibility rule is specifically about league-tracked 180s, not
+competition-night ones).
+**Eligibility**: only players with `playerSeasonStats.played > 0` this season can be
+drawn — someone who hasn't played a league game yet shouldn't be eligible for the
+knockout. Read directly off `playerSeasonStats` (already unrestricted-read in
+firestore.rules, so no new index needed) rather than scanning match history.
+
+**UI** (`mobile/app/(protected)/admin-singles.tsx`, new) — season picker, create-and-draw
+form (name, event date, an eligible-players multi-select that visibly excludes
+never-played players, the same live bracket-shape preview as the Cup), then the bracket
+itself. Result entry is a **Sheet embedded in the same screen**, not a separate route
+like `results-entry.tsx` — deliberately: there's no lineup to pick (the two players are
+already fixed), so the whole form is just leg-by-leg winner taps plus optional 180s/
+checkout, at most 3 legs. Leg 3 only appears once legs 1–2 split 1–1 (a straight 2–0
+never shows a dead-rubber decider). Added "Singles Competition" to `AdminShell`'s
+sidebar under the "Competitions" section next to the Team Cup.
+**One real bug caught during verification, not just review**: the "does this tie need a
+3rd leg" check recomputed from the *entire* legs array on every pick, not just legs 1–2
+— so the instant leg 3 itself got a winner, the overall tally stopped being 1–1 (now
+2–1), and the check flipped to "no decider needed," truncating leg 3 right back off
+before it could ever be saved. Recording a decider was structurally impossible until
+this was fixed. Fixed by checking only legs 1–2's own split, never the full array.
+
+**Verified three ways**, same bar as the Team Cup: `npx tsc --noEmit` (both projects)
+and `expo export -p web` clean; the shared `buildCupBracket` unit tests already cover
+the bracket math generically; 7 integration tests (`npm run test:integration`, up from
+6 — added one covering a full Semi-Final → Final traversal including a real 2-1 decider,
+not just straight sweeps) against the real Firebase Emulator; and a genuine end-to-end
+pass through the real UI (Firebase Emulator + Playwright): seeded 5 eligible players
+plus one deliberately-ineligible one (confirmed excluded from the picker), drew the
+bracket through the actual admin-singles screen (confirmed the 3-bye cascade), and
+entered a real decider result (1-1 then a 3rd leg) through the entry sheet — which is
+exactly the path that caught the leg-3 bug above; a straight-sweep-only test would have
+missed it entirely. Watched the Semi-Final's "Bob vs TBD / Waiting" row update live to
+"Bob vs Carol / Ready" with no reload.
+**Not yet built**: Pairs Knockout, Captains Cup, Player Championship, 180 Cup, and any
+player-facing view of either knockout competition — same deliberate per-session scoping
+as the Team Cup.
+
+## 2026-07-30 — Team Knockout Cup (Phase 2, first competition), code complete and live-verified
+
+Jake asked to start on Phase 2 while waiting for his own Codespaces access to come back
+(can't get to a phone/Expo Go until Saturday) — picked the Team Knockout Cup first since
+it's the simplest of the five Phase 2 competitions and reuses the most existing
+infrastructure. Single-elimination, cross-division draw, admin creates and draws the
+whole bracket in one action.
+
+**Data model** — three new collections, deliberately *not* folded into the existing
+`matches` collection despite reusing its exact shape: a cup tie can involve teams from
+different divisions, so crediting a tie's result toward any one division's
+`divisionTables`/`playerSeasonStats` would be wrong. Keeping it separate means the whole
+league scoring engine (the thing with the most test coverage and the most care already
+put into it this project) needed zero changes, versus overloading `matches` with a
+nullable `divisionId` and auditing every existing division-scoped query for the new
+null case.
+- `cups/{id}` — one per draw: name, `teamIds` (the fixed field once drawn), `status`
+  (draft/active/completed), `winnerTeamId` (set once the Final confirms).
+- `cupRounds/{id}` — name ("Quarter-Final", "Semi-Final", "Final", "Round of N"),
+  `order`, `scheduledDate` — every round's date is fully known upfront from team count +
+  interval, same as the league fixture generator, since round *timing* never depends on
+  who actually wins earlier rounds, only *how many* rounds there'll be.
+- `cupTies/{id}` — exactly `Match`'s shape (`homeTeamId`/`awayTeamId`/`games`/etc, same
+  7-game/501/3-legs format) plus `nextTieId`/`nextTieSlot` (which slot of which
+  following-round tie this one's winner feeds into — null for the Final) and a `status`
+  enum extending `MatchStatus` with `'pending'` (one or both slots still unknown, waiting
+  on an earlier round) and `'bye'` (one slot filled, auto-resolved, no game needed).
+  `cupTies/{id}/submissions/{id}` mirrors `matches/{id}/submissions` exactly.
+
+**Bracket generation** (`functions/src/index.ts`: `nextPowerOfTwo`, `cupRoundName`,
+`buildCupBracket`, all pure/exported/unit-tested) — standard single-elimination
+construction: round up team count to the next power of two, give the shortfall a bye in
+round 1 (auto-resolved with no game, winner propagated straight into round 2's slot
+immediately), pair up the rest. Every later round's ties are pre-created as placeholders
+wired via `nextTieId`/`nextTieSlot`, all the way to the Final — nothing about a later
+round's *shape* depends on actual results, only which *teams* end up in which slot does.
+Handles the genuinely fiddly edge case correctly: when byes outnumber a quarter of the
+bracket, two byes can cascade into filling *both* slots of the same round-2 tie — that's
+correct and fair (those two teams just play each other one round later than everyone
+else, not a "double bye"), verified with a dedicated test. `adminCreateCup` (the only
+onCall here — kept server-side, consistent with `adminMigrateVenues`/
+`adminMoveTeamDivision` etc. as a one-shot atomic multi-doc action, not client-side like
+the league fixture generator, which needs live UI preview the cup draw doesn't) shuffles
+the real draw server-side, builds the plan, and batch-writes the cup + every round + every
+tie in one go.
+
+**Advancement** (`onCupTieSubmissionWrite`/`onCupTieConfirmed`) — line-for-line the same
+submission-comparison/confirm pattern as `onSubmissionWrite`/`onMatchConfirmed`, just
+scoped to `cupTies`. On confirm: computes totals/winner (no divisionTables/
+playerSeasonStats write, ever), then writes the winner into the next tie's slot inside a
+Firestore transaction (not a plain read-then-write) — needed because two ties can
+confirm around the same time and both feed the same next tie; a transaction is the only
+way to safely read "is the other slot already filled" and write atomically without a
+race. No next tie at all means this was the Final: the cup itself gets marked
+`completed` with `winnerTeamId` set.
+**Known limitation, written up as a comment at the call site rather than solved**: an
+admin correcting an already-confirmed tie's result recomputes totals/winner and
+re-advances correctly *if* the next round's tie hasn't been played yet, but doesn't
+cascade-reverse anything further down the bracket if it has — a knockout tree has no
+equivalent of the league's clean stats delta for this, and correcting a result after the
+round it feeds has already been played is expected to be rare enough not to need that
+machinery yet.
+
+**UI** — `mobile/app/(protected)/admin-cup.tsx` (new): pick a season, create-and-draw
+form (name, team multi-select via `Chip`, first-round date + interval, a live "Bracket:
+Final ← Semi-Final ← Quarter-Final (N byes in round 1)" preview), then the bracket itself
+as one card per round listing every tie with a status badge, tapping through to the
+result. Added "Team Knockout Cup" to `AdminShell`'s sidebar under a new "Competitions"
+section.
+**`results-entry.tsx` generalized to serve both**, rather than forking into a second
+~800-line screen: it now takes either `matchId` or `cupTieId`, derives `collectionName`
+(`'matches'` vs `'cupTies'`) and reads/writes through that one variable everywhere —
+same lineup/legs/180s/checkout form, same admin "enter on behalf of" flow, same
+reconcile-differences UI, for both. Delete/correction confirmation copy adjusted to not
+claim a cup tie affects "standings and player stats" (it never does). Added two new
+guard states specific to cup ties (a league match never has these): `'bye'` ("advances
+automatically — no game needed") and `'pending'` ("waiting on an earlier round").
+**Two real bugs caught during verification, not just review**: (1) the team-name lookup
+unconditionally called `getDoc(doc(db, 'teams', m.awayTeamId))` — crashed outright
+(`Cannot read properties of null`) the moment it hit a real bye tie, since a league
+match's away side is never null but a cup tie's can be; fixed to skip the fetch and fall
+back to "TBD"/"Bye" text when either side is null. (2) the very first version of the
+`admin-cup.tsx` bracket queries filtered only by `cupId`, not `leagueId` — same class of
+bug as the "Delete all & regenerate" fixtures bug from the day before: Firestore rejects
+a list query outright unless every field the security rule touches is also an explicit
+filter on the query itself, so the bracket silently failed to load at all. Fixed by
+adding `leagueId` as an explicit filter (and extending the composite indexes to match).
+
+**Verified three ways**: 49 unit tests (`npm test` in `functions/` — the bracket-building
+logic: no-bye power-of-two fields, byes propagating correctly including the
+both-slots-from-byes cascade case, every non-Final tie pointing at a valid next-round
+slot, the 2-team minimal case) plus 6 integration tests (`npm run test:integration`,
+against the real Firebase Emulator — submission comparison, disputed-tie handling,
+winner advancement into the very next tie's slot, and full bracket traversal from two
+Semi-Finals through to the Final actually completing the cup with the right
+`winnerTeamId`) plus a genuine end-to-end pass through the real UI (Firebase Emulator +
+Playwright): seeded a 5-team cross-division field, created and drew the cup through the
+actual admin-cup screen (confirmed the 3-bye cascade rendered exactly as the data
+predicted), submitted a real tie's result through Firestore and watched the Semi-Final's
+"Kings Arms vs TBD / Waiting" row update live to "Kings Arms vs Red Lion / Upcoming" with
+no page reload, and opened both a bye tie and a scheduled tie through the real
+results-entry screen to confirm the guard messaging and the admin "enter on behalf of"
+flow both render correctly for a cup tie. `npx tsc --noEmit` (both projects) and
+`expo export -p web` both clean.
+**Not yet built**: the other four Phase 2 competitions (Singles/Pairs knockout, Captains
+Cup, Player Championship, 180 Cup) and any player-facing cup view (currently
+admin-only, matching how league fixtures started admin-only too) — deliberately scoped
+to just this one competition for this pass, per Jake's choice when asked what to
+prioritize next.
+**Also fixed in passing**: a pre-existing flaky race in
+`functions/src/index.integration.test.ts` — the auto-confirm test asserted on
+`divisionTables.position` without waiting for `recomputeDivisionPositions`'s write
+specifically (a separate, later write than the rest of the table), so it intermittently
+failed depending on timing. Not something this session's changes caused, just something
+noticed while re-running the suite to verify the cup work — fixed the same way the file's
+own existing tests already handle this class of race elsewhere (wait for the specific
+field being asserted on, not just any truthy doc).
+
 ## 2026-07-29 — fixture generator now preserves the traditional "second half mirrors the first" shape
 
 Jake sent the real league's own printed schedule PDF and pointed out the convention

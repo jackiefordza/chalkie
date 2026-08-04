@@ -121,9 +121,18 @@ describe('onSubmissionWrite + onMatchConfirmed (auto-confirm path)', () => {
     expect(match.homeLegsWon).toBe(21);
     expect(match.awayLegsWon).toBe(0);
 
-    const homeTable = await waitFor(() => getDivisionTable(f, f.homeTeamId));
+    // recomputeDivisionPositions is a separate write *after* applyMatchResultDelta's
+    // own divisionTables batch — wait for position specifically, not just any
+    // truthy doc, or this races the earlier (points/won/etc-only) write.
+    const homeTable = await waitFor(async () => {
+      const t = await getDivisionTable(f, f.homeTeamId);
+      return t?.position != null ? t : null;
+    });
     expect(homeTable).toMatchObject({ played: 1, won: 1, lost: 0, points: 2, legsFor: 21, legsAgainst: 0, legDiff: 21, position: 1 });
-    const awayTable = await waitFor(() => getDivisionTable(f, f.awayTeamId));
+    const awayTable = await waitFor(async () => {
+      const t = await getDivisionTable(f, f.awayTeamId);
+      return t?.position != null ? t : null;
+    });
     expect(awayTable).toMatchObject({ played: 1, won: 0, lost: 1, points: 0, legsFor: 0, legsAgainst: 21, legDiff: -21, position: 2 });
 
     const h1Stats = await waitFor(() => getPlayerStats(f, `${f.p}-h1`));
@@ -186,6 +195,352 @@ describe('onMatchConfirmed — admin correction of an already-confirmed match', 
       return t && t.won === 1 ? t : null;
     });
     expect(awayTable).toMatchObject({ played: 1, won: 1, lost: 0, points: 2, legsFor: 21, legsAgainst: 0 });
+  });
+});
+
+// ── Team Knockout Cup: onCupTieSubmissionWrite + onCupTieConfirmed ─────────
+// Seeds a small 4-team bracket by hand (Semi-Final x2 -> Final) — the exact
+// shape adminCreateCup itself would write, minus actually calling the onCall
+// wrapper (this only needs to exercise the Firestore triggers, same as the
+// league match tests above).
+interface CupFixture {
+  leagueId: string; cupId: string;
+  semiRoundId: string; finalRoundId: string;
+  tie1Id: string; tie2Id: string; finalTieId: string;
+  teamA: string; teamB: string; teamC: string; teamD: string;
+  p: string;
+}
+
+function makeCupFixture(): CupFixture {
+  const n = nonce();
+  return {
+    leagueId: `league-${n}`, cupId: `cup-${n}`,
+    semiRoundId: `semi-${n}`, finalRoundId: `final-${n}`,
+    tie1Id: `tie1-${n}`, tie2Id: `tie2-${n}`, finalTieId: `final-tie-${n}`,
+    teamA: `team-a-${n}`, teamB: `team-b-${n}`, teamC: `team-c-${n}`, teamD: `team-d-${n}`,
+    p: n,
+  };
+}
+
+async function seedCupBracket(f: CupFixture) {
+  const date = admin.firestore.Timestamp.fromDate(new Date('2026-06-01'));
+  await Promise.all([
+    db.doc(`teams/${f.teamA}`).set({ leagueId: f.leagueId, name: 'Team A' }),
+    db.doc(`teams/${f.teamB}`).set({ leagueId: f.leagueId, name: 'Team B' }),
+    db.doc(`teams/${f.teamC}`).set({ leagueId: f.leagueId, name: 'Team C' }),
+    db.doc(`teams/${f.teamD}`).set({ leagueId: f.leagueId, name: 'Team D' }),
+  ]);
+  await db.doc(`cups/${f.cupId}`).set({
+    leagueId: f.leagueId, seasonId: `season-${f.p}`, name: 'Test Cup', teamIds: [f.teamA, f.teamB, f.teamC, f.teamD],
+    status: 'active', winnerTeamId: null, createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+  await db.doc(`cupRounds/${f.semiRoundId}`).set({
+    leagueId: f.leagueId, cupId: f.cupId, name: 'Semi-Final', order: 1, scheduledDate: date,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+  await db.doc(`cupRounds/${f.finalRoundId}`).set({
+    leagueId: f.leagueId, cupId: f.cupId, name: 'Final', order: 2, scheduledDate: date,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+  const tieBase = {
+    leagueId: f.leagueId, cupId: f.cupId,
+    homeGamesWon: null, awayGamesWon: null, homeLegsWon: null, awayLegsWon: null, games: null,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  };
+  await db.doc(`cupTies/${f.tie1Id}`).set({
+    ...tieBase, cupRoundId: f.semiRoundId, round: 1,
+    homeTeamId: f.teamA, awayTeamId: f.teamB, winnerTeamId: null,
+    scheduledDate: date, venue: 'Team A', status: 'scheduled',
+    nextTieId: f.finalTieId, nextTieSlot: 'home',
+  });
+  await db.doc(`cupTies/${f.tie2Id}`).set({
+    ...tieBase, cupRoundId: f.semiRoundId, round: 1,
+    homeTeamId: f.teamC, awayTeamId: f.teamD, winnerTeamId: null,
+    scheduledDate: date, venue: 'Team C', status: 'scheduled',
+    nextTieId: f.finalTieId, nextTieSlot: 'away',
+  });
+  await db.doc(`cupTies/${f.finalTieId}`).set({
+    ...tieBase, cupRoundId: f.finalRoundId, round: 2,
+    homeTeamId: null, awayTeamId: null, winnerTeamId: null,
+    scheduledDate: date, venue: null, status: 'pending',
+    nextTieId: null, nextTieSlot: null,
+  });
+}
+
+async function submitCupTie(tieId: string, homeTeamId: string, awayTeamId: string, p: string, homeWins: boolean) {
+  const games = sweepGames(homeWins ? 'home' : 'away', p);
+  await db.doc(`cupTies/${tieId}/submissions/home`).set({ submittedByTeamId: homeTeamId, submittedByUserId: 'home-captain', games });
+  await db.doc(`cupTies/${tieId}/submissions/away`).set({ submittedByTeamId: awayTeamId, submittedByUserId: 'away-captain', games });
+}
+
+async function getCupTie(tieId: string) {
+  const snap = await db.doc(`cupTies/${tieId}`).get();
+  return snap.exists ? snap.data() : null;
+}
+async function getCup(cupId: string) {
+  const snap = await db.doc(`cups/${cupId}`).get();
+  return snap.exists ? snap.data() : null;
+}
+
+describe('Team Knockout Cup — onCupTieSubmissionWrite + onCupTieConfirmed', () => {
+  it('confirms a tie, advances its winner into the Final, and completes the cup once the Final confirms', async () => {
+    const f = makeCupFixture();
+    await seedCupBracket(f);
+
+    // Semi-Final 1: A beats B.
+    await submitCupTie(f.tie1Id, f.teamA, f.teamB, `${f.p}-1`, true);
+    const tie1 = await waitFor(async () => {
+      const t = await getCupTie(f.tie1Id);
+      return t?.status === 'confirmed' && t?.winnerTeamId ? t : null;
+    });
+    expect(tie1.winnerTeamId).toBe(f.teamA);
+
+    // Its win should already have landed in the Final's home slot.
+    const finalAfterTie1 = await waitFor(async () => {
+      const t = await getCupTie(f.finalTieId);
+      return t?.homeTeamId ? t : null;
+    });
+    expect(finalAfterTie1.homeTeamId).toBe(f.teamA);
+    expect(finalAfterTie1.status).toBe('pending'); // away slot still empty
+
+    // Semi-Final 2: C beats D.
+    await submitCupTie(f.tie2Id, f.teamC, f.teamD, `${f.p}-2`, true);
+    await waitFor(async () => {
+      const t = await getCupTie(f.tie2Id);
+      return t?.status === 'confirmed' ? t : null;
+    });
+
+    // Both Final slots now filled — should flip to 'scheduled'.
+    const finalReady = await waitFor(async () => {
+      const t = await getCupTie(f.finalTieId);
+      return t?.awayTeamId && t?.status === 'scheduled' ? t : null;
+    });
+    expect(finalReady.homeTeamId).toBe(f.teamA);
+    expect(finalReady.awayTeamId).toBe(f.teamC);
+    expect(finalReady.venue).toBe('Team A'); // home team's own name, same convention as league fixtures
+
+    // Play the Final: A beats C.
+    await submitCupTie(f.finalTieId, f.teamA, f.teamC, `${f.p}-3`, true);
+    await waitFor(async () => {
+      const t = await getCupTie(f.finalTieId);
+      return t?.status === 'confirmed' ? t : null;
+    });
+
+    // No next tie for the Final — the cup itself should complete.
+    const cup = await waitFor(async () => {
+      const c = await getCup(f.cupId);
+      return c?.status === 'completed' ? c : null;
+    });
+    expect(cup.winnerTeamId).toBe(f.teamA);
+  });
+
+  it('marks a tie disputed (not confirmed) when submissions disagree, and does not advance the bracket', async () => {
+    const f = makeCupFixture();
+    await seedCupBracket(f);
+
+    await db.doc(`cupTies/${f.tie1Id}/submissions/home`).set({
+      submittedByTeamId: f.teamA, submittedByUserId: 'home-captain', games: sweepGames('home', `${f.p}-1`),
+    });
+    await db.doc(`cupTies/${f.tie1Id}/submissions/away`).set({
+      submittedByTeamId: f.teamB, submittedByUserId: 'away-captain', games: sweepGames('away', `${f.p}-1`),
+    });
+    await waitFor(async () => (await getCupTie(f.tie1Id))?.status === 'disputed');
+
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    const finalTie = await getCupTie(f.finalTieId);
+    expect(finalTie?.homeTeamId).toBeNull();
+    expect(finalTie?.status).toBe('pending');
+  });
+});
+
+// ── Singles Knockout: onSinglesTieConfirmed ─────────────────────────────
+// Same 4-player Semi-Final x2 -> Final shape as the cup fixture above, but
+// admin writes the confirmed result directly (no submissions subcollection
+// to write through — see the "no captain on each side" reasoning in
+// functions/src/index.ts).
+interface SinglesFixture {
+  leagueId: string; competitionId: string;
+  tie1Id: string; tie2Id: string; finalTieId: string;
+  playerA: string; playerB: string; playerC: string; playerD: string;
+}
+
+function makeSinglesFixture(): SinglesFixture {
+  const n = nonce();
+  return {
+    leagueId: `league-${n}`, competitionId: `singles-${n}`,
+    tie1Id: `stie1-${n}`, tie2Id: `stie2-${n}`, finalTieId: `sfinal-${n}`,
+    playerA: `player-a-${n}`, playerB: `player-b-${n}`, playerC: `player-c-${n}`, playerD: `player-d-${n}`,
+  };
+}
+
+async function seedSinglesBracket(f: SinglesFixture) {
+  const date = admin.firestore.Timestamp.fromDate(new Date('2026-07-01'));
+  await db.doc(`singlesCompetitions/${f.competitionId}`).set({
+    leagueId: f.leagueId, seasonId: `season-${f.competitionId}`, name: 'Test Singles', eventDate: date,
+    playerIds: [f.playerA, f.playerB, f.playerC, f.playerD], status: 'active', winnerPlayerId: null,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+  const tieBase = {
+    leagueId: f.leagueId, competitionId: f.competitionId,
+    homeLegsWon: null, awayLegsWon: null, legs: null,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  };
+  await db.doc(`singlesTies/${f.tie1Id}`).set({
+    ...tieBase, round: 1, homePlayerId: f.playerA, awayPlayerId: f.playerB, winnerPlayerId: null,
+    status: 'ready', nextTieId: f.finalTieId, nextTieSlot: 'home',
+  });
+  await db.doc(`singlesTies/${f.tie2Id}`).set({
+    ...tieBase, round: 1, homePlayerId: f.playerC, awayPlayerId: f.playerD, winnerPlayerId: null,
+    status: 'ready', nextTieId: f.finalTieId, nextTieSlot: 'away',
+  });
+  await db.doc(`singlesTies/${f.finalTieId}`).set({
+    ...tieBase, round: 2, homePlayerId: null, awayPlayerId: null, winnerPlayerId: null,
+    status: 'pending', nextTieId: null, nextTieSlot: null,
+  });
+}
+
+// A straight 2-0 sweep, best of 3 legs.
+function sweepLegs(): { winner: 'home'; oneEighties: string[]; highCheckout: null }[] {
+  return [
+    { winner: 'home', oneEighties: [], highCheckout: null },
+    { winner: 'home', oneEighties: [], highCheckout: null },
+  ];
+}
+
+async function getSinglesTie(tieId: string) {
+  const snap = await db.doc(`singlesTies/${tieId}`).get();
+  return snap.exists ? snap.data() : null;
+}
+async function getSinglesCompetition(competitionId: string) {
+  const snap = await db.doc(`singlesCompetitions/${competitionId}`).get();
+  return snap.exists ? snap.data() : null;
+}
+
+describe('Singles Knockout — onSinglesTieConfirmed', () => {
+  it('confirms a tie from raw legs, advances the winner, and completes the competition once the Final confirms', async () => {
+    const f = makeSinglesFixture();
+    await seedSinglesBracket(f);
+
+    // Tie 1: A beats B 2-0.
+    await db.doc(`singlesTies/${f.tie1Id}`).update({ status: 'confirmed', legs: sweepLegs() });
+    const tie1 = await waitFor(async () => {
+      const t = await getSinglesTie(f.tie1Id);
+      return t?.winnerPlayerId ? t : null;
+    });
+    expect(tie1.winnerPlayerId).toBe(f.playerA);
+    expect(tie1.homeLegsWon).toBe(2);
+    expect(tie1.awayLegsWon).toBe(0);
+
+    const finalAfterTie1 = await waitFor(async () => {
+      const t = await getSinglesTie(f.finalTieId);
+      return t?.homePlayerId ? t : null;
+    });
+    expect(finalAfterTie1.homePlayerId).toBe(f.playerA);
+    expect(finalAfterTie1.status).toBe('pending');
+
+    // Tie 2: C beats D 2-1 (a real decider, not a straight sweep).
+    await db.doc(`singlesTies/${f.tie2Id}`).update({
+      status: 'confirmed',
+      legs: [
+        { winner: 'home', oneEighties: [], highCheckout: null },
+        { winner: 'away', oneEighties: [], highCheckout: null },
+        { winner: 'home', oneEighties: [], highCheckout: null },
+      ],
+    });
+    await waitFor(async () => (await getSinglesTie(f.tie2Id))?.winnerPlayerId ? true : null);
+
+    const finalReady = await waitFor(async () => {
+      const t = await getSinglesTie(f.finalTieId);
+      return t?.awayPlayerId && t?.status === 'ready' ? t : null;
+    });
+    expect(finalReady.homePlayerId).toBe(f.playerA);
+    expect(finalReady.awayPlayerId).toBe(f.playerC);
+
+    // Final: A beats C 2-0 — no next tie, so the competition itself completes.
+    await db.doc(`singlesTies/${f.finalTieId}`).update({ status: 'confirmed', legs: sweepLegs() });
+    const competition = await waitFor(async () => {
+      const c = await getSinglesCompetition(f.competitionId);
+      return c?.status === 'completed' ? c : null;
+    });
+    expect(competition.winnerPlayerId).toBe(f.playerA);
+  });
+});
+
+// ── Singles Knockout: live board assignment (onSinglesTieConfirmed) ────────
+// Same 4-player bracket shape as above, but this time seeded the way
+// adminBuildSinglesDraw actually leaves it after building the draw: a
+// single board, drawOrder set on every tie, tie1 already assigned to that
+// board (status 'active'), tie2 queued behind it (status 'ready', no
+// board yet). Exercises the FIFO reassignment reassignSinglesBoards runs
+// inside onSinglesTieConfirmed — a completed tie should free its board and
+// hand it straight to whichever ready tie is next in line, including one
+// that's only just become ready as a side effect of the same confirmation.
+async function seedSinglesBracketWithOneBoard(f: SinglesFixture) {
+  const date = admin.firestore.Timestamp.fromDate(new Date('2026-07-01'));
+  await db.doc(`singlesCompetitions/${f.competitionId}`).set({
+    leagueId: f.leagueId, seasonId: `season-${f.competitionId}`, name: 'Test Singles', eventDate: date,
+    playerIds: [f.playerA, f.playerB, f.playerC, f.playerD], status: 'active', winnerPlayerId: null,
+    entryFeeCents: null, boardCount: 1, boardNames: [null], boards: [f.tie1Id],
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+  const tieBase = {
+    leagueId: f.leagueId, competitionId: f.competitionId,
+    homeLegsWon: null, awayLegsWon: null, legs: null,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  };
+  await db.doc(`singlesTies/${f.tie1Id}`).set({
+    ...tieBase, round: 1, drawOrder: 0, homePlayerId: f.playerA, awayPlayerId: f.playerB, winnerPlayerId: null,
+    status: 'active', boardId: 0, nextTieId: f.finalTieId, nextTieSlot: 'home',
+  });
+  await db.doc(`singlesTies/${f.tie2Id}`).set({
+    ...tieBase, round: 1, drawOrder: 1, homePlayerId: f.playerC, awayPlayerId: f.playerD, winnerPlayerId: null,
+    status: 'ready', boardId: null, nextTieId: f.finalTieId, nextTieSlot: 'away',
+  });
+  await db.doc(`singlesTies/${f.finalTieId}`).set({
+    ...tieBase, round: 2, drawOrder: 2, homePlayerId: null, awayPlayerId: null, winnerPlayerId: null,
+    status: 'pending', boardId: null, nextTieId: null, nextTieSlot: null,
+  });
+}
+
+describe('Singles Knockout — live board assignment', () => {
+  it('frees a completed tie\'s board and hands it to the next queued tie', async () => {
+    const f = makeSinglesFixture();
+    await seedSinglesBracketWithOneBoard(f);
+
+    // Tie 1 (on the only board) finishes: A beats B 2-0.
+    await db.doc(`singlesTies/${f.tie1Id}`).update({ status: 'confirmed', legs: sweepLegs() });
+
+    const tie1After = await waitFor(async () => {
+      const t = await getSinglesTie(f.tie1Id);
+      return t?.winnerPlayerId ? t : null;
+    });
+    expect(tie1After.boardId).toBeNull();
+
+    // Tie 2 was next in the queue — it should now have the freed board.
+    const tie2After = await waitFor(async () => {
+      const t = await getSinglesTie(f.tie2Id);
+      return t?.status === 'active' ? t : null;
+    });
+    expect(tie2After.boardId).toBe(0);
+
+    const compAfterTie1 = await getSinglesCompetition(f.competitionId);
+    expect(compAfterTie1?.boards).toEqual([f.tie2Id]);
+
+    // Tie 2 finishes too: C beats D 2-0. This both frees the board again
+    // *and* makes the Final newly ready (both its slots just got filled) —
+    // the Final should pick up the board in the very same reassignment pass.
+    await db.doc(`singlesTies/${f.tie2Id}`).update({ status: 'confirmed', legs: sweepLegs() });
+
+    const finalAfter = await waitFor(async () => {
+      const t = await getSinglesTie(f.finalTieId);
+      return t?.status === 'active' ? t : null;
+    });
+    expect(finalAfter.boardId).toBe(0);
+    expect(finalAfter.homePlayerId).toBe(f.playerA);
+    expect(finalAfter.awayPlayerId).toBe(f.playerC);
+
+    const compAfterTie2 = await getSinglesCompetition(f.competitionId);
+    expect(compAfterTie2?.boards).toEqual([f.finalTieId]);
   });
 });
 

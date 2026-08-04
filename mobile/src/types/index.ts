@@ -214,6 +214,154 @@ export interface PlayerHighCheckout {
   date: Date;
 }
 
+// Team Knockout Cup — single-elimination, cross-division draw. Reuses the
+// exact same match/results/confirmation shape as a league Match (see
+// CupTie below) so results-entry.tsx and the submission-comparison logic
+// work unmodified against either collection; cup ties never touch
+// divisionTables/playerSeasonStats, only their own bracket.
+export type CupStatus = 'draft' | 'active' | 'completed';
+
+export interface Cup {
+  id: string;
+  leagueId: string;
+  seasonId: string;
+  name: string;
+  teamIds: string[]; // the drawn field, fixed once the bracket is created
+  status: CupStatus;
+  winnerTeamId: string | null; // set once the Final is confirmed
+  createdAt: Date;
+}
+
+export interface CupRound {
+  id: string;
+  leagueId: string;
+  cupId: string;
+  name: string; // "Round of 16", "Quarter-Final", "Semi-Final", "Final", etc.
+  order: number; // 1-based, 1 = earliest round
+  scheduledDate: Date;
+  createdAt: Date;
+}
+
+export type CupTieStatus = 'pending' | 'scheduled' | 'awaiting_confirmation' | 'disputed' | 'confirmed' | 'bye';
+
+// A single bracket slot. homeTeamId/awayTeamId are null until the previous
+// round's winner (or the initial draw) fills them in — status stays
+// 'pending' until both sides are known. A 'bye' tie has exactly one side
+// filled and is resolved immediately (no games played) by adminCreateCup /
+// onCupTieConfirmed, advancing that team straight to nextTieId.
+export interface CupTie {
+  id: string;
+  leagueId: string;
+  cupId: string;
+  cupRoundId: string;
+  round: number; // = CupRound.order, denormalized for sorting without a join
+  homeTeamId: string | null;
+  awayTeamId: string | null;
+  winnerTeamId: string | null;
+  scheduledDate: Date | null;
+  venue: string | null; // home team's own name, same convention as Match.venue
+  status: CupTieStatus;
+  homeGamesWon: number | null;
+  awayGamesWon: number | null;
+  homeLegsWon: number | null;
+  awayLegsWon: number | null;
+  games: MatchGame[] | null;
+  // Where this tie's winner feeds into — null for the Final.
+  nextTieId: string | null;
+  nextTieSlot: MatchSide | null;
+  createdAt: Date;
+}
+
+// One captain/VC's version of a cup tie result — identical shape to
+// MatchSubmission, just scoped under cupTies/{tieId}/submissions instead of
+// matches/{id}/submissions.
+export interface CupTieSubmission {
+  id: string; // = submittedByTeamId
+  submittedByTeamId: string;
+  submittedByUserId: string;
+  games: MatchGame[];
+  createdAt: Date;
+}
+
+// Singles Knockout — individual players, not teams, single-elimination.
+// Deliberately structured differently from the Team Cup rather than forced
+// into the same shape: this is run as one event on one night (the real
+// league's own printed schedule lists a single date for it, unlike the Team
+// K.O.'s separate date per round), so there's no per-round scheduledDate,
+// and the admin/organiser running the night enters each tie's result
+// directly and it's confirmed immediately — no dual-submission/dispute flow,
+// since there's no captain on each side to submit independently the way a
+// league or cup team match has. Best-of-3 legs, same MatchLeg shape
+// (winner/oneEighties/highCheckout) as everywhere else, just not wrapped in
+// a 7-game Match — a singles tie *is* one game.
+// 'active' means the tie has been assigned a live board and is being played
+// right now — see boardId below and assignFreeBoards in functions/src.
+export type SinglesTieStatus = 'pending' | 'ready' | 'active' | 'confirmed' | 'bye';
+
+// A competition starts in 'registration' (players can self-register or be
+// added by an admin, no draw exists yet), moves to 'active' once the admin
+// builds the draw from whoever registered, then 'completed' once the Final
+// is confirmed.
+export type SinglesCompetitionStatus = 'registration' | 'active' | 'completed';
+
+export interface SinglesCompetition {
+  id: string;
+  leagueId: string;
+  seasonId: string;
+  name: string;
+  eventDate: Date;
+  playerIds: string[]; // the drawn field — empty until the draw is built from registrations
+  status: SinglesCompetitionStatus;
+  winnerPlayerId: string | null; // set once the Final is confirmed
+  // Entry fee is display-only for now — nothing charges it yet. Kept as a
+  // field from the start so a payment step (Stripe or otherwise) has
+  // somewhere to read the amount from without a schema migration later.
+  entryFeeCents: number | null;
+  // Live board state, set once the draw is built (see adminBuildSinglesDraw).
+  // boards[i] is the tieId currently occupying board i, or null if free.
+  boardCount: number;
+  boardNames: (string | null)[];
+  boards: (string | null)[];
+  createdAt: Date;
+}
+
+export type SinglesRegistrationPaymentStatus = 'unpaid' | 'paid' | 'waived';
+// null for now — reserved for 'stripe' once that's wired up; 'cash' covers
+// entry fees collected in person on the night.
+export type SinglesRegistrationPaymentMethod = 'cash' | 'stripe' | null;
+
+export interface SinglesRegistration {
+  id: string;
+  leagueId: string;
+  competitionId: string;
+  playerId: string;
+  playerName: string;
+  addedBy: 'self' | 'admin';
+  registeredByUserId: string | null; // the uid who self-registered, null when admin-added
+  paymentStatus: SinglesRegistrationPaymentStatus;
+  paymentMethod: SinglesRegistrationPaymentMethod;
+  createdAt: Date;
+}
+
+export interface SinglesTie {
+  id: string;
+  leagueId: string;
+  competitionId: string;
+  round: number;
+  drawOrder: number; // stable FIFO order across the whole bracket, for board assignment
+  homePlayerId: string | null;
+  awayPlayerId: string | null;
+  winnerPlayerId: string | null;
+  status: SinglesTieStatus;
+  boardId: number | null; // index into the competition's boards array while status === 'active'
+  homeLegsWon: number | null;
+  awayLegsWon: number | null;
+  legs: MatchLeg[] | null; // 'home'/'away' here mean homePlayerId/awayPlayerId, not a team side
+  nextTieId: string | null;
+  nextTieSlot: MatchSide | null;
+  createdAt: Date;
+}
+
 // Server-computed only (Cloud Function). played/won/lost count individual
 // games (singles + pairs), not matches — a player can play more than one
 // game per match.

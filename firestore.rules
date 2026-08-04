@@ -230,6 +230,83 @@ service cloud.firestore {
       allow update, delete: if isAdmin() && me().leagueId == resource.data.leagueId;
     }
 
+    // ── cups (Team Knockout Cup) ──────────────────────────────────────────
+    // The bracket itself (cups/cupRounds/cupTies) is normally created and
+    // advanced by Cloud Functions via the Admin SDK, which bypasses these
+    // rules entirely — the client-facing rules here exist for reads (every
+    // league member can see the draw/bracket) and for admin's own manual
+    // edits (renaming the cup, correcting a tie's date/venue), plus the
+    // exact same submission pattern matches/submissions already uses.
+    match /cups/{cupId} {
+      allow read: if isSignedIn() && me().leagueId == resource.data.leagueId;
+      allow create: if isAdmin() && me().leagueId == request.resource.data.leagueId;
+      allow update, delete: if isAdmin() && me().leagueId == resource.data.leagueId;
+    }
+
+    match /cupRounds/{cupRoundId} {
+      allow read: if isSignedIn() && me().leagueId == resource.data.leagueId;
+      allow create: if isAdmin() && me().leagueId == request.resource.data.leagueId;
+      allow update, delete: if isAdmin() && me().leagueId == resource.data.leagueId;
+    }
+
+    match /cupTies/{cupTieId} {
+      allow read: if isSignedIn() && me().leagueId == resource.data.leagueId;
+      allow create: if isAdmin() && me().leagueId == request.resource.data.leagueId;
+      allow update, delete: if isAdmin() && me().leagueId == resource.data.leagueId;
+
+      match /submissions/{submissionId} {
+        function tieData() {
+          return get(/databases/$(database)/documents/cupTies/$(cupTieId)).data;
+        }
+
+        allow read: if isSignedIn() && (
+          isAdmin()
+          || me().teamId == tieData().homeTeamId
+          || me().teamId == tieData().awayTeamId
+        );
+
+        allow create, update: if tieData().status != 'confirmed'
+          && (
+            (isCaptainOrVC() && me().teamId == request.resource.data.submittedByTeamId)
+            || (isAdmin() && me().leagueId == tieData().leagueId
+                && request.resource.data.submittedByTeamId in [tieData().homeTeamId, tieData().awayTeamId])
+          );
+
+        allow delete: if isAdmin() && me().leagueId == tieData().leagueId;
+      }
+    }
+
+    // ── Singles Knockout ──────────────────────────────────────────────────
+    // Individual-player bracket, run as one event on one night — no captain
+    // on each side to submit a result independently, so unlike cupTies there
+    // is no submissions subcollection at all: the admin/organiser running
+    // the night writes each tie's result directly. Same admin-only pattern
+    // as everywhere else — creation/advancement is normally via the Admin
+    // SDK from Cloud Functions, this covers direct client reads/edits.
+    match /singlesCompetitions/{competitionId} {
+      allow read: if isSignedIn() && me().leagueId == resource.data.leagueId;
+      allow create: if isAdmin() && me().leagueId == request.resource.data.leagueId;
+      allow update, delete: if isAdmin() && me().leagueId == resource.data.leagueId;
+    }
+
+    match /singlesTies/{singlesTieId} {
+      allow read: if isSignedIn() && me().leagueId == resource.data.leagueId;
+      allow create: if isAdmin() && me().leagueId == request.resource.data.leagueId;
+      allow update, delete: if isAdmin() && me().leagueId == resource.data.leagueId;
+    }
+
+    // ── singlesRegistrations ─────────────────────────────────────────────
+    // Read-only from the client, deliberately. Every mutation — a player
+    // self-registering, an admin adding someone manually, removing a
+    // registration, or toggling payment status — needs a server-side check
+    // (eligibility, "is registration still open", "am I this player")
+    // that a security rule can't express as cleanly as a callable can, so
+    // all writes go through the Cloud Functions (Admin SDK, which bypasses
+    // these rules) instead of a direct client write.
+    match /singlesRegistrations/{registrationId} {
+      allow read: if isSignedIn() && me().leagueId == resource.data.leagueId;
+    }
+
     // ── fineDefinitions ───────────────────────────────────────────────────
     match /fineDefinitions/{fineDefId} {
       allow read: if isSignedIn() && me().teamId == resource.data.teamId;

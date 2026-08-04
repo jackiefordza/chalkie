@@ -82,13 +82,13 @@ just started.
 - [ ] Real iOS `eas build` / TestFlight
 
 ## Phase 2 — Cup & individual competitions
-- [ ] Team knockout cup (single-elimination, cross-division)
-- [ ] Singles knockout
+- [x] Team knockout cup (single-elimination, cross-division) — code complete, live-verified via emulator 2026-07-30, see PLAN.md
+- [x] Singles knockout — code complete, live-verified via emulator 2026-08-03, see PLAN.md
 - [ ] Pairs knockout
 - [ ] Captains Cup
 - [ ] Player Championship (top 12/division, seeded from `playerSeasonStats`)
 - [ ] 180 Cup
-- [ ] Bracket UI (draw/seed, record rounds, advance winners)
+- [x] Bracket UI (draw/seed, record rounds, advance winners) — done for the Team Knockout Cup, above
 
 ## Phase 3 — Productization
 - [ ] Memberships subcollection (multi-league support) — breaking schema change, not mid-trial

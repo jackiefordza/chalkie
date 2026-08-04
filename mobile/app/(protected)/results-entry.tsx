@@ -106,7 +106,17 @@ function normalizeGameForCompare(g: DraftGame): string {
 }
 
 export default function ResultsEntryScreen() {
-  const { matchId } = useLocalSearchParams<{ matchId: string }>();
+  // A cup tie reuses this exact screen — same MatchGame/leg shape, same
+  // submission-comparison/confirm pattern (see onCupTieSubmissionWrite/
+  // onCupTieConfirmed) — just backed by cupTies/{id} instead of
+  // matches/{id}. `collectionName`/`docId` below are the only two things
+  // that differ between the two call sites; everything past that point is
+  // identical, deliberately, so this doesn't become two near-duplicate
+  // 800-line screens to maintain.
+  const { matchId, cupTieId } = useLocalSearchParams<{ matchId?: string; cupTieId?: string }>();
+  const isCup = !!cupTieId;
+  const collectionName = isCup ? 'cupTies' : 'matches';
+  const docId = isCup ? cupTieId : matchId;
   const { appUser } = useAuthStore();
   const { width } = useWindowDimensions();
   const isDesktop = width >= DESKTOP_BREAKPOINT;
@@ -147,10 +157,10 @@ export default function ResultsEntryScreen() {
   const myTeamId = isHome ? match?.homeTeamId : isAway ? match?.awayTeamId : null;
 
   useEffect(() => {
-    if (!matchId || !appUser?.leagueId) return;
+    if (!docId || !appUser?.leagueId) return;
 
     const unsubMatch = onSnapshot(
-      doc(db, 'matches', matchId),
+      doc(db, collectionName, docId),
       async (snap) => {
         if (!snap.exists()) { setLoadError('Fixture not found'); setIsLoading(false); return; }
         const d = snap.data();
@@ -161,12 +171,15 @@ export default function ResultsEntryScreen() {
         } as Match;
         setMatch(m);
 
+        // A cup tie can have a null side — a bye (no opponent at all) or a
+        // not-yet-decided slot still waiting on an earlier round — neither of
+        // which a league match ever has, so this has to tolerate it.
         const [homeSnap, awaySnap] = await Promise.all([
-          getDoc(doc(db, 'teams', m.homeTeamId)),
-          getDoc(doc(db, 'teams', m.awayTeamId)),
+          m.homeTeamId ? getDoc(doc(db, 'teams', m.homeTeamId)) : null,
+          m.awayTeamId ? getDoc(doc(db, 'teams', m.awayTeamId)) : null,
         ]);
-        setHomeTeamName(homeSnap.data()?.name ?? 'Home');
-        setAwayTeamName(awaySnap.data()?.name ?? 'Away');
+        setHomeTeamName(homeSnap?.data()?.name ?? (isCup ? 'TBD' : 'Home'));
+        setAwayTeamName(awaySnap?.data()?.name ?? (isCup ? ((m.status as string) === 'bye' ? 'Bye' : 'TBD') : 'Away'));
         setIsLoading(false);
       },
       (e) => { setLoadError(e.message); setIsLoading(false); },
@@ -185,18 +198,18 @@ export default function ResultsEntryScreen() {
     );
 
     return () => { unsubMatch(); unsubPlayers(); };
-  }, [matchId, appUser?.leagueId]);
+  }, [docId, appUser?.leagueId]);
 
   // Load our own existing submission (for edit) + the other team's (to review/reconcile)
   useEffect(() => {
-    if (!matchId || !myTeamId || !match) return;
+    if (!docId || !myTeamId || !match) return;
     const otherTeamId = isHome ? match.awayTeamId : match.homeTeamId;
 
-    getDoc(doc(db, 'matches', matchId, 'submissions', myTeamId)).then((mySnap) => {
+    getDoc(doc(db, collectionName, docId, 'submissions', myTeamId)).then((mySnap) => {
       const myGames = mySnap.exists() ? (mySnap.data().games as MatchGame[]) : null;
       if (myGames) { setMySubmission(myGames); setGames(toDraft(myGames)); }
 
-      getDoc(doc(db, 'matches', matchId, 'submissions', otherTeamId)).then((otherSnap) => {
+      getDoc(doc(db, collectionName, docId, 'submissions', otherTeamId)).then((otherSnap) => {
         const otherGames = otherSnap.exists() ? (otherSnap.data().games as MatchGame[]) : null;
         setOtherSubmission(otherGames);
         // Nobody's submitted on our side yet, but the other team has — start
@@ -204,7 +217,7 @@ export default function ResultsEntryScreen() {
         if (!myGames && otherGames) setGames(toDraft(otherGames));
       });
     });
-  }, [matchId, myTeamId, match, isHome]);
+  }, [docId, myTeamId, match, isHome]);
 
   type Mode = 'blank' | 'review' | 'waiting' | 'reconcile';
   const mode: Mode = otherSubmission && !mySubmission
@@ -225,10 +238,10 @@ export default function ResultsEntryScreen() {
   }, [mySubmission, otherSubmission]);
 
   async function adoptTheirVersion(gameIndex: number) {
-    if (!matchId || !myTeamId || !appUser || !mySubmission || !otherSubmission) return;
+    if (!docId || !myTeamId || !appUser || !mySubmission || !otherSubmission) return;
     const updated = mySubmission.map((g, i) => (i === gameIndex ? otherSubmission[i] : g));
     try {
-      await setDoc(doc(db, 'matches', matchId, 'submissions', myTeamId), {
+      await setDoc(doc(db, collectionName, docId, 'submissions', myTeamId), {
         submittedByTeamId: myTeamId,
         submittedByUserId: appUser.uid,
         games: updated,
@@ -355,11 +368,11 @@ export default function ResultsEntryScreen() {
   }
 
   async function submit() {
-    if (!matchId || !myTeamId || !appUser || !allComplete) return;
+    if (!docId || !myTeamId || !appUser || !allComplete) return;
     setIsSubmitting(true);
     try {
       const finalGames: MatchGame[] = games.map(toMatchGame);
-      await setDoc(doc(db, 'matches', matchId, 'submissions', myTeamId), {
+      await setDoc(doc(db, collectionName, docId, 'submissions', myTeamId), {
         submittedByTeamId: myTeamId,
         submittedByUserId: appUser.uid,
         games: finalGames,
@@ -389,14 +402,17 @@ export default function ResultsEntryScreen() {
   }
 
   async function saveAdminCorrection() {
-    if (!matchId || !allComplete) return;
+    if (!docId || !allComplete) return;
     setIsSubmitting(true);
     try {
       const finalGames: MatchGame[] = games.map(toMatchGame);
-      await updateDoc(doc(db, 'matches', matchId), { games: finalGames });
+      await updateDoc(doc(db, collectionName, docId), { games: finalGames });
       setAdminCorrecting(false);
       setEditing(false);
-      Alert.alert('Result updated', 'Standings and player stats have been recalculated.');
+      Alert.alert(
+        'Result updated',
+        isCup ? 'The bracket has been updated.' : 'Standings and player stats have been recalculated.',
+      );
       goBack();
     } catch (e: unknown) {
       Alert.alert('Error', (e as Error).message ?? 'Something went wrong');
@@ -407,8 +423,10 @@ export default function ResultsEntryScreen() {
 
   function confirmDeleteMatch() {
     Alert.alert(
-      'Delete this fixture',
-      "This removes the fixture and its result completely, and reverses its contribution to standings and player stats. This can't be undone.",
+      isCup ? 'Delete this cup tie' : 'Delete this fixture',
+      isCup
+        ? "This removes the tie and its result completely. This can't be undone — if the bracket has already advanced past this tie, delete the whole cup and re-draw instead."
+        : "This removes the fixture and its result completely, and reverses its contribution to standings and player stats. This can't be undone.",
       [
         { text: 'Cancel', style: 'cancel' },
         { text: 'Delete', style: 'destructive', onPress: deleteMatch },
@@ -417,9 +435,9 @@ export default function ResultsEntryScreen() {
   }
 
   async function deleteMatch() {
-    if (!matchId) return;
+    if (!docId) return;
     try {
-      await deleteDoc(doc(db, 'matches', matchId));
+      await deleteDoc(doc(db, collectionName, docId));
       goBack();
     } catch (e: unknown) {
       Alert.alert('Error', (e as Error).message ?? 'Something went wrong');
@@ -444,6 +462,20 @@ export default function ResultsEntryScreen() {
         <View className="p-5">
           <Card className="items-center py-8">
             <Body tone="strong" weight="semibold">You can't view this result</Body>
+          </Card>
+        </View>
+      ) : isCup && (match!.status as string) === 'bye' ? (
+        <View className="p-5">
+          <Card className="items-center py-8">
+            <Body tone="strong" weight="semibold" className="mb-1">This is a bye</Body>
+            <Body size="sm" className="text-center">{homeTeamName} advances automatically — no game needed.</Body>
+          </Card>
+        </View>
+      ) : isCup && (match!.status as string) === 'pending' ? (
+        <View className="p-5">
+          <Card className="items-center py-8">
+            <Body tone="strong" weight="semibold" className="mb-1">Not ready yet</Body>
+            <Body size="sm" className="text-center">This tie is waiting on an earlier round to be played.</Body>
           </Card>
         </View>
       ) : isAdmin && !teamId && match!.status !== 'confirmed' ? (
@@ -798,7 +830,7 @@ export default function ResultsEntryScreen() {
           title={title}
           breadcrumb={[
             { label: 'Dashboard', path: '/(protected)/(tabs)/admin' },
-            { label: 'Results' },
+            isCup ? { label: 'Cup', path: '/(protected)/admin-cup' as never } : { label: 'Results' },
           ]}
         >
           <View style={{ maxWidth: 900 }}>{body}</View>
