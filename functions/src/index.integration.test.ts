@@ -466,6 +466,84 @@ describe('Singles Knockout — onSinglesTieConfirmed', () => {
   });
 });
 
+// ── Singles Knockout: live board assignment (onSinglesTieConfirmed) ────────
+// Same 4-player bracket shape as above, but this time seeded the way
+// adminBuildSinglesDraw actually leaves it after building the draw: a
+// single board, drawOrder set on every tie, tie1 already assigned to that
+// board (status 'active'), tie2 queued behind it (status 'ready', no
+// board yet). Exercises the FIFO reassignment reassignSinglesBoards runs
+// inside onSinglesTieConfirmed — a completed tie should free its board and
+// hand it straight to whichever ready tie is next in line, including one
+// that's only just become ready as a side effect of the same confirmation.
+async function seedSinglesBracketWithOneBoard(f: SinglesFixture) {
+  const date = admin.firestore.Timestamp.fromDate(new Date('2026-07-01'));
+  await db.doc(`singlesCompetitions/${f.competitionId}`).set({
+    leagueId: f.leagueId, seasonId: `season-${f.competitionId}`, name: 'Test Singles', eventDate: date,
+    playerIds: [f.playerA, f.playerB, f.playerC, f.playerD], status: 'active', winnerPlayerId: null,
+    entryFeeCents: null, boardCount: 1, boardNames: [null], boards: [f.tie1Id],
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+  const tieBase = {
+    leagueId: f.leagueId, competitionId: f.competitionId,
+    homeLegsWon: null, awayLegsWon: null, legs: null,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  };
+  await db.doc(`singlesTies/${f.tie1Id}`).set({
+    ...tieBase, round: 1, drawOrder: 0, homePlayerId: f.playerA, awayPlayerId: f.playerB, winnerPlayerId: null,
+    status: 'active', boardId: 0, nextTieId: f.finalTieId, nextTieSlot: 'home',
+  });
+  await db.doc(`singlesTies/${f.tie2Id}`).set({
+    ...tieBase, round: 1, drawOrder: 1, homePlayerId: f.playerC, awayPlayerId: f.playerD, winnerPlayerId: null,
+    status: 'ready', boardId: null, nextTieId: f.finalTieId, nextTieSlot: 'away',
+  });
+  await db.doc(`singlesTies/${f.finalTieId}`).set({
+    ...tieBase, round: 2, drawOrder: 2, homePlayerId: null, awayPlayerId: null, winnerPlayerId: null,
+    status: 'pending', boardId: null, nextTieId: null, nextTieSlot: null,
+  });
+}
+
+describe('Singles Knockout — live board assignment', () => {
+  it('frees a completed tie\'s board and hands it to the next queued tie', async () => {
+    const f = makeSinglesFixture();
+    await seedSinglesBracketWithOneBoard(f);
+
+    // Tie 1 (on the only board) finishes: A beats B 2-0.
+    await db.doc(`singlesTies/${f.tie1Id}`).update({ status: 'confirmed', legs: sweepLegs() });
+
+    const tie1After = await waitFor(async () => {
+      const t = await getSinglesTie(f.tie1Id);
+      return t?.winnerPlayerId ? t : null;
+    });
+    expect(tie1After.boardId).toBeNull();
+
+    // Tie 2 was next in the queue — it should now have the freed board.
+    const tie2After = await waitFor(async () => {
+      const t = await getSinglesTie(f.tie2Id);
+      return t?.status === 'active' ? t : null;
+    });
+    expect(tie2After.boardId).toBe(0);
+
+    const compAfterTie1 = await getSinglesCompetition(f.competitionId);
+    expect(compAfterTie1?.boards).toEqual([f.tie2Id]);
+
+    // Tie 2 finishes too: C beats D 2-0. This both frees the board again
+    // *and* makes the Final newly ready (both its slots just got filled) —
+    // the Final should pick up the board in the very same reassignment pass.
+    await db.doc(`singlesTies/${f.tie2Id}`).update({ status: 'confirmed', legs: sweepLegs() });
+
+    const finalAfter = await waitFor(async () => {
+      const t = await getSinglesTie(f.finalTieId);
+      return t?.status === 'active' ? t : null;
+    });
+    expect(finalAfter.boardId).toBe(0);
+    expect(finalAfter.homePlayerId).toBe(f.playerA);
+    expect(finalAfter.awayPlayerId).toBe(f.playerC);
+
+    const compAfterTie2 = await getSinglesCompetition(f.competitionId);
+    expect(compAfterTie2?.boards).toEqual([f.finalTieId]);
+  });
+});
+
 describe('onMatchDeleted', () => {
   it('fully reverses a confirmed match\'s contribution to divisionTables and playerSeasonStats', async () => {
     const f = makeFixture();

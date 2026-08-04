@@ -8,6 +8,7 @@ import {
   nextPowerOfTwo,
   cupRoundName,
   buildCupBracket,
+  assignFreeBoards,
   MatchGame,
   MatchLeg,
 } from './index';
@@ -373,5 +374,54 @@ describe('buildCupBracket', () => {
     expect(rounds[0].name).toBe('Final');
     expect(rounds[0].ties).toHaveLength(1);
     expect(rounds[0].ties[0].isBye).toBe(false);
+  });
+});
+
+describe('assignFreeBoards', () => {
+  it('fills every free board, earliest drawOrder first', () => {
+    const boards = [null, null, null];
+    const readyTies = [
+      { id: 'c', drawOrder: 2 }, { id: 'a', drawOrder: 0 }, { id: 'b', drawOrder: 1 }, { id: 'd', drawOrder: 3 },
+    ];
+    const { boards: newBoards, assignments } = assignFreeBoards(boards, readyTies);
+
+    expect(newBoards).toEqual(['a', 'b', 'c']);
+    expect(assignments).toEqual([
+      { tieId: 'a', boardId: 0 }, { tieId: 'b', boardId: 1 }, { tieId: 'c', boardId: 2 },
+    ]);
+  });
+
+  it('only fills the boards that are actually free, leaving occupied ones alone', () => {
+    const boards = ['already-playing', null, 'also-playing'];
+    const readyTies = [{ id: 'next', drawOrder: 0 }];
+    const { boards: newBoards, assignments } = assignFreeBoards(boards, readyTies);
+
+    expect(newBoards).toEqual(['already-playing', 'next', 'also-playing']);
+    expect(assignments).toEqual([{ tieId: 'next', boardId: 1 }]);
+  });
+
+  it('assigns nothing when there are no free boards, however many ties are ready', () => {
+    const boards = ['a', 'b'];
+    const readyTies = [{ id: 'c', drawOrder: 0 }, { id: 'd', drawOrder: 1 }];
+    const { boards: newBoards, assignments } = assignFreeBoards(boards, readyTies);
+
+    expect(newBoards).toEqual(['a', 'b']);
+    expect(assignments).toEqual([]);
+  });
+
+  it('leaves boards untouched and assigns nothing when there are more free boards than ready ties', () => {
+    const boards = [null, null, null];
+    const readyTies = [{ id: 'a', drawOrder: 0 }];
+    const { boards: newBoards, assignments } = assignFreeBoards(boards, readyTies);
+
+    expect(newBoards).toEqual(['a', null, null]);
+    expect(assignments).toEqual([{ tieId: 'a', boardId: 0 }]);
+  });
+
+  it('does not mutate the input boards array', () => {
+    const boards = [null, null];
+    const readyTies = [{ id: 'a', drawOrder: 0 }];
+    assignFreeBoards(boards, readyTies);
+    expect(boards).toEqual([null, null]);
   });
 });

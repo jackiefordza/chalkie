@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { View, ScrollView, TouchableOpacity, ActivityIndicator, useWindowDimensions } from 'react-native';
-import { Stack } from 'expo-router';
+import { router, Stack } from 'expo-router';
 import { collection, doc, onSnapshot, query, updateDoc, where } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { db, functions } from '@/config/firebase';
@@ -12,7 +12,9 @@ import {
   Screen, Heading, Body, Caption, Badge, Button, Card, Chip, Input, Label, Sheet, AppBar,
 } from '@/components/ui';
 import { AdminShell } from '@/components/admin/AdminShell';
-import type { SinglesCompetition, SinglesTie, SinglesTieStatus, MatchLeg, MatchSide, HighCheckout } from '@/types';
+import type {
+  SinglesCompetition, SinglesTie, SinglesTieStatus, SinglesRegistration, MatchLeg, MatchSide, HighCheckout,
+} from '@/types';
 
 const DESKTOP_BREAKPOINT = 768;
 
@@ -21,7 +23,8 @@ interface PlayerInfo { id: string; name: string }
 
 const TIE_STATUS_LABEL: Record<SinglesTieStatus, string> = {
   pending: 'Waiting',
-  ready: 'Ready',
+  ready: 'Queued',
+  active: 'On board',
   confirmed: 'Final',
   bye: 'Bye',
 };
@@ -29,8 +32,30 @@ const TIE_STATUS_LABEL: Record<SinglesTieStatus, string> = {
 const TIE_STATUS_TONE: Record<SinglesTieStatus, SemanticTone | null> = {
   pending: null,
   ready: null,
+  active: 'brand',
   confirmed: 'sage',
   bye: 'butter',
+};
+
+const PAYMENT_STATUS_LABEL: Record<SinglesRegistration['paymentStatus'], string> = {
+  unpaid: 'Unpaid',
+  paid: 'Paid',
+  waived: 'Waived',
+};
+
+const PAYMENT_STATUS_TONE: Record<SinglesRegistration['paymentStatus'], SemanticTone> = {
+  unpaid: 'coral',
+  paid: 'sage',
+  waived: 'butter',
+};
+
+// Admin taps a payment pill to cycle it — no separate menu needed for a
+// 3-state toggle. 'paid' always means cash for now (see types/index.ts —
+// 'stripe' is reserved for when that's actually wired up).
+const NEXT_PAYMENT_STATUS: Record<SinglesRegistration['paymentStatus'], SinglesRegistration['paymentStatus']> = {
+  unpaid: 'paid',
+  paid: 'waived',
+  waived: 'unpaid',
 };
 
 // Same cosmetic-only preview as admin-cup.tsx's previewRounds — see that
@@ -77,11 +102,18 @@ export default function AdminSinglesScreen() {
 
   const [showCreate, setShowCreate] = useState(false);
   const [compName, setCompName] = useState('Singles Competition');
-  const [selectedPlayerIds, setSelectedPlayerIds] = useState<Set<string>>(new Set());
   const [eventDateText, setEventDateText] = useState('');
   const [isCreating, setIsCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+
+  const [registrations, setRegistrations] = useState<SinglesRegistration[]>([]);
+  const [isAddingReg, setIsAddingReg] = useState(false);
+  const [regError, setRegError] = useState<string | null>(null);
+  const [paymentBusyId, setPaymentBusyId] = useState<string | null>(null);
+  const [boardCountText, setBoardCountText] = useState('1');
+  const [isBuildingDraw, setIsBuildingDraw] = useState(false);
+  const [buildDrawError, setBuildDrawError] = useState<string | null>(null);
 
   const [entryTie, setEntryTie] = useState<SinglesTie | null>(null);
   const [legs, setLegs] = useState<DraftLeg[]>([blankLeg(), blankLeg()]);
@@ -158,38 +190,40 @@ export default function AdminSinglesScreen() {
     return unsub;
   }, [leagueId, selectedCompId]);
 
+  useEffect(() => {
+    if (!leagueId || !selectedCompId) { setRegistrations([]); return; }
+    const unsub = onSnapshot(
+      query(collection(db, 'singlesRegistrations'), where('leagueId', '==', leagueId), where('competitionId', '==', selectedCompId)),
+      (snap) => setRegistrations(snap.docs.map((d) => ({
+        id: d.id, ...d.data(), createdAt: d.data().createdAt?.toDate() ?? new Date(),
+      } as SinglesRegistration)).sort((a, b) => a.playerName.localeCompare(b.playerName))),
+      (e) => Alert.alert('Error', (e as Error).message ?? 'Something went wrong'),
+    );
+    return unsub;
+  }, [leagueId, selectedCompId]);
+
   function openCreate() {
-    setSelectedPlayerIds(new Set(eligiblePlayers.map((p) => p.id)));
     setCompName('Singles Competition');
     setEventDateText('');
     setCreateError(null);
     setShowCreate(true);
   }
 
-  function togglePlayer(playerId: string) {
-    setSelectedPlayerIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(playerId)) next.delete(playerId); else next.add(playerId);
-      return next;
-    });
-  }
-
   async function createCompetition() {
     setCreateError(null);
     if (!leagueId || !seasonId) return;
     if (!compName.trim()) { setCreateError('Give the competition a name'); return; }
-    if (selectedPlayerIds.size < 2) { setCreateError('Pick at least 2 players'); return; }
     const eventDate = parseDateInput(eventDateText);
     if (!eventDate) { setCreateError('Enter the event date as YYYY-MM-DD'); return; }
 
     setIsCreating(true);
     try {
       const result = await httpsCallable(functions, 'adminCreateSinglesCompetition')({
-        leagueId, seasonId, name: compName.trim(), playerIds: [...selectedPlayerIds],
-        eventDate: formatDateInput(eventDate),
+        leagueId, seasonId, name: compName.trim(), eventDate: formatDateInput(eventDate),
       });
       const { competitionId } = result.data as { competitionId: string };
       setSelectedCompId(competitionId);
+      setBoardCountText('1');
       setShowCreate(false);
     } catch (e: unknown) {
       setCreateError((e as Error).message ?? 'Something went wrong');
@@ -225,6 +259,72 @@ export default function AdminSinglesScreen() {
     }
   }
 
+  const registeredPlayerIds = useMemo(() => new Set(registrations.map((r) => r.playerId)), [registrations]);
+  const unregisteredEligiblePlayers = useMemo(
+    () => eligiblePlayers.filter((p) => !registeredPlayerIds.has(p.id)),
+    [eligiblePlayers, registeredPlayerIds],
+  );
+
+  async function addRegistration(playerId: string) {
+    if (!selectedComp) return;
+    setRegError(null);
+    setIsAddingReg(true);
+    try {
+      await httpsCallable(functions, 'adminAddSinglesRegistration')({ competitionId: selectedComp.id, playerId });
+    } catch (e: unknown) {
+      setRegError((e as Error).message ?? 'Something went wrong');
+    } finally {
+      setIsAddingReg(false);
+    }
+  }
+
+  function confirmRemoveRegistration(reg: SinglesRegistration) {
+    Alert.alert('Remove registration', `Remove ${reg.playerName} from this competition?`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Remove', style: 'destructive',
+        onPress: async () => {
+          try {
+            await httpsCallable(functions, 'adminRemoveSinglesRegistration')({ registrationId: reg.id });
+          } catch (e: unknown) {
+            Alert.alert('Error', (e as Error).message ?? 'Something went wrong');
+          }
+        },
+      },
+    ]);
+  }
+
+  async function cyclePayment(reg: SinglesRegistration) {
+    setPaymentBusyId(reg.id);
+    try {
+      const nextStatus = NEXT_PAYMENT_STATUS[reg.paymentStatus];
+      await httpsCallable(functions, 'adminSetSinglesRegistrationPayment')({
+        registrationId: reg.id, paymentStatus: nextStatus, paymentMethod: nextStatus === 'paid' ? 'cash' : null,
+      });
+    } catch (e: unknown) {
+      Alert.alert('Error', (e as Error).message ?? 'Something went wrong');
+    } finally {
+      setPaymentBusyId(null);
+    }
+  }
+
+  async function buildDraw() {
+    if (!selectedComp) return;
+    setBuildDrawError(null);
+    const boardCount = parseInt(boardCountText, 10);
+    if (!boardCount || boardCount < 1) { setBuildDrawError('Enter at least 1 board'); return; }
+    if (registrations.length < 2) { setBuildDrawError('Need at least 2 registered players'); return; }
+
+    setIsBuildingDraw(true);
+    try {
+      await httpsCallable(functions, 'adminBuildSinglesDraw')({ competitionId: selectedComp.id, boardCount });
+    } catch (e: unknown) {
+      setBuildDrawError((e as Error).message ?? 'Something went wrong');
+    } finally {
+      setIsBuildingDraw(false);
+    }
+  }
+
   const roundsWithTies = useMemo(() => {
     const byRound = new Map<number, SinglesTie[]>();
     ties.forEach((t) => { if (!byRound.has(t.round)) byRound.set(t.round, []); byRound.get(t.round)!.push(t); });
@@ -251,8 +351,14 @@ export default function AdminSinglesScreen() {
     return `${playerName(tie.homePlayerId)} vs ${playerName(tie.awayPlayerId)}`;
   }
 
+  function boardLabel(boardId: number): string {
+    return (selectedComp?.boardNames?.[boardId]) || `Board ${boardId + 1}`;
+  }
+
   function openEntry(tie: SinglesTie) {
-    if (tie.status === 'bye' || tie.status === 'pending') return;
+    // Result entry only makes sense once a tie is actually on a board —
+    // 'ready' means it's queued waiting for one to free up.
+    if (tie.status !== 'active' && tie.status !== 'confirmed') return;
     setEntryTie(tie);
     if (tie.legs && tie.legs.length > 0) {
       setLegs(tie.legs.map((l) => ({ winner: l.winner, oneEighties: [...l.oneEighties], highCheckout: l.highCheckout })));
@@ -327,7 +433,7 @@ export default function AdminSinglesScreen() {
     }
   }
 
-  const preview = previewRounds(selectedPlayerIds.size);
+  const preview = previewRounds(registrations.length);
 
   const body = (
     <>
@@ -358,12 +464,11 @@ export default function AdminSinglesScreen() {
         <Card>
           <Heading size="lg" className="mb-1.5">Singles Competition</Heading>
           <Body size="sm" className="mb-5">
-            {eligiblePlayers.length} player{eligiblePlayers.length === 1 ? '' : 's'} eligible (have played a
-            league game this season). Draws a single-elimination bracket, best of 3 legs per tie, played
-            through in one night — enter each result as it happens.
+            Players register themselves in the app (or you can add them manually), then you build the
+            draw once registration's closed — single-elimination, best of 3 legs per tie, played through
+            in one night with live board assignment.
           </Body>
-          <Button onPress={openCreate} disabled={eligiblePlayers.length < 2}>Create &amp; Draw Competition</Button>
-          {eligiblePlayers.length < 2 && <Body size="xs" className="mt-2">Needs at least 2 players who've played a league game this season.</Body>}
+          <Button onPress={openCreate}>Create Competition</Button>
         </Card>
       ) : competitions.length > 1 && !selectedCompId ? (
         <View className="gap-2">
@@ -375,7 +480,7 @@ export default function AdminSinglesScreen() {
               className="p-4 rounded-2xl bg-surface-2 dark:bg-surface-2-dark"
             >
               <Body tone="strong" weight="semibold">{c.name}</Body>
-              <Body size="sm">{c.playerIds.length} players · {c.status}</Body>
+              <Body size="sm">{c.status === 'registration' ? 'Registration open' : `${c.playerIds.length} players`} · {c.status}</Body>
             </TouchableOpacity>
           ))}
         </View>
@@ -387,7 +492,9 @@ export default function AdminSinglesScreen() {
               <Body size="sm">
                 {selectedComp.status === 'completed' && selectedComp.winnerPlayerId
                   ? `Winner: ${playerName(selectedComp.winnerPlayerId)}`
-                  : `${selectedComp.playerIds.length} players · ${formatDate(selectedComp.eventDate)}`}
+                  : selectedComp.status === 'registration'
+                    ? `${registrations.length} registered · ${formatDate(selectedComp.eventDate)}`
+                    : `${selectedComp.playerIds.length} players · ${formatDate(selectedComp.eventDate)}`}
               </Body>
             </View>
             <Button variant="danger" size="sm" disabled={isDeleting} loading={isDeleting} onPress={confirmDeleteCompetition}>
@@ -395,40 +502,146 @@ export default function AdminSinglesScreen() {
             </Button>
           </View>
 
-          {roundsWithTies.map(({ round, name, ties: roundTies }) => (
-            <Card key={round} className="mb-4" padded={false}>
-              <View className="p-4 border-b border-border dark:border-border-dark">
-                <Heading size="sm">{name}</Heading>
-              </View>
-              {roundTies.map((tie, i) => {
-                const tone = TIE_STATUS_TONE[tie.status];
-                const tappable = tie.status === 'ready' || tie.status === 'confirmed';
-                return (
-                  <TouchableOpacity
-                    key={tie.id}
-                    activeOpacity={tappable ? 0.6 : 1}
-                    onPress={() => openEntry(tie)}
+          {selectedComp.status === 'registration' ? (
+            <>
+              <Card className="mb-4" padded={false}>
+                <View className="p-4 border-b border-border dark:border-border-dark flex-row items-center justify-between">
+                  <Heading size="sm">Registered ({registrations.length})</Heading>
+                </View>
+                {registrations.length === 0 ? (
+                  <Body size="sm" className="p-4">Nobody's registered yet.</Body>
+                ) : registrations.map((reg, i) => (
+                  <View
+                    key={reg.id}
                     className={[
                       'flex-row items-center justify-between px-4 py-3',
-                      i < roundTies.length - 1 ? 'border-b border-border dark:border-border-dark' : '',
+                      i < registrations.length - 1 ? 'border-b border-border dark:border-border-dark' : '',
                     ].join(' ')}
                   >
-                    <Body tone="strong" weight="semibold" numberOfLines={1} className="flex-1 mr-2">{tieLabel(tie)}</Body>
-                    {tie.status === 'confirmed' && (
-                      <Body size="sm" className="mr-3">{tie.homeLegsWon}-{tie.awayLegsWon}</Body>
-                    )}
-                    {tone ? <Badge tone={tone}>{TIE_STATUS_LABEL[tie.status]}</Badge> : <Body size="sm">{TIE_STATUS_LABEL[tie.status]}</Body>}
-                  </TouchableOpacity>
-                );
-              })}
-            </Card>
-          ))}
+                    <View className="flex-1 mr-2">
+                      <Body tone="strong" weight="semibold" numberOfLines={1}>{reg.playerName}</Body>
+                      <Caption>{reg.addedBy === 'self' ? 'Self-registered' : 'Added by admin'}</Caption>
+                    </View>
+                    <TouchableOpacity
+                      activeOpacity={0.7}
+                      disabled={paymentBusyId === reg.id}
+                      onPress={() => cyclePayment(reg)}
+                      className="mr-2"
+                    >
+                      <Badge tone={PAYMENT_STATUS_TONE[reg.paymentStatus]}>{PAYMENT_STATUS_LABEL[reg.paymentStatus]}</Badge>
+                    </TouchableOpacity>
+                    <TouchableOpacity activeOpacity={0.7} hitSlop={8} onPress={() => confirmRemoveRegistration(reg)}>
+                      <Body tone="coral" weight="bold">×</Body>
+                    </TouchableOpacity>
+                  </View>
+                ))}
+              </Card>
+
+              <Card className="mb-4">
+                <Heading size="sm" className="mb-2">Add a player manually</Heading>
+                {unregisteredEligiblePlayers.length === 0 ? (
+                  <Body size="sm">Everyone eligible is already registered.</Body>
+                ) : (
+                  <View className="flex-row flex-wrap gap-2">
+                    {unregisteredEligiblePlayers.map((p) => (
+                      <Chip key={p.id} label={p.name} disabled={isAddingReg} onPress={() => addRegistration(p.id)} />
+                    ))}
+                  </View>
+                )}
+                {regError && <Body size="xs" tone="coral" className="mt-2">{regError}</Body>}
+              </Card>
+
+              <Card className="mb-4">
+                <Heading size="sm" className="mb-2">Build the draw</Heading>
+                {preview.length > 0 && (
+                  <Body size="xs" className="mb-3">
+                    Bracket: {[...preview].reverse().join(' → ')}
+                    {registrations.length > 0 && (2 ** Math.ceil(Math.log2(registrations.length))) !== registrations.length
+                      ? ` (${(2 ** Math.ceil(Math.log2(registrations.length))) - registrations.length} bye${(2 ** Math.ceil(Math.log2(registrations.length))) - registrations.length === 1 ? '' : 's'} in round 1)`
+                      : ''}
+                  </Body>
+                )}
+                <Label>Number of boards</Label>
+                <Input value={boardCountText} onChangeText={setBoardCountText} keyboardType="number-pad" className="mb-3" style={{ maxWidth: 100 }} />
+                {buildDrawError && <Body size="xs" tone="coral" className="mb-2">{buildDrawError}</Body>}
+                <Button disabled={registrations.length < 2 || isBuildingDraw} loading={isBuildingDraw} onPress={buildDraw}>
+                  Close Registration &amp; Draw Bracket
+                </Button>
+                {registrations.length < 2 && <Body size="xs" className="mt-2">Needs at least 2 registered players.</Body>}
+              </Card>
+            </>
+          ) : (
+            <>
+              {selectedComp.status === 'active' && (
+                <Card className="mb-4" padded={false}>
+                  <View className="p-4 border-b border-border dark:border-border-dark flex-row items-center justify-between">
+                    <Heading size="sm">Live Boards</Heading>
+                    <Button
+                      size="sm" variant="secondary"
+                      onPress={() => router.push(`/(protected)/singles-projector?competitionId=${selectedComp.id}` as never)}
+                    >
+                      Open Projector
+                    </Button>
+                  </View>
+                  {selectedComp.boards.map((tieId, boardId) => {
+                    const tie = tieId ? ties.find((t) => t.id === tieId) : null;
+                    return (
+                      <View
+                        key={boardId}
+                        className={[
+                          'flex-row items-center justify-between px-4 py-3',
+                          boardId < selectedComp.boards.length - 1 ? 'border-b border-border dark:border-border-dark' : '',
+                        ].join(' ')}
+                      >
+                        <Body size="sm" tone="dim">{boardLabel(boardId)}</Body>
+                        <Body tone={tie ? 'strong' : 'dim'} weight={tie ? 'semibold' : 'normal'}>
+                          {tie ? tieLabel(tie) : 'Free'}
+                        </Body>
+                      </View>
+                    );
+                  })}
+                </Card>
+              )}
+
+              {roundsWithTies.map(({ round, name, ties: roundTies }) => (
+                <Card key={round} className="mb-4" padded={false}>
+                  <View className="p-4 border-b border-border dark:border-border-dark">
+                    <Heading size="sm">{name}</Heading>
+                  </View>
+                  {roundTies.map((tie, i) => {
+                    const tone = TIE_STATUS_TONE[tie.status];
+                    const tappable = tie.status === 'active' || tie.status === 'confirmed';
+                    return (
+                      <TouchableOpacity
+                        key={tie.id}
+                        activeOpacity={tappable ? 0.6 : 1}
+                        onPress={() => openEntry(tie)}
+                        className={[
+                          'flex-row items-center justify-between px-4 py-3',
+                          i < roundTies.length - 1 ? 'border-b border-border dark:border-border-dark' : '',
+                        ].join(' ')}
+                      >
+                        <View className="flex-1 mr-2">
+                          <Body tone="strong" weight="semibold" numberOfLines={1}>{tieLabel(tie)}</Body>
+                          {tie.status === 'active' && tie.boardId != null && <Caption>{boardLabel(tie.boardId)}</Caption>}
+                        </View>
+                        {tie.status === 'confirmed' && (
+                          <Body size="sm" className="mr-3">{tie.homeLegsWon}-{tie.awayLegsWon}</Body>
+                        )}
+                        {tone ? <Badge tone={tone}>{TIE_STATUS_LABEL[tie.status]}</Badge> : <Body size="sm">{TIE_STATUS_LABEL[tie.status]}</Body>}
+                      </TouchableOpacity>
+                    );
+                  })}
+                </Card>
+              ))}
+            </>
+          )}
         </>
       ) : null}
 
       <Sheet visible={showCreate} onClose={() => setShowCreate(false)}>
         <ScrollView>
-          <Heading size="lg" className="mb-4">Create &amp; Draw Competition</Heading>
+          <Heading size="lg" className="mb-4">Create Competition</Heading>
 
           <Label>Name</Label>
           <Input value={compName} onChangeText={setCompName} autoCapitalize="words" className="mb-4" />
@@ -436,21 +649,10 @@ export default function AdminSinglesScreen() {
           <Label>Event date (YYYY-MM-DD)</Label>
           <Input value={eventDateText} onChangeText={setEventDateText} placeholder="e.g. 2026-07-01" autoCapitalize="none" autoCorrect={false} className="mb-4" />
 
-          <Label>Players entering ({selectedPlayerIds.size})</Label>
-          <View className="flex-row flex-wrap gap-2 mb-2">
-            {eligiblePlayers.map((p) => (
-              <Chip key={p.id} label={p.name} selected={selectedPlayerIds.has(p.id)} onPress={() => togglePlayer(p.id)} />
-            ))}
-          </View>
-
-          {preview.length > 0 && (
-            <Body size="xs" className="mb-4">
-              Bracket: {[...preview].reverse().join(' → ')}
-              {selectedPlayerIds.size > 0 && (2 ** Math.ceil(Math.log2(selectedPlayerIds.size))) !== selectedPlayerIds.size
-                ? ` (${(2 ** Math.ceil(Math.log2(selectedPlayerIds.size))) - selectedPlayerIds.size} bye${(2 ** Math.ceil(Math.log2(selectedPlayerIds.size))) - selectedPlayerIds.size === 1 ? '' : 's'} in round 1)`
-                : ''}
-            </Body>
-          )}
+          <Body size="xs" className="mb-4">
+            Players register themselves from here, or you can add them manually on the next screen. You'll
+            build the draw once registration's closed.
+          </Body>
 
           {createError && (
             <Card tone="coral" className="mb-4" padded={false}>
@@ -460,8 +662,8 @@ export default function AdminSinglesScreen() {
 
           <View className="flex-row gap-2.5">
             <Button variant="ghost" className="flex-1" disabled={isCreating} onPress={() => setShowCreate(false)}>Cancel</Button>
-            <Button className="flex-1" disabled={isCreating || selectedPlayerIds.size < 2} loading={isCreating} onPress={createCompetition}>
-              Draw Bracket
+            <Button className="flex-1" disabled={isCreating} loading={isCreating} onPress={createCompetition}>
+              Create
             </Button>
           </View>
         </ScrollView>

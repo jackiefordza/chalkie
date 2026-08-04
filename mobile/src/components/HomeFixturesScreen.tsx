@@ -1,5 +1,7 @@
+import { router } from 'expo-router';
+import { View } from 'react-native';
 import { useAuthStore } from '@/stores/authStore';
-import { Screen } from '@/components/ui';
+import { Screen, ListRow, Body } from '@/components/ui';
 import { NextFixtureTile } from '@/components/NextFixtureTile';
 
 // Shared "Home" content for both the player role and the captain/VC role — just
@@ -12,6 +14,14 @@ export function HomeFixturesScreen() {
   return (
     <Screen>
       {teamId && <NextFixtureTile teamId={teamId} count={2} />}
+      <View className="mt-5">
+        <ListRow
+          title="Singles Knockout"
+          subtitle="Register, follow live results and board assignment"
+          trailing={<Body tone="dim">›</Body>}
+          onPress={() => router.push('/(protected)/singles' as never)}
+        />
+      </View>
     </Screen>
   );
 }

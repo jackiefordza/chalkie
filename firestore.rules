@@ -295,6 +295,18 @@ service cloud.firestore {
       allow update, delete: if isAdmin() && me().leagueId == resource.data.leagueId;
     }
 
+    // ── singlesRegistrations ─────────────────────────────────────────────
+    // Read-only from the client, deliberately. Every mutation — a player
+    // self-registering, an admin adding someone manually, removing a
+    // registration, or toggling payment status — needs a server-side check
+    // (eligibility, "is registration still open", "am I this player")
+    // that a security rule can't express as cleanly as a callable can, so
+    // all writes go through the Cloud Functions (Admin SDK, which bypasses
+    // these rules) instead of a direct client write.
+    match /singlesRegistrations/{registrationId} {
+      allow read: if isSignedIn() && me().leagueId == resource.data.leagueId;
+    }
+
     // ── fineDefinitions ───────────────────────────────────────────────────
     match /fineDefinitions/{fineDefId} {
       allow read: if isSignedIn() && me().teamId == resource.data.teamId;

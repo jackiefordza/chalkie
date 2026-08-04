@@ -294,7 +294,15 @@ export interface CupTieSubmission {
 // league or cup team match has. Best-of-3 legs, same MatchLeg shape
 // (winner/oneEighties/highCheckout) as everywhere else, just not wrapped in
 // a 7-game Match — a singles tie *is* one game.
-export type SinglesTieStatus = 'pending' | 'ready' | 'confirmed' | 'bye';
+// 'active' means the tie has been assigned a live board and is being played
+// right now — see boardId below and assignFreeBoards in functions/src.
+export type SinglesTieStatus = 'pending' | 'ready' | 'active' | 'confirmed' | 'bye';
+
+// A competition starts in 'registration' (players can self-register or be
+// added by an admin, no draw exists yet), moves to 'active' once the admin
+// builds the draw from whoever registered, then 'completed' once the Final
+// is confirmed.
+export type SinglesCompetitionStatus = 'registration' | 'active' | 'completed';
 
 export interface SinglesCompetition {
   id: string;
@@ -302,9 +310,36 @@ export interface SinglesCompetition {
   seasonId: string;
   name: string;
   eventDate: Date;
-  playerIds: string[]; // the drawn field, fixed once the bracket is created
-  status: 'active' | 'completed';
+  playerIds: string[]; // the drawn field — empty until the draw is built from registrations
+  status: SinglesCompetitionStatus;
   winnerPlayerId: string | null; // set once the Final is confirmed
+  // Entry fee is display-only for now — nothing charges it yet. Kept as a
+  // field from the start so a payment step (Stripe or otherwise) has
+  // somewhere to read the amount from without a schema migration later.
+  entryFeeCents: number | null;
+  // Live board state, set once the draw is built (see adminBuildSinglesDraw).
+  // boards[i] is the tieId currently occupying board i, or null if free.
+  boardCount: number;
+  boardNames: (string | null)[];
+  boards: (string | null)[];
+  createdAt: Date;
+}
+
+export type SinglesRegistrationPaymentStatus = 'unpaid' | 'paid' | 'waived';
+// null for now — reserved for 'stripe' once that's wired up; 'cash' covers
+// entry fees collected in person on the night.
+export type SinglesRegistrationPaymentMethod = 'cash' | 'stripe' | null;
+
+export interface SinglesRegistration {
+  id: string;
+  leagueId: string;
+  competitionId: string;
+  playerId: string;
+  playerName: string;
+  addedBy: 'self' | 'admin';
+  registeredByUserId: string | null; // the uid who self-registered, null when admin-added
+  paymentStatus: SinglesRegistrationPaymentStatus;
+  paymentMethod: SinglesRegistrationPaymentMethod;
   createdAt: Date;
 }
 
@@ -313,10 +348,12 @@ export interface SinglesTie {
   leagueId: string;
   competitionId: string;
   round: number;
+  drawOrder: number; // stable FIFO order across the whole bracket, for board assignment
   homePlayerId: string | null;
   awayPlayerId: string | null;
   winnerPlayerId: string | null;
   status: SinglesTieStatus;
+  boardId: number | null; // index into the competition's boards array while status === 'active'
   homeLegsWon: number | null;
   awayLegsWon: number | null;
   legs: MatchLeg[] | null; // 'home'/'away' here mean homePlayerId/awayPlayerId, not a team side
