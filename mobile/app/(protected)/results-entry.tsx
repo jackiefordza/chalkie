@@ -147,11 +147,11 @@ export default function ResultsEntryScreen() {
   const [checkoutValue, setCheckoutValue] = useState('');
 
   const isAdmin = !!appUser?.isLeagueAdmin;
-  // Admin isn't tied to a team, so they choose which side they're entering
-  // for below (a stuck/offline captain's stand-in) — everything past that
-  // point reuses the exact same submission flow a captain would go through.
-  const [adminActingAsTeamId, setAdminActingAsTeamId] = useState<string | null>(null);
-  const teamId = isAdmin ? adminActingAsTeamId : (appUser?.teamId ?? null);
+  // Only meaningful for a captain/VC submitting on behalf of their own team —
+  // admin doesn't go through the submission dance at all (see confirmAsAdmin
+  // below), so this stays null for them and the submission-loading effect
+  // below is simply a no-op in that case.
+  const teamId = appUser?.teamId ?? null;
   const isHome = match ? teamId === match.homeTeamId : false;
   const isAway = match ? teamId === match.awayTeamId : false;
   const myTeamId = isHome ? match?.homeTeamId : isAway ? match?.awayTeamId : null;
@@ -394,6 +394,31 @@ export default function ResultsEntryScreen() {
     }
   }
 
+  // Admin's entry is authoritative — no dual-submission dance needed. Writes
+  // straight to the match/tie doc, same as saveAdminCorrection below does for
+  // an already-confirmed one, just also flipping status to 'confirmed' for
+  // the first time here (which is what actually fires onMatchConfirmed/
+  // onCupTieConfirmed and recomputes standings/stats).
+  async function confirmAsAdmin() {
+    if (!docId || !allComplete) return;
+    setIsSubmitting(true);
+    try {
+      const finalGames: MatchGame[] = games.map(toMatchGame);
+      await updateDoc(doc(db, collectionName, docId), { status: 'confirmed', games: finalGames });
+      setEditing(false);
+      if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      Alert.alert(
+        'Result confirmed',
+        isCup ? 'The bracket has been updated.' : 'Standings and player stats have been updated.',
+      );
+      goBack();
+    } catch (e: unknown) {
+      Alert.alert('Error', (e as Error).message ?? 'Something went wrong');
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
   function openAdminCorrection() {
     if (!match) return;
     setGames(toDraft(match.games ?? []));
@@ -478,21 +503,6 @@ export default function ResultsEntryScreen() {
             <Body size="sm" className="text-center">This tie is waiting on an earlier round to be played.</Body>
           </Card>
         </View>
-      ) : isAdmin && !teamId && match!.status !== 'confirmed' ? (
-        <View className="p-5">
-          <Card className="mb-4">
-            <Heading className="mb-1.5">{homeTeamName} vs {awayTeamName}</Heading>
-            <Body size="sm">
-              Enter this result on behalf of whichever team's captain is stuck or offline. This
-              goes in exactly as if that team's own captain had submitted it — if the other team
-              already submitted, it'll auto-confirm right away if the two match.
-            </Body>
-          </Card>
-          <View className="gap-2.5">
-            <Button onPress={() => setAdminActingAsTeamId(match!.homeTeamId)}>Enter for {homeTeamName}</Button>
-            <Button onPress={() => setAdminActingAsTeamId(match!.awayTeamId)}>Enter for {awayTeamName}</Button>
-          </View>
-        </View>
       ) : match!.status === 'confirmed' && !adminCorrecting ? (
         <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 8 }}>
           <Card className="mb-4">
@@ -528,12 +538,9 @@ export default function ResultsEntryScreen() {
             <Body size="sm" className="mb-4">7 games · 5 singles, 2 pairs · enter the legs score for each</Body>
             {isAdmin && (
               <Card tone="butter" padded={false} className="mb-4">
-                <View className="flex-row items-center justify-between p-3">
-                  <Body size="sm">Entering on behalf of <Body size="sm" weight="semibold">{isHome ? homeTeamName : awayTeamName}</Body></Body>
-                  <TouchableOpacity activeOpacity={0.7} onPress={() => { setAdminActingAsTeamId(null); setGames(blankGames()); }}>
-                    <Body size="sm" tone="brand" weight="semibold">Switch team</Body>
-                  </TouchableOpacity>
-                </View>
+                <Body size="sm" className="p-3">
+                  Admin entry — this confirms immediately once complete, no need for either team to also submit.
+                </Body>
               </Card>
             )}
             {mode === 'reconcile' && diffGameIndexes.length > 0 && (
@@ -745,9 +752,9 @@ export default function ResultsEntryScreen() {
               className="flex-1"
               disabled={!allComplete || isSubmitting}
               loading={isSubmitting}
-              onPress={adminCorrecting ? saveAdminCorrection : submit}
+              onPress={adminCorrecting ? saveAdminCorrection : isAdmin ? confirmAsAdmin : submit}
             >
-              {adminCorrecting ? 'Save Correction' : 'Submit Result'}
+              {adminCorrecting ? 'Save Correction' : isAdmin ? 'Confirm Result' : 'Submit Result'}
             </Button>
           </View>
         </>
