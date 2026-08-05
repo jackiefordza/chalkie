@@ -404,6 +404,7 @@ async function applyMatchResultDelta(p: ResultDeltaParams): Promise<void> {
 // correct them, and useful more generally as a "fix the numbers" tool if
 // stats ever drift for any other reason.
 export const adminRecomputeSeasonStats = onCall(async (request) => {
+  // no-op touch: forces Firebase to re-set this function's IAM invoker permission after a flaky deploy left it unset.
   const { seasonId } = (request.data ?? {}) as { seasonId?: string };
   if (!seasonId) throw new HttpsError('invalid-argument', 'seasonId is required.');
 
