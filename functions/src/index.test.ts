@@ -117,6 +117,33 @@ describe('computePlayerAccum', () => {
     expect(accum.get('a1')).toMatchObject({ teamId: 'away-team', played: 1, won: 0, lost: 1 });
   });
 
+  it('tallies legs won/lost per player, independent of who won the game overall', () => {
+    // 2-1 to home overall, but a1 still won one leg individually.
+    const games = [singles(1, 'h1', 'a1', [leg('home'), leg('away'), leg('home')])];
+    const accum = computePlayerAccum(games, 'home-team', 'away-team', matchId, date);
+    expect(accum.get('h1')).toMatchObject({ legsWon: 2, legsLost: 1 });
+    expect(accum.get('a1')).toMatchObject({ legsWon: 1, legsLost: 2 });
+  });
+
+  it('credits both players on a pairs game the same legs won/lost, per leg', () => {
+    const games = [pairs(6, ['h1', 'h2'], ['a1', 'a2'], [leg('home'), leg('away'), leg('home')])];
+    const accum = computePlayerAccum(games, 'home-team', 'away-team', matchId, date);
+    expect(accum.get('h1')).toMatchObject({ legsWon: 2, legsLost: 1 });
+    expect(accum.get('h2')).toMatchObject({ legsWon: 2, legsLost: 1 });
+    expect(accum.get('a1')).toMatchObject({ legsWon: 1, legsLost: 2 });
+    expect(accum.get('a2')).toMatchObject({ legsWon: 1, legsLost: 2 });
+  });
+
+  it('accumulates legs won/lost across multiple games for a player in more than one', () => {
+    const games = [
+      singles(1, 'h1', 'a1', [leg('home'), leg('home'), leg('away')]),
+      pairs(6, ['h1', 'h2'], ['a1', 'a2'], [leg('away'), leg('away'), leg('home')]),
+    ];
+    const accum = computePlayerAccum(games, 'home-team', 'away-team', matchId, date);
+    // 2 legs won + 1 lost from the singles game, 1 won + 2 lost from the pairs game.
+    expect(accum.get('h1')).toMatchObject({ legsWon: 3, legsLost: 3 });
+  });
+
   it('credits both players on the winning side of a pairs game, not just one', () => {
     const games = [pairs(6, ['h1', 'h2'], ['a1', 'a2'], [leg('home'), leg('home'), leg('away')])];
     const accum = computePlayerAccum(games, 'home-team', 'away-team', matchId, date);
@@ -168,10 +195,10 @@ describe('computePlayerAccum', () => {
   it('computes correct totals across a full 7-game match', () => {
     const accum = computePlayerAccum(homeSweepMatch(), 'home-team', 'away-team', matchId, date);
     // 5 singles players each play once; h1/h2 and h3/h4 additionally play one pairs game each.
-    expect(accum.get('h1')).toMatchObject({ played: 2, won: 2, lost: 0 });
-    expect(accum.get('h5')).toMatchObject({ played: 1, won: 1, lost: 0 });
-    expect(accum.get('a1')).toMatchObject({ played: 2, won: 0, lost: 2 });
-    expect(accum.get('a5')).toMatchObject({ played: 1, won: 0, lost: 1 });
+    expect(accum.get('h1')).toMatchObject({ played: 2, won: 2, lost: 0, legsWon: 6, legsLost: 0 });
+    expect(accum.get('h5')).toMatchObject({ played: 1, won: 1, lost: 0, legsWon: 3, legsLost: 0 });
+    expect(accum.get('a1')).toMatchObject({ played: 2, won: 0, lost: 2, legsWon: 0, legsLost: 6 });
+    expect(accum.get('a5')).toMatchObject({ played: 1, won: 0, lost: 1, legsWon: 0, legsLost: 3 });
   });
 });
 

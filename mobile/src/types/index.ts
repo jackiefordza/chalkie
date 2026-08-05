@@ -375,6 +375,8 @@ export interface PlayerSeasonStats {
   played: number;
   won: number;
   lost: number;
+  legsWon: number;
+  legsLost: number;
   oneEighties: number;
   highCheckouts: PlayerHighCheckout[];
 }

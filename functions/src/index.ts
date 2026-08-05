@@ -165,6 +165,8 @@ export interface PlayerAccum {
   played: number;
   won: number;
   lost: number;
+  legsWon: number;
+  legsLost: number;
   oneEighties: number;
   highCheckouts: HighCheckoutEntry[];
 }
@@ -177,7 +179,9 @@ export function computePlayerAccum(
 ): Map<string, PlayerAccum> {
   const accum = new Map<string, PlayerAccum>();
   const getAccum = (playerId: string, teamId: string): PlayerAccum => {
-    if (!accum.has(playerId)) accum.set(playerId, { teamId, played: 0, won: 0, lost: 0, oneEighties: 0, highCheckouts: [] });
+    if (!accum.has(playerId)) {
+      accum.set(playerId, { teamId, played: 0, won: 0, lost: 0, legsWon: 0, legsLost: 0, oneEighties: 0, highCheckouts: [] });
+    }
     return accum.get(playerId)!;
   };
 
@@ -187,6 +191,16 @@ export function computePlayerAccum(
       const a = getAccum(playerId, homeTeamId);
       a.played += 1;
       if (gameHomeWon) a.won += 1; else a.lost += 1;
+    }
+    for (const leg of game.legs) {
+      for (const playerId of game.homePlayerIds) {
+        const a = getAccum(playerId, homeTeamId);
+        if (leg.winner === 'home') a.legsWon += 1; else a.legsLost += 1;
+      }
+      for (const playerId of game.awayPlayerIds) {
+        const a = getAccum(playerId, awayTeamId);
+        if (leg.winner === 'away') a.legsWon += 1; else a.legsLost += 1;
+      }
     }
     for (const playerId of game.awayPlayerIds) {
       const a = getAccum(playerId, awayTeamId);
@@ -325,6 +339,8 @@ async function applyMatchResultDelta(p: ResultDeltaParams): Promise<void> {
     const deltaPlayed = (n?.played ?? 0) - (o?.played ?? 0);
     const deltaWon = (n?.won ?? 0) - (o?.won ?? 0);
     const deltaLost = (n?.lost ?? 0) - (o?.lost ?? 0);
+    const deltaLegsWon = (n?.legsWon ?? 0) - (o?.legsWon ?? 0);
+    const deltaLegsLost = (n?.legsLost ?? 0) - (o?.legsLost ?? 0);
     const delta180 = (n?.oneEighties ?? 0) - (o?.oneEighties ?? 0);
     const checkoutsChanged = JSON.stringify(o?.highCheckouts ?? []) !== JSON.stringify(n?.highCheckouts ?? []);
 
@@ -332,7 +348,7 @@ async function applyMatchResultDelta(p: ResultDeltaParams): Promise<void> {
       checkoutPlayerIds.push(playerId);
       continue;
     }
-    if (deltaPlayed === 0 && deltaWon === 0 && deltaLost === 0 && delta180 === 0) continue;
+    if (deltaPlayed === 0 && deltaWon === 0 && deltaLost === 0 && deltaLegsWon === 0 && deltaLegsLost === 0 && delta180 === 0) continue;
 
     const teamId = (n ?? o)!.teamId;
     statsBatch.set(db.doc(`playerSeasonStats/${p.seasonId}_${playerId}`), {
@@ -340,6 +356,8 @@ async function applyMatchResultDelta(p: ResultDeltaParams): Promise<void> {
       played: FieldValue.increment(deltaPlayed),
       won: FieldValue.increment(deltaWon),
       lost: FieldValue.increment(deltaLost),
+      legsWon: FieldValue.increment(deltaLegsWon),
+      legsLost: FieldValue.increment(deltaLegsLost),
       oneEighties: FieldValue.increment(delta180),
     }, { merge: true });
   }
@@ -353,6 +371,8 @@ async function applyMatchResultDelta(p: ResultDeltaParams): Promise<void> {
     const deltaPlayed = (n?.played ?? 0) - (o?.played ?? 0);
     const deltaWon = (n?.won ?? 0) - (o?.won ?? 0);
     const deltaLost = (n?.lost ?? 0) - (o?.lost ?? 0);
+    const deltaLegsWon = (n?.legsWon ?? 0) - (o?.legsWon ?? 0);
+    const deltaLegsLost = (n?.legsLost ?? 0) - (o?.legsLost ?? 0);
     const delta180 = (n?.oneEighties ?? 0) - (o?.oneEighties ?? 0);
     const teamId = (n ?? o)!.teamId;
 
@@ -365,6 +385,8 @@ async function applyMatchResultDelta(p: ResultDeltaParams): Promise<void> {
     await ref.set({
       leagueId: p.leagueId, seasonId: p.seasonId, divisionId: p.divisionId, teamId, playerId,
       played: FieldValue.increment(deltaPlayed),
+      legsWon: FieldValue.increment(deltaLegsWon),
+      legsLost: FieldValue.increment(deltaLegsLost),
       won: FieldValue.increment(deltaWon),
       lost: FieldValue.increment(deltaLost),
       oneEighties: FieldValue.increment(delta180),
@@ -372,6 +394,47 @@ async function applyMatchResultDelta(p: ResultDeltaParams): Promise<void> {
     }, { merge: true });
   }
 }
+
+// One-off/on-demand full rebuild of divisionTables + playerSeasonStats for a
+// season from every confirmed match's games — the same math
+// applyMatchResultDelta always uses, just replayed from a clean slate rather
+// than as an incremental delta. Needed whenever the underlying computation
+// changes (e.g. adding legsWon/legsLost tracking) so already-confirmed
+// matches aren't left with stale/incomplete stats until someone happens to
+// correct them, and useful more generally as a "fix the numbers" tool if
+// stats ever drift for any other reason.
+export const adminRecomputeSeasonStats = onCall(async (request) => {
+  const { seasonId } = (request.data ?? {}) as { seasonId?: string };
+  if (!seasonId) throw new HttpsError('invalid-argument', 'seasonId is required.');
+
+  const seasonSnap = await db.doc(`seasons/${seasonId}`).get();
+  if (!seasonSnap.exists) throw new HttpsError('not-found', 'Season not found.');
+  const leagueId = seasonSnap.data()!.leagueId as string;
+  await assertLeagueAdmin(request.auth?.uid, leagueId);
+
+  const [tablesSnap, statsSnap, matchesSnap] = await Promise.all([
+    db.collection('divisionTables').where('seasonId', '==', seasonId).get(),
+    db.collection('playerSeasonStats').where('seasonId', '==', seasonId).get(),
+    db.collection('matches').where('seasonId', '==', seasonId).where('status', '==', 'confirmed').get(),
+  ]);
+
+  const wipeBatch = db.batch();
+  tablesSnap.docs.forEach((d) => wipeBatch.delete(d.ref));
+  statsSnap.docs.forEach((d) => wipeBatch.delete(d.ref));
+  await wipeBatch.commit();
+
+  for (const matchDoc of matchesSnap.docs) {
+    const m = matchDoc.data();
+    await applyMatchResultDelta({
+      matchId: matchDoc.id, leagueId, seasonId,
+      divisionId: m.divisionId as string, homeTeamId: m.homeTeamId as string, awayTeamId: m.awayTeamId as string,
+      scheduledDate: (m.scheduledDate as FirebaseFirestore.Timestamp).toDate(),
+      oldGames: [], newGames: (m.games ?? []) as MatchGame[], playedDelta: 1,
+    });
+  }
+
+  return { matchesReplayed: matchesSnap.size };
+});
 
 // ── On confirm (auto-confirm above, or an admin correcting an already-
 // confirmed result): recompute totals, divisionTables, standings positions,
