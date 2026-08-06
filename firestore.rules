@@ -320,5 +320,14 @@ service cloud.firestore {
       allow create: if isCaptainOrVC() && me().teamId == request.resource.data.teamId;
       allow update, delete: if isCaptainOrVC() && me().teamId == resource.data.teamId;
     }
+
+    // ── adminTasks (Firestore-triggered admin tools, e.g. season stats
+    // recompute) — admins create a task doc, a function picks it up and
+    // writes status/result back. Only the triggering function (Admin SDK,
+    // bypasses rules) ever updates it.
+    match /adminTasks/{taskId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin() && request.resource.data.requestedBy == request.auth.uid;
+    }
   }
 }

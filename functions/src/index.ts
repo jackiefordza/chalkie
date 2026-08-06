@@ -403,16 +403,7 @@ async function applyMatchResultDelta(p: ResultDeltaParams): Promise<void> {
 // matches aren't left with stale/incomplete stats until someone happens to
 // correct them, and useful more generally as a "fix the numbers" tool if
 // stats ever drift for any other reason.
-export const adminRecomputeSeasonStats = onCall(async (request) => {
-  // no-op touch: forces Firebase to re-set this function's IAM invoker permission after a flaky deploy left it unset.
-  const { seasonId } = (request.data ?? {}) as { seasonId?: string };
-  if (!seasonId) throw new HttpsError('invalid-argument', 'seasonId is required.');
-
-  const seasonSnap = await db.doc(`seasons/${seasonId}`).get();
-  if (!seasonSnap.exists) throw new HttpsError('not-found', 'Season not found.');
-  const leagueId = seasonSnap.data()!.leagueId as string;
-  await assertLeagueAdmin(request.auth?.uid, leagueId);
-
+async function recomputeSeasonStats(seasonId: string, leagueId: string): Promise<{ matchesReplayed: number }> {
   const [tablesSnap, statsSnap, matchesSnap] = await Promise.all([
     db.collection('divisionTables').where('seasonId', '==', seasonId).get(),
     db.collection('playerSeasonStats').where('seasonId', '==', seasonId).get(),
@@ -435,6 +426,42 @@ export const adminRecomputeSeasonStats = onCall(async (request) => {
   }
 
   return { matchesReplayed: matchesSnap.size };
+}
+
+// adminTasks is a Firestore-triggered admin tool rather than an onCall
+// function: onCall requires the underlying Cloud Run service to be granted
+// public ("allUsers") invoker access, which a project-level policy has
+// started blocking for brand-new functions (confirmed: 4 separate grant
+// attempts all failed identically, while long-existing onCall functions
+// that already had the grant kept working fine). Firestore-triggered
+// functions invoke via Eventarc instead, which sidesteps that policy
+// entirely and is already proven reliable by every other trigger in this
+// file. firestore.rules restricts who may create an adminTasks doc, and
+// this handler re-validates the requester is an admin of the season's
+// league before doing anything, mirroring assertLeagueAdmin's checks.
+export const onAdminTaskCreated = onDocumentCreated('adminTasks/{taskId}', async (event) => {
+  const snap = event.data;
+  if (!snap) return;
+  const task = snap.data() as { type?: string; seasonId?: string; requestedBy?: string };
+  if (task.type !== 'recomputeSeasonStats') return;
+
+  try {
+    if (!task.seasonId) throw new Error('seasonId is required.');
+    const seasonSnap = await db.doc(`seasons/${task.seasonId}`).get();
+    if (!seasonSnap.exists) throw new Error('Season not found.');
+    const leagueId = seasonSnap.data()!.leagueId as string;
+
+    const requestorSnap = task.requestedBy ? await db.doc(`users/${task.requestedBy}`).get() : null;
+    const requestor = requestorSnap?.data();
+    if (!requestor || requestor.isLeagueAdmin !== true || requestor.leagueId !== leagueId) {
+      throw new Error('League admin access required.');
+    }
+
+    const result = await recomputeSeasonStats(task.seasonId, leagueId);
+    await snap.ref.update({ status: 'completed', result, completedAt: FieldValue.serverTimestamp() });
+  } catch (e) {
+    await snap.ref.update({ status: 'failed', error: (e as Error).message, completedAt: FieldValue.serverTimestamp() });
+  }
 });
 
 // ── On confirm (auto-confirm above, or an admin correcting an already-
