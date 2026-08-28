@@ -51,13 +51,32 @@ service cloud.firestore {
         || isAdmin()
       );
       allow create: if isAdmin() && me().leagueId == request.resource.data.leagueId;
-      // Team assignment (captainUserId/viceCaptainUserId) only ever changes as part of
-      // an admin or captain approving a joinRequest — see users.allow update below.
-      // There is deliberately no self-assign clause here: anyone could otherwise grab
-      // an unclaimed captain/VC slot on any team without going through approval.
+      // A captain/VC may only ever touch this team's venue info (address/
+      // venuePhone — anything not named below) and, if they are specifically
+      // the CURRENT captain (not just any VC — matches the app's own
+      // visibleRequests filter in captains.tsx), assign viceCaptainUserId to
+      // someone with a genuine pending 'captainRole' request. Every other
+      // field — league/season/division association and captainUserId itself
+      // — must stay byte-for-byte unchanged: the app never writes them from
+      // a captain/VC context (only admin, or this one narrow VC-approval
+      // path), so anything else here is tampering, not a supported edit.
+      // Admin remains unrestricted, matching every real admin flow
+      // (admin-inbox.tsx, admin-team.tsx) that legitimately sets these.
       allow update: if
         (isAdmin() && me().leagueId == resource.data.leagueId)
-        || (isCaptainOrVC() && me().teamId == teamId);
+        || (isCaptainOrVC() && me().teamId == teamId
+            && request.resource.data.leagueId == resource.data.leagueId
+            && request.resource.data.seasonId == resource.data.seasonId
+            && request.resource.data.divisionId == resource.data.divisionId
+            && request.resource.data.name == resource.data.name
+            && request.resource.data.captainUserId == resource.data.captainUserId
+            && (
+              request.resource.data.viceCaptainUserId == resource.data.viceCaptainUserId
+              || (
+                me().uid == resource.data.captainUserId
+                && get(/databases/$(database)/documents/users/$(request.resource.data.viceCaptainUserId)).data.pendingRequestType == 'captainRole'
+              )
+            ));
       allow delete: if isAdmin() && me().leagueId == resource.data.leagueId;
     }
 
@@ -96,12 +115,39 @@ service cloud.firestore {
         || (isCaptainOrVC()
             && me().teamId == request.resource.data.teamId);
 
-      // claimedByUserId only ever changes as part of a captain/VC or admin approving
-      // a 'claim' joinRequest — no self-claim clause (that would let anyone instantly
-      // claim any unclaimed player record without the team's approval).
+      // A captain/VC may only ever rename nothing and touch nothing but
+      // claimedByUserId (paired with claimedAt, left free to change alongside
+      // it — a plain timestamp, not an ownership field) on their own roster,
+      // and even that only to move an UNCLAIMED player (resource.data.
+      // claimedByUserId == null) to a real person with a genuine pending
+      // 'claim' request — never to reassign an already-claimed player, and
+      // never to a made-up uid with no request behind it (that would let
+      // anyone instantly claim/reassign any player without the team's
+      // approval, or "steal" one that's already claimed). teamId/leagueId/
+      // seasonId/divisionId/name must stay unchanged — no captain-facing
+      // flow ever moves a player between teams/leagues/seasons or renames
+      // one; only admin's movePlayerTo (admin-team.tsx) does, and only admin
+      // remains unrestricted here to do it.
       allow update: if
         (isAdmin() && me().leagueId == resource.data.leagueId)
-        || (isCaptainOrVC() && me().teamId == resource.data.teamId);
+        || (isCaptainOrVC() && me().teamId == resource.data.teamId
+            && request.resource.data.teamId == resource.data.teamId
+            && request.resource.data.leagueId == resource.data.leagueId
+            // .get(key, default) rather than plain field access: captain-created
+            // players (captains.tsx addPlayer) never set seasonId/divisionId at
+            // all, so the key can be genuinely absent, not just null — plain
+            // `==` throws on a missing key and fails the whole rule closed.
+            && request.resource.data.get('seasonId', null) == resource.data.get('seasonId', null)
+            && request.resource.data.get('divisionId', null) == resource.data.get('divisionId', null)
+            && request.resource.data.name == resource.data.name
+            && (
+              request.resource.data.claimedByUserId == resource.data.claimedByUserId
+              || (
+                resource.data.claimedByUserId == null
+                && request.resource.data.claimedByUserId != null
+                && get(/databases/$(database)/documents/users/$(request.resource.data.claimedByUserId)).data.pendingRequestType == 'claim'
+              )
+            ));
 
       allow delete: if
         (isAdmin() && me().leagueId == resource.data.leagueId)
