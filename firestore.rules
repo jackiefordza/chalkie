@@ -183,9 +183,41 @@ service cloud.firestore {
           || me().teamId == matchData().awayTeamId
         );
 
+        // Security invariants enforced here (see onSubmissionWrite in
+        // functions/src/index.ts for the corresponding backend hardening):
+        //  - submittedByTeamId must be one of THIS match's two actual teams —
+        //    previously unchecked, which let a captain of an uninvolved team
+        //    submit a "result" for a match they had nothing to do with.
+        //  - the document ID must equal submittedByTeamId, so a team can hold
+        //    at most one submission doc per match (Firestore doc IDs are
+        //    unique by construction) — previously only a client-side naming
+        //    convention, not enforced, which let a single captain create a
+        //    second submission under a different doc ID and have
+        //    onSubmissionWrite mistake it for the opposing team's agreement.
+        //  - games must be an array of exactly 7 entries (5 singles + 2
+        //    pairs, per the fixed match format). Full per-game/per-leg/
+        //    player-legitimacy validation is deliberately NOT attempted here:
+        //    it was prototyped (per-game/per-leg winner + in-game player
+        //    eligibility checks, ~20+ nested rule-function calls for all 7
+        //    games) and empirically hit the Firestore Rules engine's
+        //    function-call/complexity budget — past a certain number of
+        //    chained validation calls the WHOLE rule evaluation starts
+        //    failing closed (denying even genuinely valid submissions), not
+        //    just the malformed ones. Cross-referencing every player ID
+        //    against the `players` collection has the same problem for a
+        //    different reason (a `get()`-per-player budget). Both are done
+        //    authoritatively, once, in the Cloud Function instead (see
+        //    isValidSubmission in functions/src/index.ts) — this is the
+        //    "Firestore rules alone are not sufficient" case in practice,
+        //    not just in principle.
         allow create, update: if isCaptainOrVC()
           && me().teamId == request.resource.data.submittedByTeamId
-          && matchData().status != 'confirmed';
+          && submissionId == request.resource.data.submittedByTeamId
+          && (request.resource.data.submittedByTeamId == matchData().homeTeamId
+              || request.resource.data.submittedByTeamId == matchData().awayTeamId)
+          && matchData().status != 'confirmed'
+          && request.resource.data.games is list
+          && request.resource.data.games.size() == 7;
 
         // Admin needs this to reset test-league submissions between QA runs
         allow delete: if isAdmin() && me().leagueId == matchData().leagueId;
