@@ -52,11 +52,12 @@ export default function StandingsScreen() {
   const selectedDivision = divisions.find((d) => d.id === selectedDivisionId) ?? null;
 
   useEffect(() => {
-    if (!selectedDivision) { setIsLoading(false); return; }
+    if (!selectedDivision || !appUser?.leagueId) { setIsLoading(false); return; }
     setIsLoading(true);
     const unsub = onSnapshot(
       query(
         collection(db, 'divisionTables'),
+        where('leagueId', '==', appUser.leagueId),
         where('seasonId', '==', selectedDivision.seasonId),
         where('divisionId', '==', selectedDivision.id),
         orderBy('position', 'asc'),
@@ -68,7 +69,7 @@ export default function StandingsScreen() {
       (e) => { setLoadError(e.message); setIsLoading(false); },
     );
     return () => unsub();
-  }, [selectedDivision?.seasonId, selectedDivision?.id]);
+  }, [appUser?.leagueId, selectedDivision?.seasonId, selectedDivision?.id]);
 
   const columns = useMemo(() => (
     [

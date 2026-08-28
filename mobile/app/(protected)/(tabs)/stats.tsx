@@ -52,6 +52,7 @@ export default function StatsScreen() {
       ? onSnapshot(
           query(
             collection(db, 'playerSeasonStats'),
+            where('leagueId', '==', appUser.leagueId),
             where('seasonId', '==', appUser.seasonId),
             where('divisionId', '==', appUser.divisionId),
           ),

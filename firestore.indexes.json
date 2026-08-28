@@ -102,6 +102,16 @@
       ]
     },
     {
+      "collectionGroup": "divisionTables",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "leagueId", "order": "ASCENDING" },
+        { "fieldPath": "seasonId", "order": "ASCENDING" },
+        { "fieldPath": "divisionId", "order": "ASCENDING" },
+        { "fieldPath": "position", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "playerSeasonStats",
       "queryScope": "COLLECTION",
       "fields": [
