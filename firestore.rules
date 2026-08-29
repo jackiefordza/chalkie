@@ -44,11 +44,20 @@ service cloud.firestore {
 
     // ── teams ─────────────────────────────────────────────────────────────
     match /teams/{teamId} {
-      // Pending users need to browse teams; admins query by seasonId so need explicit permission
+      // The `|| isAdmin()` branch this used to have was unconditional — no
+      // league check at all — which let an admin read (and, worse, run a
+      // fully unscoped collection query against) every team in every
+      // league, not just their own. It's also redundant: an admin reading
+      // their OWN league's teams already satisfies the first branch below
+      // (their me().leagueId equals that team's leagueId), so dropping the
+      // branch entirely — rather than adding an && me().leagueId==... to it
+      // — is both the fix and the simpler rule. Pending users' unscoped
+      // cross-league browsing (the second branch) is unchanged/intentional:
+      // there's no server-authoritative "which league are they browsing"
+      // field to check it against without inventing new schema.
       allow read: if isSignedIn() && (
         me().leagueId == resource.data.leagueId
         || (me().leagueId == null && me().role == 'pending')
-        || isAdmin()
       );
       allow create: if isAdmin() && me().leagueId == request.resource.data.leagueId;
       // A captain/VC may only ever touch this team's venue info (address/
