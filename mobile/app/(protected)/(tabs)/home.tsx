@@ -1,3 +1,3 @@
-import { HomeFixturesScreen } from '@/components/HomeFixturesScreen';
+import { HomeDashboard } from '@/components/HomeDashboard';
 
-export default HomeFixturesScreen;
+export default HomeDashboard;
