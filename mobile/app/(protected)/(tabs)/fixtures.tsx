@@ -13,7 +13,7 @@ import type { Match } from '@/types';
 const STATUS_LABEL: Record<Match['status'], string> = {
   scheduled: 'Upcoming',
   awaiting_confirmation: 'Awaiting confirmation',
-  disputed: 'Disputed — admin reviewing',
+  disputed: 'Disputed',
   confirmed: 'Final',
 };
 
@@ -132,7 +132,7 @@ export default function FixturesScreen() {
             className="mt-3"
             onPress={() => router.push(`/(protected)/results-entry?matchId=${match.id}`)}
           >
-            {match.status === 'scheduled' ? 'Enter Result' : 'View / Edit Result'}
+            {match.status === 'scheduled' ? 'Enter Result' : match.status === 'disputed' ? 'Resolve Differences' : 'View / Edit Result'}
           </Button>
         )}
       </Card>

@@ -10,7 +10,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { goBack } from '@/lib/navigation';
 import { RAW } from '@/lib/theme';
 import {
-  Screen, Heading, Body, Caption, Stat, Button, Card, Chip, Input, Label, Sheet, AppBar,
+  Screen, Heading, Body, Caption, Stat, Badge, Button, Card, Chip, Input, Label, Sheet, AppBar,
 } from '@/components/ui';
 import { AdminShell } from '@/components/admin/AdminShell';
 import { MatchHeader, MatchSummary, GameRow, ActionBanner } from '@/components/MatchCentre';
@@ -502,6 +502,14 @@ export default function ResultsEntryScreen() {
               onPress={() => router.push(`/(protected)/admin-dispute?matchId=${matchId}`)}
               tone="coral"
             />
+          ) : match!.status === 'disputed' ? (
+            // A viewer with no way to act (not this match's captain/VC, not
+            // an admin) — still worth telling them something is happening,
+            // rather than leaving the "Disputed" badge above unexplained.
+            <Card tone="coral" className="mb-4">
+              <Caption className="mb-1">Disputed</Caption>
+              <Body size="sm">Both teams' submitted results don't match. Their captains or a league admin will sort this out.</Body>
+            </Card>
           ) : null}
         </ScrollView>
       ) : mode === 'reconcile' ? (
@@ -509,7 +517,10 @@ export default function ResultsEntryScreen() {
           <TouchableOpacity activeOpacity={0.7} onPress={() => setEditing(false)} className="mb-3">
             <Body size="sm">‹ Back to summary</Body>
           </TouchableOpacity>
-          <Body tone="strong" weight="semibold" className="mb-4" numberOfLines={1}>{homeTeamName} vs {awayTeamName}</Body>
+          <View className="flex-row items-center justify-between mb-4">
+            <Body tone="strong" weight="semibold" className="flex-1" numberOfLines={1}>{homeTeamName} vs {awayTeamName}</Body>
+            {(isHome || isAway) && <Body size="sm" tone="brand" weight="semibold">You're {isHome ? 'Home' : 'Away'}</Body>}
+          </View>
           {diffGameIndexes.length === 0 ? (
             <Body>Everything matches — this should confirm automatically any moment.</Body>
           ) : (
@@ -525,7 +536,13 @@ export default function ResultsEntryScreen() {
       ) : (
         <>
           <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 8 }}>
-            <Body tone="strong" className="mb-4">{homeTeamName} vs {awayTeamName}</Body>
+            <View className="flex-row items-center justify-between mb-1">
+              <Body tone="strong" className="flex-1" numberOfLines={1}>{homeTeamName} vs {awayTeamName}</Body>
+              {(isHome || isAway) && <Body size="sm" tone="brand" weight="semibold">You're {isHome ? 'Home' : 'Away'}</Body>}
+            </View>
+            <Body size="sm" className="mb-4">
+              {games.filter(isGameComplete).length} of {games.length} games complete
+            </Body>
 
             {games.map((game, gameIndex) => {
               const participants = [...game.homePlayerIds, ...game.awayPlayerIds];
@@ -548,6 +565,7 @@ export default function ResultsEntryScreen() {
                 <Card key={gameIndex} className="mb-3.5">
                   <View className="flex-row items-center mb-2.5">
                     <Caption className="flex-1">Game {gameIndex + 1} · {game.type === 'singles' ? 'Singles' : 'Pairs'}</Caption>
+                    {isGameComplete(game) && <Badge tone="sage" className="mr-2">Complete</Badge>}
                     {mode === 'review' && editedGameIndexes.has(gameIndex) && (
                       <TouchableOpacity activeOpacity={0.7}
                         onPress={() => revertGame(gameIndex)}

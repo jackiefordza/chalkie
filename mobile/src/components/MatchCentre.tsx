@@ -66,7 +66,11 @@ export function MatchHeader({ match, homeTeamName, awayTeamName }: { match: Matc
         <Body size="sm" className="mb-1">
           {match.status === 'scheduled' && 'This fixture hasn\'t been played yet.'}
           {match.status === 'awaiting_confirmation' && 'A result has been submitted and is waiting to be confirmed.'}
-          {match.status === 'disputed' && 'The two submitted results don\'t match — an admin needs to review this one.'}
+          {/* Deliberately doesn't say "an admin needs to review this" — a
+              captain of either team can resolve this themselves (see the
+              reconcile flow below), admin review is the fallback, not the
+              only path. */}
+          {match.status === 'disputed' && 'The two submitted results don\'t match.'}
         </Body>
       )}
 

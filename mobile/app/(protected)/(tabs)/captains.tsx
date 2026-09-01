@@ -12,7 +12,7 @@ import { RAW } from '@/lib/theme';
 import {
   Screen, Heading, Body, Chip, Button, Card, Badge, Avatar, Input, Label, Sheet, VisibilityPicker, AppIcon, ListRow,
 } from '@/components/ui';
-import type { Match, PhoneVisibility, JoinRequest } from '@/types';
+import type { Match, MatchStatus, PhoneVisibility, JoinRequest } from '@/types';
 
 interface Player {
   id: string; name: string;
@@ -20,7 +20,7 @@ interface Player {
   teamId: string;
 }
 interface ActionableMatch {
-  id: string; opponentName: string; isHome: boolean; scheduledDate: Date;
+  id: string; opponentName: string; isHome: boolean; scheduledDate: Date; status: MatchStatus;
 }
 
 type TeamRole = 'captain' | 'viceCaptain' | 'player';
@@ -136,8 +136,13 @@ export default function CaptainsScreen() {
           scheduledDate: d.data().scheduledDate?.toDate() ?? new Date(),
         } as Match));
 
+        // A disputed match always needs a captain's attention (either side can
+        // reconcile it — see results-entry.tsx's "Resolve Differences" flow) —
+        // previously excluded here entirely, so a disputed match would
+        // silently vanish from "Needs Your Action" the moment it flipped
+        // status, right when it most needed surfacing.
         const candidates = all.filter((m) => (
-          (m.status === 'scheduled' && m.scheduledDate <= now) || m.status === 'awaiting_confirmation'
+          (m.status === 'scheduled' && m.scheduledDate <= now) || m.status === 'awaiting_confirmation' || m.status === 'disputed'
         ));
 
         const teamNamesSnap = await getDocs(query(collection(db, 'teams'), where('leagueId', '==', appUser.leagueId)));
@@ -155,6 +160,7 @@ export default function CaptainsScreen() {
             opponentName: teamNames[opponentId] ?? '…',
             isHome: m.homeTeamId === teamId,
             scheduledDate: m.scheduledDate,
+            status: m.status,
           } as ActionableMatch;
         }));
 
@@ -591,15 +597,17 @@ export default function CaptainsScreen() {
           ) : (
             <View className="mb-5">
               {actionableMatches.map((m) => (
-                <Card key={m.id} tone="butter" className="mb-2.5">
+                <Card key={m.id} tone={m.status === 'disputed' ? 'coral' : 'butter'} className="mb-2.5">
                   <View className="flex-row items-center justify-between mb-3">
                     <Body tone="strong" weight="semibold">
                       {m.isHome ? 'vs' : '@'} {m.opponentName}
                     </Body>
-                    <Badge tone="butter">Result needed</Badge>
+                    <Badge tone={m.status === 'disputed' ? 'coral' : 'butter'}>
+                      {m.status === 'disputed' ? 'Disputed' : 'Result needed'}
+                    </Badge>
                   </View>
                   <Button size="sm" onPress={() => router.push(`/(protected)/results-entry?matchId=${m.id}`)}>
-                    Enter Result
+                    {m.status === 'disputed' ? 'Resolve Differences' : 'Enter Result'}
                   </Button>
                 </Card>
               ))}

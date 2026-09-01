@@ -18,7 +18,7 @@ interface OpponentContact { name: string; phone: string }
 const STATUS_LABEL: Record<MatchStatus, string> = {
   scheduled: 'Scheduled',
   awaiting_confirmation: 'Awaiting confirmation',
-  disputed: 'Disputed — admin reviewing',
+  disputed: 'Disputed',
   confirmed: 'Final',
 };
 const STATUS_TONE: Record<MatchStatus, SemanticTone | null> = {
@@ -77,6 +77,15 @@ function NextMatchCard({ match, teamId, opponentName, tableRow, form, isCaptainO
   const isDark = colorScheme === 'dark';
   const [opponentContact, setOpponentContact] = useState<OpponentContact | null>(null);
   const [venuePhone, setVenuePhone] = useState<string | null>(null);
+  // Whether OUR team has a saved submission for this match yet — only
+  // meaningful (and only fetched) once there's actually a submission to
+  // check for, i.e. once the match is past 'scheduled'. Lets the action
+  // label below distinguish "it's your move" from "you're waiting on them"
+  // instead of a single generic label for every non-scheduled status —
+  // directly the "is there anything I need to do?" question this card
+  // exists to answer. Single doc read, same permission this screen's own
+  // "Enter Result" flow already relies on (matches/{id}/submissions/{teamId}).
+  const [hasSubmitted, setHasSubmitted] = useState<boolean | null>(null);
 
   const opponentId = match ? (match.homeTeamId === teamId ? match.awayTeamId : match.homeTeamId) : null;
   const isHome = match?.homeTeamId === teamId;
@@ -101,6 +110,16 @@ function NextMatchCard({ match, teamId, opponentName, tableRow, form, isCaptainO
       }
     })();
   }, [opponentId, appUser?.role]);
+
+  useEffect(() => {
+    if (!isCaptainOrVC || !match || (match.status !== 'awaiting_confirmation' && match.status !== 'disputed')) {
+      setHasSubmitted(null);
+      return;
+    }
+    getDoc(doc(db, 'matches', match.id, 'submissions', teamId))
+      .then((s) => setHasSubmitted(s.exists()))
+      .catch(() => setHasSubmitted(null));
+  }, [isCaptainOrVC, match?.id, match?.status, teamId]);
 
   if (!match || !opponentId) {
     return (
@@ -165,7 +184,11 @@ function NextMatchCard({ match, teamId, opponentName, tableRow, form, isCaptainO
           className="mt-3"
           onPress={() => router.push(`/(protected)/results-entry?matchId=${match.id}`)}
         >
-          {match.status === 'scheduled' ? 'Enter Result' : 'View / Edit Result'}
+          {match.status === 'scheduled' ? 'Enter Result'
+            : match.status === 'disputed' ? 'Resolve Differences'
+              : match.status === 'awaiting_confirmation' && hasSubmitted === false ? 'Review Their Result'
+                : match.status === 'awaiting_confirmation' && hasSubmitted === true ? 'View Submission'
+                  : 'View / Edit Result'}
         </Button>
       )}
     </Card>
