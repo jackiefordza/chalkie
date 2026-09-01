@@ -525,7 +525,9 @@ async function assertLeagueAdmin(uid: string | undefined, leagueId: string): Pro
   if (!uid) throw new HttpsError('unauthenticated', 'Sign in required.');
   const userSnap = await db.doc(`users/${uid}`).get();
   const user = userSnap.data();
-  if (!user || user.isLeagueAdmin !== true || user.leagueId !== leagueId) {
+  const isGlobalAdmin = user?.isGlobalAdmin === true;
+  const isScopedLeagueAdmin = user?.isLeagueAdmin === true && user?.leagueId === leagueId;
+  if (!user || (!isGlobalAdmin && !isScopedLeagueAdmin)) {
     throw new HttpsError('permission-denied', 'League admin access required.');
   }
 }

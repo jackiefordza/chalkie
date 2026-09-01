@@ -60,6 +60,7 @@ export const useAuthStore = create<AuthState>((set) => ({
         divisionId: null,
         playerId: null,
         isLeagueAdmin: false,
+        isGlobalAdmin: false,
         pendingRequestType: null,
         createdAt: serverTimestamp(),
       });
@@ -73,6 +74,7 @@ export const useAuthStore = create<AuthState>((set) => ({
           nickname: null,
           role: 'pending',
           isLeagueAdmin: false,
+          isGlobalAdmin: false,
           leagueId: null,
           seasonId: null,
           teamId: null,
@@ -152,6 +154,7 @@ export function initAuthListener() {
               nickname: d.nickname ?? null,
               role: d.role,
               isLeagueAdmin: d.isLeagueAdmin ?? false,
+              isGlobalAdmin: d.isGlobalAdmin ?? false,
               leagueId: d.leagueId ?? null,
               seasonId: d.seasonId ?? null,
               teamId: d.teamId ?? null,

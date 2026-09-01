@@ -13,6 +13,22 @@ service cloud.firestore {
     function isAdmin() {
       return isSignedIn() && me().isLeagueAdmin == true;
     }
+    // Platform-wide admin: intentionally has access across every league, not
+    // just their own. `.get(key, false)` rather than plain field access —
+    // this field doesn't exist yet on any pre-existing user document (it's
+    // new), and a plain `== true` on a missing key throws, which fails the
+    // WHOLE containing rule closed rather than just this one branch.
+    function isGlobalAdmin() {
+      return isSignedIn() && me().get('isGlobalAdmin', false) == true;
+    }
+    // The one recurring pattern across this whole file: "isAdmin() &&
+    // me().leagueId == <the resource's leagueId>". Factored into one helper
+    // so introducing global admin only means changing it here, not at each
+    // of the ~20 call sites — a global admin satisfies this for ANY
+    // targetLeagueId; a league admin only for their own.
+    function isAdminFor(targetLeagueId) {
+      return isGlobalAdmin() || (isAdmin() && me().leagueId == targetLeagueId);
+    }
 
     function isCaptainOrVC() {
       return isSignedIn() && me().role in ['captain', 'viceCaptain'];
@@ -24,22 +40,34 @@ service cloud.firestore {
       allow read: if isSignedIn();
       // Admin can create a league even before leagueId is set on their user doc
       allow create: if isAdmin();
-      allow update: if isAdmin() && me().leagueId == leagueId;
-      allow delete: if isAdmin() && me().leagueId == leagueId;
+      allow update: if isAdminFor(leagueId);
+      allow delete: if isAdminFor(leagueId);
     }
 
     // ── seasons ───────────────────────────────────────────────────────────
     match /seasons/{seasonId} {
-      allow read: if isSignedIn() && me().leagueId == resource.data.leagueId;
-      allow create: if isAdmin() && me().leagueId == request.resource.data.leagueId;
-      allow update, delete: if isAdmin() && me().leagueId == resource.data.leagueId;
+      allow read: if isSignedIn() && (me().leagueId == resource.data.leagueId || isGlobalAdmin());
+      allow create: if isAdminFor(request.resource.data.leagueId);
+      allow update, delete: if isAdminFor(resource.data.leagueId);
     }
 
     // ── divisions ─────────────────────────────────────────────────────────
     match /divisions/{divisionId} {
-      allow read: if isSignedIn() && (me().leagueId == resource.data.leagueId || isAdmin());
-      allow create: if isAdmin() && me().leagueId == request.resource.data.leagueId;
-      allow update, delete: if isAdmin() && me().leagueId == resource.data.leagueId;
+      // The `|| isAdmin()` branch was unconditional — no league check — the
+      // same bug class fixed on teams/players: it let an admin in ANY league
+      // read, and unscoped-query-enumerate, every division in every league.
+      // Divisions are unambiguously league-specific data (leagueId is a
+      // required field on every division, set at creation, never shared
+      // across leagues) — this was never intentional global data. Dropping
+      // the branch is safe: an admin reading their own league's divisions
+      // already satisfies the first branch below, and no pending-user
+      // browsing flow reads divisions at all (unlike teams), so there's no
+      // second branch to preserve here. isGlobalAdmin() is a separate
+      // addition on top of that fix — a genuine platform-wide admin role
+      // that intentionally does see every league's divisions.
+      allow read: if isSignedIn() && (me().leagueId == resource.data.leagueId || isGlobalAdmin());
+      allow create: if isAdminFor(request.resource.data.leagueId);
+      allow update, delete: if isAdminFor(resource.data.leagueId);
     }
 
     // ── teams ─────────────────────────────────────────────────────────────
@@ -58,8 +86,9 @@ service cloud.firestore {
       allow read: if isSignedIn() && (
         me().leagueId == resource.data.leagueId
         || (me().leagueId == null && me().role == 'pending')
+        || isGlobalAdmin()
       );
-      allow create: if isAdmin() && me().leagueId == request.resource.data.leagueId;
+      allow create: if isAdminFor(request.resource.data.leagueId);
       // A captain/VC may only ever touch this team's venue info (address/
       // venuePhone — anything not named below) and, if they are specifically
       // the CURRENT captain (not just any VC — matches the app's own
@@ -72,7 +101,7 @@ service cloud.firestore {
       // Admin remains unrestricted, matching every real admin flow
       // (admin-inbox.tsx, admin-team.tsx) that legitimately sets these.
       allow update: if
-        (isAdmin() && me().leagueId == resource.data.leagueId)
+        isAdminFor(resource.data.leagueId)
         || (isCaptainOrVC() && me().teamId == teamId
             && request.resource.data.leagueId == resource.data.leagueId
             && request.resource.data.seasonId == resource.data.seasonId
@@ -86,7 +115,7 @@ service cloud.firestore {
                 && get(/databases/$(database)/documents/users/$(request.resource.data.viceCaptainUserId)).data.pendingRequestType == 'captainRole'
               )
             ));
-      allow delete: if isAdmin() && me().leagueId == resource.data.leagueId;
+      allow delete: if isAdminFor(resource.data.leagueId);
     }
 
     // ── joinRequests ──────────────────────────────────────────────────────
@@ -98,13 +127,13 @@ service cloud.firestore {
     match /joinRequests/{requestId} {
       allow read: if
         (isCaptainOrVC() && me().teamId == resource.data.teamId)
-        || (isAdmin() && me().leagueId == resource.data.leagueId)
+        || isAdminFor(resource.data.leagueId)
         || (isSignedIn() && resource.data.userId == request.auth.uid);
       allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
       allow update: if
         (isCaptainOrVC() && me().teamId == resource.data.teamId)
-        || (isAdmin() && me().leagueId == resource.data.leagueId);
-      allow delete: if isAdmin() && me().leagueId == resource.data.leagueId;
+        || isAdminFor(resource.data.leagueId);
+      allow delete: if isAdminFor(resource.data.leagueId);
     }
 
     // ── players ───────────────────────────────────────────────────────────
@@ -124,10 +153,11 @@ service cloud.firestore {
         me().leagueId == resource.data.leagueId
         || me().teamId == resource.data.teamId
         || (me().leagueId == null && me().role == 'pending')
+        || isGlobalAdmin()
       );
 
       allow create: if
-        (isAdmin() && me().leagueId == request.resource.data.leagueId)
+        isAdminFor(request.resource.data.leagueId)
         || (isCaptainOrVC()
             && me().teamId == request.resource.data.teamId);
 
@@ -145,7 +175,7 @@ service cloud.firestore {
       // one; only admin's movePlayerTo (admin-team.tsx) does, and only admin
       // remains unrestricted here to do it.
       allow update: if
-        (isAdmin() && me().leagueId == resource.data.leagueId)
+        isAdminFor(resource.data.leagueId)
         || (isCaptainOrVC() && me().teamId == resource.data.teamId
             && request.resource.data.teamId == resource.data.teamId
             && request.resource.data.leagueId == resource.data.leagueId
@@ -166,7 +196,7 @@ service cloud.firestore {
             ));
 
       allow delete: if
-        (isAdmin() && me().leagueId == resource.data.leagueId)
+        isAdminFor(resource.data.leagueId)
         || (isCaptainOrVC()
             && me().teamId == resource.data.teamId
             && resource.data.claimedByUserId == null);
@@ -188,7 +218,8 @@ service cloud.firestore {
       // trace this was verified against.
       allow read: if isSignedIn() && (
         request.auth.uid == userId
-        || ((isAdmin() || isCaptainOrVC()) && me().leagueId == resource.data.leagueId)
+        || isAdminFor(resource.data.leagueId)
+        || (isCaptainOrVC() && me().leagueId == resource.data.leagueId)
         || (me().teamId != null && me().teamId == resource.data.teamId)
       );
 
@@ -200,11 +231,11 @@ service cloud.firestore {
         && request.resource.data.playerId == null
         && request.resource.data.isLeagueAdmin == false;
 
-      allow update: if
+      allow update: if (
         // User updates own safe fields (display name, etc) — role/league/team/
         // admin-status unchanged. isLeagueAdmin is deliberately never in this
         // list — nobody can self-grant it, only an existing admin (or a
-        // manual Console edit) can, via the isAdmin() branch below.
+        // manual Console edit) can, via the isAdminFor() branch below.
         (request.auth.uid == userId
           && request.resource.data.role == resource.data.role
           && request.resource.data.leagueId == resource.data.leagueId
@@ -212,9 +243,23 @@ service cloud.firestore {
           && request.resource.data.divisionId == resource.data.divisionId
           && request.resource.data.playerId == resource.data.playerId
           && request.resource.data.isLeagueAdmin == resource.data.isLeagueAdmin)
-        // Admin can update any user — covers approving any joinRequest, including
-        // granting the 'captain' role, which only admin may ever grant
-        || isAdmin()
+        // Admin can update any user IN THEIR OWN LEAGUE (or, for a global
+        // admin, any user in any league — see isAdminFor()) — covers approving
+        // any joinRequest, including granting the 'captain' role, which only
+        // admin may ever grant. The league-admin case was unconditional (no
+        // league check) — a League A admin could write ANY field, including
+        // role/teamId/isLeagueAdmin, to ANY user in ANY league. Every real
+        // league-admin write to a user document (admin-inbox.tsx
+        // approveRequest/rejectRequest, admin-team.tsx changeRole/
+        // movePlayerTo/deletePlayer) only ever targets a user already in the
+        // admin's own league: join/claim/captainRole requests are read from a
+        // leagueId-filtered joinRequests query and the requesting user sets
+        // their own leagueId to the target league at request time (see the
+        // pending-user self-update branch below), and admin-team.tsx's targets
+        // are reached via an already-league-scoped team/roster. No legitimate
+        // league-admin flow needs to write to a different league's user — a
+        // GLOBAL admin is the only role that legitimately does.
+        || isAdminFor(resource.data.leagueId)
         // Captain/VC approving a pending user into their OWN team: a plain join or
         // claim request always qualifies; a viceCaptain request only if the approver
         // is that team's actual captain (not just any VC) — captaincy itself is
@@ -236,22 +281,41 @@ service cloud.firestore {
             && resource.data.role == 'pending'
             && request.resource.data.role == resource.data.role
             && request.resource.data.diff(resource.data).affectedKeys()
-                .hasOnly(['pendingRequestType', 'pendingRequestId', 'leagueId', 'phone', 'phoneVisibility']));
+                .hasOnly(['pendingRequestType', 'pendingRequestId', 'leagueId', 'phone', 'phoneVisibility']))
+      )
+      // isGlobalAdmin can NEVER change through any app write path, on ANY of
+      // the branches above — not even a global admin's own "admin can update
+      // any user" branch. None of those branches restrict which OTHER fields
+      // ride along in the same write (only the specific fields named above
+      // are pinned), so without this, any one of them — including a plain
+      // self-edit of a display name — would have let the caller silently
+      // grant themselves or anyone else platform-wide access. Granting
+      // isGlobalAdmin is a manual-Console-only action, same as how the
+      // very first isLeagueAdmin grant works. `.get(key, false)` guards
+      // every pre-existing document that doesn't have this field yet.
+      && request.resource.data.get('isGlobalAdmin', false) == resource.data.get('isGlobalAdmin', false);
     }
 
     // ── matches ───────────────────────────────────────────────────────────
     match /matches/{matchId} {
-      allow read: if isSignedIn() && me().leagueId == resource.data.leagueId;
-      allow create: if isAdmin() && me().leagueId == request.resource.data.leagueId;
-      allow update, delete: if isAdmin() && me().leagueId == resource.data.leagueId;
+      allow read: if isSignedIn() && (me().leagueId == resource.data.leagueId || isGlobalAdmin());
+      allow create: if isAdminFor(request.resource.data.leagueId);
+      allow update, delete: if isAdminFor(resource.data.leagueId);
 
       match /submissions/{submissionId} {
         function matchData() {
           return get(/databases/$(database)/documents/matches/$(matchId)).data;
         }
 
+        // isAdmin() alone (no league check) let an admin in ANY league read
+        // any match's submissions directly, by matchId+teamId, or via a
+        // query scoped to one match's submissions subcollection — the same
+        // bug class as teams/players/divisions. isAdminFor() additionally
+        // lets a genuine global admin through for any league. matchData() is
+        // already fetched for the other branches, so checking its leagueId
+        // costs nothing extra.
         allow read: if isSignedIn() && (
-          isAdmin()
+          isAdminFor(matchData().leagueId)
           || me().teamId == matchData().homeTeamId
           || me().teamId == matchData().awayTeamId
         );
@@ -293,7 +357,7 @@ service cloud.firestore {
           && request.resource.data.games.size() == 7;
 
         // Admin needs this to reset test-league submissions between QA runs
-        allow delete: if isAdmin() && me().leagueId == matchData().leagueId;
+        allow delete: if isAdminFor(matchData().leagueId);
       }
     }
 
@@ -312,9 +376,9 @@ service cloud.firestore {
       // against this collection must itself filter on leagueId too, or the
       // whole query is rejected — see the matching `where('leagueId', …)`
       // added to standings.tsx and admin-standings-override.tsx.
-      allow read: if isSignedIn() && me().leagueId == resource.data.leagueId;
-      allow create: if isAdmin() && me().leagueId == request.resource.data.leagueId;
-      allow update, delete: if isAdmin() && me().leagueId == resource.data.leagueId;
+      allow read: if isSignedIn() && (me().leagueId == resource.data.leagueId || isGlobalAdmin());
+      allow create: if isAdminFor(request.resource.data.leagueId);
+      allow update, delete: if isAdminFor(resource.data.leagueId);
     }
 
     // ── playerSeasonStats ─────────────────────────────────────────────────
@@ -322,9 +386,9 @@ service cloud.firestore {
       // Same fix, same reasoning as divisionTables above — see the matching
       // `where('leagueId', …)` added to stats.tsx and
       // admin-standings-override.tsx.
-      allow read: if isSignedIn() && me().leagueId == resource.data.leagueId;
-      allow create: if isAdmin() && me().leagueId == request.resource.data.leagueId;
-      allow update, delete: if isAdmin() && me().leagueId == resource.data.leagueId;
+      allow read: if isSignedIn() && (me().leagueId == resource.data.leagueId || isGlobalAdmin());
+      allow create: if isAdminFor(request.resource.data.leagueId);
+      allow update, delete: if isAdminFor(resource.data.leagueId);
     }
 
     // ── fineDefinitions ───────────────────────────────────────────────────

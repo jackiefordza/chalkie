@@ -78,16 +78,23 @@ export default function AdminSeasonScreen() {
       }
     });
 
-    const unsubDivisions = onSnapshot(
-      query(collection(db, 'divisions'), where('seasonId', '==', seasonId)),
-      (snap) => {
-        setDivisions(
-          snap.docs
-            .map((d) => ({ id: d.id, ...d.data() } as Division))
-            .sort((a, b) => a.order - b.order),
-        );
-      },
-    );
+    // leagueId filter required: firestore.rules now requires it (the admin
+    // read branch is scoped to the caller's own league — same reasoning as
+    // the teams query fix below), and Firestore rejects a collection query
+    // outright if it can't prove the rule holds for every possible result —
+    // a seasonId-only filter no longer qualifies.
+    const unsubDivisions = appUser?.leagueId
+      ? onSnapshot(
+          query(collection(db, 'divisions'), where('leagueId', '==', appUser.leagueId), where('seasonId', '==', seasonId)),
+          (snap) => {
+            setDivisions(
+              snap.docs
+                .map((d) => ({ id: d.id, ...d.data() } as Division))
+                .sort((a, b) => a.order - b.order),
+            );
+          },
+        )
+      : undefined;
 
     // leagueId filter required: firestore.rules now requires it (the admin
     // read branch is scoped to the caller's own league), and Firestore
@@ -103,7 +110,7 @@ export default function AdminSeasonScreen() {
         )
       : undefined;
 
-    return () => { unsubSeason(); unsubDivisions(); unsubTeams?.(); };
+    return () => { unsubSeason(); unsubDivisions?.(); unsubTeams?.(); };
   }, [seasonId, appUser?.leagueId]);
 
   async function setStatus(status: string) {
