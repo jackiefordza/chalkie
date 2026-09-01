@@ -127,11 +127,10 @@ function NextMatchCard({ match, teamId, opponentName, tableRow, form, isCaptainO
   }
 
   const tone = STATUS_TONE[match.status];
-  // Matches fixtures.tsx exactly: anyone can open a confirmed result; an
-  // unconfirmed one is only worth opening (to submit/edit) if you're
-  // captain/VC — an ordinary player has nothing to do on results-entry for
-  // a match that hasn't been played out yet.
-  const tappable = isCaptainOrVC;
+  // The Match Centre (results-entry.tsx) now shows a proper read-only view
+  // for any status to anyone on either team, not just captain/VC with
+  // something to submit — so the whole card is always tappable.
+  const tappable = true;
 
   const content = (
     <Card className="mb-4">

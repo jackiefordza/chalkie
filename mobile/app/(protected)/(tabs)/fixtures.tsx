@@ -88,9 +88,13 @@ export default function FixturesScreen() {
     const opponentId = match.homeTeamId === teamId ? match.awayTeamId : match.homeTeamId;
     const isHome = match.homeTeamId === teamId;
     const canSubmit = canSubmitResults && match.status !== 'confirmed';
-    // Anyone on either team can open a confirmed result to see the score card;
-    // submitting/editing an unconfirmed one is still captain/VC-only.
-    const tappable = canSubmit || match.status === 'confirmed';
+    // Every fixture opens into the Match Centre — anyone on either team can
+    // view any match regardless of status (results-entry.tsx's own canView
+    // check); it correctly shows a read-only view for non-captains and a
+    // submit/review/reconcile flow only for captain/VC. Previously only
+    // confirmed or captain-actionable rows were tappable at all, so an
+    // ordinary player couldn't open an upcoming or in-progress fixture.
+    const tappable = true;
     const tone = STATUS_TONE[match.status];
 
     const content = (

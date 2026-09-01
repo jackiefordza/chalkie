@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { View, TouchableOpacity, ScrollView, ActivityIndicator, Alert, Platform, useWindowDimensions } from 'react-native';
 import * as Haptics from 'expo-haptics';
-import { Stack, useLocalSearchParams } from 'expo-router';
+import { Stack, useLocalSearchParams, router } from 'expo-router';
 import {
   collection, doc, onSnapshot, query, where, getDoc, setDoc, updateDoc, deleteDoc, serverTimestamp,
 } from 'firebase/firestore';
@@ -13,6 +13,7 @@ import {
   Screen, Heading, Body, Caption, Stat, Button, Card, Chip, Input, Label, Sheet, AppBar,
 } from '@/components/ui';
 import { AdminShell } from '@/components/admin/AdminShell';
+import { MatchHeader, MatchSummary, GameRow, ActionBanner } from '@/components/MatchCentre';
 import type { Match, MatchGame, GameType, MatchSide, HighCheckout } from '@/types';
 
 const DESKTOP_BREAKPOINT = 768;
@@ -139,7 +140,19 @@ export default function ResultsEntryScreen() {
   const isHome = match ? teamId === match.homeTeamId : false;
   const isAway = match ? teamId === match.awayTeamId : false;
   const myTeamId = isHome ? match?.homeTeamId : isAway ? match?.awayTeamId : null;
-  const isAdmin = !!appUser?.isLeagueAdmin;
+  // A global admin can already read any league's matches (firestore.rules'
+  // isAdminFor()), but this screen's own view/correction gate only checked
+  // isLeagueAdmin — a global admin with no team relation and no per-league
+  // admin flag would be told "You can't view this result" despite the read
+  // actually succeeding. Recognizing both matches what the rules already grant.
+  const isAdmin = !!appUser?.isLeagueAdmin || !!appUser?.isGlobalAdmin;
+  const isCaptainOrVC = appUser?.role === 'captain' || appUser?.role === 'viceCaptain';
+  // Whether this viewer can actually submit/edit a result for THIS match —
+  // an ordinary player on the team (or anyone not on either team) can view,
+  // but only that team's captain/VC can act. This was previously unchecked:
+  // any viewer who could see the match could open the full entry form, and
+  // would only discover they lacked permission when the write itself failed.
+  const canAct = isCaptainOrVC && (isHome || isAway);
 
   useEffect(() => {
     if (!matchId || !appUser?.leagueId) return;
@@ -423,7 +436,7 @@ export default function ResultsEntryScreen() {
   // Anyone on either team can view a confirmed match's score card; admins can
   // view (and correct) any match regardless of team.
   const canView = (isHome || isAway || isAdmin) && !!match;
-  const title = adminCorrecting ? 'Edit Result' : match?.status === 'confirmed' ? 'Result' : 'Enter Result';
+  const title = adminCorrecting ? 'Edit Result' : match?.status === 'confirmed' ? 'Result' : canAct ? 'Enter Result' : 'Match Centre';
 
   const body = (
     <>
@@ -442,95 +455,71 @@ export default function ResultsEntryScreen() {
         </View>
       ) : match!.status === 'confirmed' && !adminCorrecting ? (
         <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 8 }}>
-          <Card className="mb-4">
-            <Heading className="mb-1">{homeTeamName} vs {awayTeamName}</Heading>
-            <Body size="sm">
-              {match!.homeLegsWon} - {match!.awayLegsWon} legs · {match!.homeGamesWon} - {match!.awayGamesWon} games
-            </Body>
-          </Card>
+          <MatchHeader match={match!} homeTeamName={homeTeamName} awayTeamName={awayTeamName} />
+          <MatchSummary match={match!} playerName={playerName} />
           {isAdmin && (
             <View className="flex-row gap-2.5 mb-4">
               <Button variant="secondary" size="sm" className="flex-1" onPress={openAdminCorrection}>Edit Result</Button>
               <Button variant="danger" size="sm" className="flex-1" onPress={confirmDeleteMatch}>Delete Fixture</Button>
             </View>
           )}
-          {toDraft(match!.games ?? []).map((game, gameIndex) => (
-            <Card key={gameIndex} tone="sage" className="mb-3.5">
-              <Caption className="mb-2">Game {gameIndex + 1} · {game.type === 'singles' ? 'Singles' : 'Pairs'}</Caption>
-              <Body tone="strong" className="mb-0.5">
-                {game.homePlayerIds.map(playerName).join(' & ') || '—'} vs {game.awayPlayerIds.map(playerName).join(' & ') || '—'}
-              </Body>
-              <Body size="sm">
-                Legs: {game.score ? `${game.score.home}-${game.score.away}` : '—'}
-                {game.oneEighties.length ? ` · 180s: ${game.oneEighties.map(playerName).join(', ')}` : ''}
-                {game.highCheckouts.length ? ` · Checkouts: ${game.highCheckouts.map((hc) => `${playerName(hc.playerId)} ${hc.value}`).join(', ')}` : ''}
-              </Body>
-            </Card>
+          {(match!.games ?? []).map((game, gameIndex) => (
+            <GameRow key={gameIndex} game={game} gameIndex={gameIndex} playerName={playerName} />
           ))}
         </ScrollView>
       ) : !editing ? (
-        <ScrollView contentContainerStyle={{ padding: 20 }}>
-          <Card className="mb-5">
-            <Heading className="mb-1.5">{homeTeamName} vs {awayTeamName}</Heading>
-            <Body size="sm" className="mb-4">7 games · 5 singles, 2 pairs · enter the legs score for each</Body>
-            {mode === 'reconcile' && diffGameIndexes.length > 0 && (
-              <Card tone="coral" padded={false} className="mb-1">
-                <Body tone="coral" size="sm" className="p-3">
-                  {diffGameIndexes.length} game{diffGameIndexes.length > 1 ? 's' : ''} don't match the other team's submission.
-                  Check each one — adopt their version if they're right, or leave it for the admin to resolve.
-                </Body>
-              </Card>
-            )}
-            {mode === 'reconcile' && diffGameIndexes.length === 0 && (
-              <Body size="sm" className="mb-1">Both submissions match — this should confirm automatically any moment.</Body>
-            )}
-            {mode === 'review' && (
-              <Body size="sm" className="mb-1">
-                The other team has submitted a result. Review it below — anything you don't flag is treated as agreed.
-              </Body>
-            )}
-            {mode === 'waiting' && (
-              <Body size="sm" className="mb-1">
-                You have a saved draft/submission for this match. Waiting on the other team to submit theirs.
-              </Body>
-            )}
-          </Card>
-          <Button onPress={() => setEditing(true)}>
-            {mode === 'review' ? 'Review Result' : mode === 'reconcile' ? 'Resolve Differences' : mode === 'waiting' ? 'Edit Result' : 'Enter Result'}
-          </Button>
+        <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 8 }}>
+          <MatchHeader match={match!} homeTeamName={homeTeamName} awayTeamName={awayTeamName} />
+
+          {canAct ? (
+            <ActionBanner
+              eyebrow={
+                mode === 'reconcile' ? 'SUBMISSIONS DON\'T MATCH'
+                  : mode === 'review' ? 'RESULT SUBMITTED BY THE OTHER TEAM'
+                    : mode === 'waiting' ? 'WAITING ON THE OTHER TEAM'
+                      : 'RESULT NOT YET SUBMITTED'
+              }
+              description={
+                mode === 'reconcile'
+                  ? (diffGameIndexes.length > 0
+                    ? `${diffGameIndexes.length} game${diffGameIndexes.length > 1 ? 's' : ''} don't match the other team's submission. Check each one — adopt their version if they're right, or leave it for the admin to resolve.`
+                    : 'Both submissions match — this should confirm automatically any moment.')
+                  : mode === 'review'
+                    ? 'Review it below — anything you don\'t flag is treated as agreed.'
+                    : mode === 'waiting'
+                      ? 'You have a saved submission for this match.'
+                      : '7 games · 5 singles, 2 pairs · enter the legs score for each.'
+              }
+              buttonLabel={mode === 'review' ? 'Review Result' : mode === 'reconcile' ? 'Resolve Differences' : mode === 'waiting' ? 'Edit Result' : 'Enter Result'}
+              onPress={() => setEditing(true)}
+              tone={mode === 'reconcile' ? 'coral' : mode === 'review' ? 'butter' : 'brand'}
+            />
+          ) : isAdmin && match!.status === 'disputed' ? (
+            <ActionBanner
+              eyebrow="DISPUTED — ADMIN REVIEW NEEDED"
+              description="The two submitted results don't match. Resolve it to confirm the final result."
+              buttonLabel="Resolve Dispute"
+              onPress={() => router.push(`/(protected)/admin-dispute?matchId=${matchId}`)}
+              tone="coral"
+            />
+          ) : null}
         </ScrollView>
       ) : mode === 'reconcile' ? (
         <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 8 }}>
           <TouchableOpacity activeOpacity={0.7} onPress={() => setEditing(false)} className="mb-3">
             <Body size="sm">‹ Back to summary</Body>
           </TouchableOpacity>
-          <Body tone="strong" className="mb-4">{homeTeamName} vs {awayTeamName}</Body>
+          <Body tone="strong" weight="semibold" className="mb-4" numberOfLines={1}>{homeTeamName} vs {awayTeamName}</Body>
           {diffGameIndexes.length === 0 ? (
             <Body>Everything matches — this should confirm automatically any moment.</Body>
           ) : (
-            diffGameIndexes.map((gameIndex) => {
-              const mine = toDraft([mySubmission![gameIndex]])[0];
-              const theirs = toDraft([otherSubmission![gameIndex]])[0];
-              return (
-                <Card key={gameIndex} tone="coral" className="mb-3.5">
-                  <Caption className="mb-2.5">Game {gameIndex + 1} · {mine.type === 'singles' ? 'Singles' : 'Pairs'}</Caption>
-                  {[{ label: 'Your version', g: mine }, { label: 'Their version', g: theirs }].map(({ label, g }) => (
-                    <View key={label} className="p-2.5 rounded-lg mb-2 bg-surface-2 dark:bg-surface-2-dark">
-                      <Caption className="mb-1">{label}</Caption>
-                      <Body tone="strong" size="sm" className="mb-0.5">
-                        {g.homePlayerIds.map(playerName).join(' & ') || '—'} vs {g.awayPlayerIds.map(playerName).join(' & ') || '—'}
-                      </Body>
-                      <Body size="sm">
-                        Legs: {g.score ? `${g.score.home}-${g.score.away}` : '—'}
-                        {g.oneEighties.length ? ` · 180s: ${g.oneEighties.map(playerName).join(', ')}` : ''}
-                        {g.highCheckouts.length ? ` · Checkouts: ${g.highCheckouts.map((hc) => `${playerName(hc.playerId)} ${hc.value}`).join(', ')}` : ''}
-                      </Body>
-                    </View>
-                  ))}
-                  <Button variant="good" size="sm" onPress={() => adoptTheirVersion(gameIndex)}>Adopt Their Version</Button>
-                </Card>
-              );
-            })
+            diffGameIndexes.map((gameIndex) => (
+              <View key={gameIndex} className="mb-2">
+                <GameRow game={mySubmission![gameIndex]} gameIndex={gameIndex} playerName={playerName} label={`Game ${gameIndex + 1} · Your version`} tone="coral" />
+                <GameRow game={otherSubmission![gameIndex]} gameIndex={gameIndex} playerName={playerName} label={`Game ${gameIndex + 1} · Their version`} tone="coral" />
+                <Button variant="good" size="sm" className="-mt-1 mb-3.5" onPress={() => adoptTheirVersion(gameIndex)}>Adopt Their Version</Button>
+              </View>
+            ))
           )}
         </ScrollView>
       ) : (
@@ -543,20 +532,15 @@ export default function ResultsEntryScreen() {
 
               if (mode === 'review' && !editedGameIndexes.has(gameIndex)) {
                 return (
-                  <Card key={gameIndex} tone="sage" className="mb-3.5">
-                    <Caption className="mb-2">Game {gameIndex + 1} · {game.type === 'singles' ? 'Singles' : 'Pairs'}</Caption>
-                    <Body tone="strong" className="mb-0.5">
-                      {game.homePlayerIds.map(playerName).join(' & ') || '—'} vs {game.awayPlayerIds.map(playerName).join(' & ') || '—'}
-                    </Body>
-                    <Body size="sm" className="mb-3.5">
-                      Legs: {game.score ? `${game.score.home}-${game.score.away}` : '—'}
-                      {game.oneEighties.length ? ` · 180s: ${game.oneEighties.map(playerName).join(', ')}` : ''}
-                      {game.highCheckouts.length ? ` · Checkouts: ${game.highCheckouts.map((hc) => `${playerName(hc.playerId)} ${hc.value}`).join(', ')}` : ''}
-                    </Body>
-                    <Button variant="danger" size="sm" onPress={() => setEditedGameIndexes((prev) => new Set(prev).add(gameIndex))}>
+                  <View key={gameIndex} className="mb-3.5">
+                    <GameRow game={otherSubmission![gameIndex]} gameIndex={gameIndex} playerName={playerName} tone="sage" />
+                    <Button
+                      variant="danger" size="sm" className="-mt-1.5"
+                      onPress={() => setEditedGameIndexes((prev) => new Set(prev).add(gameIndex))}
+                    >
                       This isn't right — edit this game
                     </Button>
-                  </Card>
+                  </View>
                 );
               }
 
