@@ -31,7 +31,7 @@ const STATUS_TONE: Record<MatchStatus, SemanticTone | null> = {
 function formatDate(date: Date): string {
   return date.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
 }
-function ordinal(n: number): string {
+export function ordinal(n: number): string {
   const s = ['th', 'st', 'nd', 'rd'];
   const v = n % 100;
   return `${n}${s[(v - 20) % 10] ?? s[v] ?? s[0]}`;
@@ -45,10 +45,10 @@ function canViewContact(viewerRole: string | undefined, visibility: string | nul
   return false;
 }
 
-function recentForm(matches: Match[], teamId: string): ('W' | 'L')[] {
+export function recentForm(matches: Match[], teamId: string, count = 3): ('W' | 'L')[] {
   return matches
     .filter((m) => m.status === 'confirmed')
-    .slice(-3)
+    .slice(-count)
     .map((m): 'W' | 'L' => {
       const isHome = m.homeTeamId === teamId;
       const won = isHome ? (m.homeGamesWon ?? 0) > (m.awayGamesWon ?? 0) : (m.awayGamesWon ?? 0) > (m.homeGamesWon ?? 0);
@@ -185,23 +185,27 @@ function NextMatchCard({ match, teamId, opponentName, tableRow, form, isCaptainO
 // ─────────────────────────────────────────────────────────────────────────
 // TEAM SNAPSHOT
 // ─────────────────────────────────────────────────────────────────────────
-function TeamSnapshotCard({ tableRow, form }: { tableRow: DivisionTable; form: ('W' | 'L')[] }) {
+function TeamSnapshotCard({ tableRow, form, teamId }: { tableRow: DivisionTable; form: ('W' | 'L')[]; teamId: string }) {
+  // Tapping this card opens the same Team Profile screen every other team
+  // name links to, scoped to the viewer's own team.
   return (
-    <Card className="mb-4">
-      <Caption className="mb-3">Team Snapshot</Caption>
-      <View className="flex-row gap-2.5">
-        <StatTile label="Position" value={ordinal(tableRow.position)} tone="brand" />
-        <StatTile label="Points" value={tableRow.points} tone="butter" />
-        <StatTile label="W-L" value={`${tableRow.won}-${tableRow.lost}`} tone="sage" />
-        <StatTile label="Leg Diff" value={tableRow.legDiff > 0 ? `+${tableRow.legDiff}` : tableRow.legDiff} tone={tableRow.legDiff >= 0 ? 'sage' : 'coral'} />
-      </View>
-      {form.length > 0 && (
-        <View className="flex-row items-center gap-2 pt-3 mt-3 border-t border-border dark:border-border-dark">
-          <Caption>Recent Form</Caption>
-          <View className="flex-row gap-1.5">{form.map((r, i) => <FormBadge key={i} result={r} />)}</View>
+    <TouchableOpacity activeOpacity={0.7} onPress={() => router.push(`/(protected)/team-profile?teamId=${teamId}`)}>
+      <Card className="mb-4">
+        <Caption className="mb-3">Team Snapshot</Caption>
+        <View className="flex-row gap-2.5">
+          <StatTile label="Position" value={ordinal(tableRow.position)} tone="brand" />
+          <StatTile label="Points" value={tableRow.points} tone="butter" />
+          <StatTile label="W-L" value={`${tableRow.won}-${tableRow.lost}`} tone="sage" />
+          <StatTile label="Leg Diff" value={tableRow.legDiff > 0 ? `+${tableRow.legDiff}` : tableRow.legDiff} tone={tableRow.legDiff >= 0 ? 'sage' : 'coral'} />
         </View>
-      )}
-    </Card>
+        {form.length > 0 && (
+          <View className="flex-row items-center gap-2 pt-3 mt-3 border-t border-border dark:border-border-dark">
+            <Caption>Recent Form</Caption>
+            <View className="flex-row gap-1.5">{form.map((r, i) => <FormBadge key={i} result={r} />)}</View>
+          </View>
+        )}
+      </Card>
+    </TouchableOpacity>
   );
 }
 
@@ -435,7 +439,7 @@ export function HomeDashboard() {
             isCaptainOrVC={isCaptainOrVC}
           />
 
-          {tableRow && <TeamSnapshotCard tableRow={tableRow} form={form} />}
+          {tableRow && <TeamSnapshotCard tableRow={tableRow} form={form} teamId={teamId} />}
 
           <PersonalSnapshotCard stats={myStats} playerId={appUser?.playerId ?? null} />
 

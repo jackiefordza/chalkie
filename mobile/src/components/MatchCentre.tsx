@@ -47,7 +47,11 @@ export function MatchHeader({ match, homeTeamName, awayTeamName }: { match: Matc
         <Caption className="mb-3">Not yet played</Caption>
       )}
 
-      <Heading size="lg" numberOfLines={1} className="mb-3">{homeTeamName} vs {awayTeamName}</Heading>
+      <Heading size="lg" numberOfLines={1} className="mb-3">
+        <Heading size="lg" onPress={() => router.push(`/(protected)/team-profile?teamId=${match.homeTeamId}`)}>{homeTeamName}</Heading>
+        {' vs '}
+        <Heading size="lg" onPress={() => router.push(`/(protected)/team-profile?teamId=${match.awayTeamId}`)}>{awayTeamName}</Heading>
+      </Heading>
 
       {isConfirmed ? (
         <View className="items-center py-2">

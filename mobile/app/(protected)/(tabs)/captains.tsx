@@ -10,7 +10,7 @@ import { db } from '@/config/firebase';
 import { useAuthStore } from '@/stores/authStore';
 import { RAW } from '@/lib/theme';
 import {
-  Screen, Heading, Body, Chip, Button, Card, Badge, Avatar, Input, Label, Sheet, VisibilityPicker, AppIcon,
+  Screen, Heading, Body, Chip, Button, Card, Badge, Avatar, Input, Label, Sheet, VisibilityPicker, AppIcon, ListRow,
 } from '@/components/ui';
 import type { Match, PhoneVisibility, JoinRequest } from '@/types';
 
@@ -358,6 +358,17 @@ export default function CaptainsScreen() {
               {unclaimedCount > 0 ? ` · ${unclaimedCount} unclaimed` : ''}
             </Body>
           </View>
+
+          {teamId && (
+            <ListRow
+              className="mb-4"
+              avatar={<AppIcon name="trophy" size={20} color={isDark ? RAW.brandInkDark : RAW.brandInk} />}
+              title="View Team Profile"
+              subtitle="League position, form, fixtures and squad"
+              trailing={<AppIcon name="chevron-right" size={18} color={isDark ? RAW.textFaintDark : RAW.textFaint} />}
+              onPress={() => router.push(`/(protected)/team-profile?teamId=${teamId}`)}
+            />
+          )}
 
           {/* Home venue */}
           <Card className="mb-4">

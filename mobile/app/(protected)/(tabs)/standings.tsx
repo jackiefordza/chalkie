@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
-import { View, ScrollView, ActivityIndicator } from 'react-native';
+import { View, ScrollView, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { router } from 'expo-router';
 import { useColorScheme } from 'nativewind';
 import { collection, onSnapshot, query, where, orderBy } from 'firebase/firestore';
 import { db } from '@/config/firebase';
@@ -125,8 +126,10 @@ export default function StandingsScreen() {
           {rows.map((row, i) => {
             const isMine = row.teamId === appUser?.teamId;
             return (
-              <View
+              <TouchableOpacity
                 key={row.id}
+                activeOpacity={0.7}
+                onPress={() => router.push(`/(protected)/team-profile?teamId=${row.teamId}`)}
                 className={[
                   'flex-row items-center py-3 px-3',
                   isMine ? 'bg-brand-fill dark:bg-brand-fill-dark' : i % 2 === 0 ? 'bg-surface-2/40 dark:bg-surface-2-dark/40' : '',
@@ -143,7 +146,7 @@ export default function StandingsScreen() {
                   {row.legDiff > 0 ? `+${row.legDiff}` : row.legDiff}
                 </Stat>
                 <Stat size="sm" tone="brand" className="w-9 text-right">{row.points}</Stat>
-              </View>
+              </TouchableOpacity>
             );
           })}
         </View>
