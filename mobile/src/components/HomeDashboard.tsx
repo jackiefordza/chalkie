@@ -9,7 +9,7 @@ import { db } from '@/config/firebase';
 import { useAuthStore } from '@/stores/authStore';
 import { RAW, type SemanticTone } from '@/lib/theme';
 import {
-  Screen, Heading, Body, Caption, Badge, Card, StatTile, ListRow, Button, AppIcon,
+  Screen, Heading, Body, Caption, Badge, Card, StatTile, ListRow, Button, AppIcon, FormBadge,
 } from '@/components/ui';
 import type { Match, MatchStatus, DivisionTable, PlayerSeasonStats } from '@/types';
 
@@ -43,15 +43,6 @@ function canViewContact(viewerRole: string | undefined, visibility: string | nul
   if (visibility === 'public') return true;
   if (visibility === 'captains') return viewerRole === 'captain' || viewerRole === 'viceCaptain';
   return false;
-}
-
-function FormBadge({ result }: { result: 'W' | 'L' }) {
-  const isWin = result === 'W';
-  return (
-    <View className={`w-6 h-6 rounded-full items-center justify-center ${isWin ? 'bg-sage-fill dark:bg-sage-fill-dark' : 'bg-coral-fill dark:bg-coral-fill-dark'}`}>
-      <Body size="sm" weight="bold" tone={isWin ? 'sage' : 'coral'}>{result}</Body>
-    </View>
-  );
 }
 
 function recentForm(matches: Match[], teamId: string): ('W' | 'L')[] {
@@ -217,14 +208,21 @@ function TeamSnapshotCard({ tableRow, form }: { tableRow: DivisionTable; form: (
 // ─────────────────────────────────────────────────────────────────────────
 // PERSONAL SNAPSHOT
 // ─────────────────────────────────────────────────────────────────────────
-function PersonalSnapshotCard({ stats }: { stats: PlayerSeasonStats | null }) {
+function PersonalSnapshotCard({ stats, playerId }: { stats: PlayerSeasonStats | null; playerId: string | null }) {
+  // Tapping this card opens the same Player Profile screen everyone else's
+  // name links to — the viewer's own profile is just that screen given
+  // their own playerId, not a separate implementation.
+  const openProfile = playerId ? () => router.push(`/(protected)/player-profile?playerId=${playerId}`) : undefined;
+
   if (!stats || stats.played === 0) {
-    return (
+    const content = (
       <Card className="mb-4">
         <Caption className="mb-2">Your Stats</Caption>
         <Body size="sm">No stats yet — these fill in once your matches are confirmed.</Body>
       </Card>
     );
+    if (!openProfile) return content;
+    return <TouchableOpacity activeOpacity={0.7} onPress={openProfile}>{content}</TouchableOpacity>;
   }
   const winPct = Math.round((stats.won / stats.played) * 100);
   const highest = stats.highCheckouts
@@ -232,7 +230,7 @@ function PersonalSnapshotCard({ stats }: { stats: PlayerSeasonStats | null }) {
     .filter((v) => !Number.isNaN(v))
     .sort((a, b) => b - a)[0];
 
-  return (
+  const content = (
     <Card className="mb-4">
       <Caption className="mb-3">Your Stats</Caption>
       <View className="flex-row gap-2.5">
@@ -246,6 +244,8 @@ function PersonalSnapshotCard({ stats }: { stats: PlayerSeasonStats | null }) {
       )}
     </Card>
   );
+  if (!openProfile) return content;
+  return <TouchableOpacity activeOpacity={0.7} onPress={openProfile}>{content}</TouchableOpacity>;
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -437,7 +437,7 @@ export function HomeDashboard() {
 
           {tableRow && <TeamSnapshotCard tableRow={tableRow} form={form} />}
 
-          <PersonalSnapshotCard stats={myStats} />
+          <PersonalSnapshotCard stats={myStats} playerId={appUser?.playerId ?? null} />
 
           {recentMatch && recentOpponentId && (
             <RecentResultCard match={recentMatch} teamId={teamId} opponentName={teamNames[recentOpponentId] ?? '…'} />

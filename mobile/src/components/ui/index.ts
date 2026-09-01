@@ -10,6 +10,7 @@ export { ListRow } from './ListRow';
 export { Badge } from './Badge';
 export { StatTile } from './StatTile';
 export { Avatar } from './Avatar';
+export { FormBadge } from './FormBadge';
 export { Input, Label } from './Input';
 export { Sheet } from './Sheet';
 export { TabBar } from './TabBar';

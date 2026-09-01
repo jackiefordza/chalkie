@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { View, TouchableOpacity } from 'react-native';
+import { router } from 'expo-router';
 import { useColorScheme } from 'nativewind';
 import { RAW, type SemanticTone } from '@/lib/theme';
 import {
@@ -152,11 +153,29 @@ export function GameRow({ game, gameIndex, playerName, tone, label }: GameRowPro
 
       <View className="flex-row items-center justify-between">
         <Body tone={homeWon ? 'strong' : 'dim'} weight={homeWon ? 'bold' : 'normal'} className="flex-1" numberOfLines={2}>
-          {game.homePlayerIds.map(playerName).join(' & ') || '—'}
+          {game.homePlayerIds.length === 0 ? '—' : game.homePlayerIds.map((id, i) => (
+            <Body
+              key={id}
+              tone={homeWon ? 'strong' : 'dim'}
+              weight={homeWon ? 'bold' : 'normal'}
+              onPress={() => router.push(`/(protected)/player-profile?playerId=${id}`)}
+            >
+              {playerName(id)}{i < game.homePlayerIds.length - 1 ? ' & ' : ''}
+            </Body>
+          ))}
         </Body>
         <Stat size="sm" className="mx-3">{homeLegs} – {awayLegs}</Stat>
         <Body tone={awayWon ? 'strong' : 'dim'} weight={awayWon ? 'bold' : 'normal'} className="flex-1 text-right" numberOfLines={2}>
-          {game.awayPlayerIds.map(playerName).join(' & ') || '—'}
+          {game.awayPlayerIds.length === 0 ? '—' : game.awayPlayerIds.map((id, i) => (
+            <Body
+              key={id}
+              tone={awayWon ? 'strong' : 'dim'}
+              weight={awayWon ? 'bold' : 'normal'}
+              onPress={() => router.push(`/(protected)/player-profile?playerId=${id}`)}
+            >
+              {playerName(id)}{i < game.awayPlayerIds.length - 1 ? ' & ' : ''}
+            </Body>
+          ))}
         </Body>
       </View>
 

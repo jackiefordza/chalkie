@@ -496,13 +496,19 @@ export default function CaptainsScreen() {
               return (
                 <Card key={player.id} tone={isClaimed ? 'sage' : 'default'} className="mb-2.5">
                   <View className="flex-row items-center">
-                    <Avatar initial={player.name.charAt(0)} tone={isClaimed ? 'sage' : 'brand'} size="sm" className="mr-3" />
-                    <View className="flex-1">
-                      <Body tone="strong" weight="semibold">{player.name}</Body>
-                      {!isClaimed && (
-                        <Body size="xs" className="mt-0.5">Not yet claimed</Body>
-                      )}
-                    </View>
+                    <TouchableOpacity
+                      activeOpacity={0.7}
+                      className="flex-1 flex-row items-center"
+                      onPress={() => router.push(`/(protected)/player-profile?playerId=${player.id}`)}
+                    >
+                      <Avatar initial={player.name.charAt(0)} tone={isClaimed ? 'sage' : 'brand'} size="sm" className="mr-3" />
+                      <View className="flex-1">
+                        <Body tone="strong" weight="semibold">{player.name}</Body>
+                        {!isClaimed && (
+                          <Body size="xs" className="mt-0.5">Not yet claimed</Body>
+                        )}
+                      </View>
+                    </TouchableOpacity>
                     {role && role !== 'player' && (
                       <Badge tone="brand" className="mr-2">{ROLE_BADGE_LABEL[role]}</Badge>
                     )}
