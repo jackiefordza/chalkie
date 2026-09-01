@@ -112,11 +112,18 @@ service cloud.firestore {
       // Also allow read by teamId so captain.tsx query (filtered by teamId) works without needing leagueId in filter.
       // Pending users (no leagueId yet) need to read a team's roster while browsing
       // to find their own name — same allowance teams/{teamId} already has.
+      // The `|| isAdmin()` branch this used to have was the identical bug the
+      // teams/{teamId} read rule had before it was fixed: unconditional, no
+      // league check, so it let an admin in ANY league read — and unscoped-
+      // query-enumerate — every player in every league (name, teamId,
+      // claimedByUserId). It's just as redundant as it was for teams: an
+      // admin reading their own league's players already satisfies the first
+      // branch below, so dropping the branch is both the fix and the smaller
+      // diff. The pending-user and same-team branches are unchanged.
       allow read: if isSignedIn() && (
         me().leagueId == resource.data.leagueId
         || me().teamId == resource.data.teamId
         || (me().leagueId == null && me().role == 'pending')
-        || isAdmin()
       );
 
       allow create: if
