@@ -14,6 +14,42 @@ function check(checks: CheckResult[], label: string, expected: number | string, 
   checks.push({ label, expected: String(expected), actual: String(actual), pass: String(expected) === String(actual) });
 }
 
+// For counts that were only ever meant to be checked approximately (their
+// real value legitimately varies — see each call site) — compares the
+// actual NUMBERS via `isAcceptable`, not a decorative "~" baked into the
+// expected string. `check()` above does plain string equality, so an
+// expected value of `~34` could never equal an actual of `34` even when
+// the count is exactly right: this was a real bug (every approximate
+// check always showed failed, regardless of the real count), not a
+// stylistic choice — see offline-checks.js for the regression test.
+function checkApprox(
+  checks: CheckResult[], label: string, expectedNumeric: number, actualNumeric: number,
+  isAcceptable: (actual: number, expected: number) => boolean,
+): void {
+  checks.push({
+    label,
+    expected: `~${expectedNumeric}`,
+    actual: String(actualNumeric),
+    pass: isAcceptable(actualNumeric, expectedNumeric),
+  });
+}
+
+// For "is there at least one of these anywhere" checks (180s, high
+// checkouts) — same underlying bug as checkApprox: comparing the literal
+// string 'present (>0)' against 'present (42)' can never be equal, so
+// these always showed failed even when the data genuinely had 180s/
+// checkouts in it. These aren't even in the overallPass exemption list
+// below, so this specific instance could fail the ENTIRE verification
+// run's final PASS/FAIL verdict regardless of the real data.
+function checkPresent(checks: CheckResult[], label: string, count: number): void {
+  checks.push({
+    label,
+    expected: 'present (>0)',
+    actual: count > 0 ? `present (${count})` : 'NONE',
+    pass: count > 0,
+  });
+}
+
 async function docExists(db: admin.firestore.Firestore, collectionPath: string, docId: string): Promise<boolean> {
   const snap = await db.collection(collectionPath).doc(docId).get();
   return snap.exists;
@@ -101,7 +137,13 @@ export async function verifyShowcaseDataset(
     const snap = await db.collection('matches').doc(matchId(fx.homeTeamIndex, fx.awayTeamIndex, fx.round)).get();
     if (snap.exists && snap.data()?.status === 'scheduled') scheduledActual += 1;
   }
-  check(checks, 'Scheduled matches', `~${scheduledExpected}`, `${scheduledActual}`);
+  // The fixtures counted here (schedule.all minus the 2 special states minus
+  // everything in toConfirm) are excluded from the tally by construction
+  // regardless of whether their confirmation actually succeeded, so this
+  // should land on exactly scheduledExpected in normal operation — the small
+  // tolerance is only to avoid a spurious ✗ if verification runs while a
+  // match is still mid-transition, not because a wide swing is expected.
+  checkApprox(checks, 'Scheduled matches', scheduledExpected, scheduledActual, (a, e) => Math.abs(a - e) <= 2);
 
   check(checks, 'Awaiting confirmation', 1, specialResult.awaitingConfirmationOk ? 1 : 0);
   check(checks, 'Disputed', 1, specialResult.disputedOk ? 1 : 0);
@@ -112,7 +154,13 @@ export async function verifyShowcaseDataset(
   check(checks, 'Division table rows', `${TEAM_COUNT}/${TEAM_COUNT}`, `${divisionTablesSnap.size}/${TEAM_COUNT}`);
 
   const statsSnap = await db.collection('playerSeasonStats').where('seasonId', '==', SEASON_ID).get();
-  check(checks, 'Player season stats', `~${totalPlayers}`, `${statsSnap.size}`);
+  // Not every one of the 48 players is guaranteed a stats doc — with only
+  // 20 confirmed matches and a 5-of-6 matchday rotation, some players may
+  // legitimately never appear in a confirmed game. Pass as long as at
+  // least one player got a doc and never more than the theoretical max
+  // (more than totalPlayers would itself indicate a real bug, e.g. a
+  // duplicate or a leak from outside the showcase season).
+  checkApprox(checks, 'Player season stats', totalPlayers, statsSnap.size, (a, e) => a > 0 && a <= e);
 
   let total180s = 0;
   let totalCheckouts = 0;
@@ -121,14 +169,20 @@ export async function verifyShowcaseDataset(
     total180s += typeof data.oneEighties === 'number' ? data.oneEighties : 0;
     totalCheckouts += Array.isArray(data.highCheckouts) ? data.highCheckouts.length : 0;
   });
-  check(checks, '180s', 'present (>0)', total180s > 0 ? `present (${total180s})` : 'NONE');
-  check(checks, 'High checkouts', 'present (>0)', totalCheckouts > 0 ? `present (${totalCheckouts})` : 'NONE');
+  checkPresent(checks, '180s', total180s);
+  checkPresent(checks, 'High checkouts', totalCheckouts);
 
   // The core production-safety proof — see firebaseAdmin.ts's comment on
   // why this can only ever confirm what assertAllowed already enforced live.
   const realLeagueUntouched = auditLogIsEntirelyShowcaseScoped();
   check(checks, 'REAL LEAGUE TOUCHED', 'NO', realLeagueUntouched ? 'NO' : 'YES — SEE AUDIT LOG');
 
+  // Player season stats and Scheduled matches now have honest pass/fail of
+  // their own (via checkApprox above), so this exemption is a deliberate
+  // second layer, not a workaround for the string-comparison bug: even a
+  // legitimate edge case on either of these two should never block the
+  // overall verdict. Every other check, 180s/High checkouts included, is
+  // a hard requirement.
   const overallPass = checks.every((c) => c.pass || c.label === 'Player season stats' || c.label === 'Scheduled matches');
   return { checks, overallPass };
 }
