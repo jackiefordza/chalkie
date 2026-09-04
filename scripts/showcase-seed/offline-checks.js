@@ -26,7 +26,11 @@ const {
   buildSchedule, writeAllFixturesAsScheduled,
 } = require('./dist/src/seedCore');
 const { resetShowcaseDataset } = require('./dist/src/resetCore');
-const { LEAGUE_ID, teamId, matchId } = require('./dist/src/constants');
+const { verifyShowcaseDataset } = require('./dist/src/verify');
+const {
+  LEAGUE_ID, SEASON_ID, DIVISION_ID, TEAM_COUNT, PLAYERS_PER_TEAM,
+  teamId, playerId, matchId,
+} = require('./dist/src/constants');
 
 // ── Minimal in-memory Firestore fake ────────────────────────────────────
 function makeFakeDb() {
@@ -238,6 +242,86 @@ async function main() {
     await seedAdminPersonas(db, auth, noopLog);
     const second = (await db.collection('leagues').doc(LEAGUE_ID).get()).data().adminUserId;
     assert.equal(first, second);
+  });
+
+  // ── 5. Verification report reflects reality, not string formatting ──
+  // Regression test for a live-run bug: verifyShowcaseDataset's
+  // approximate/presence checks (Scheduled matches, Player season stats,
+  // 180s, High checkouts) compared a display string like '~34' against a
+  // plain '34' with strict string equality, so they showed FAILED even
+  // when the underlying counts were exactly what was expected. 180s and
+  // High checkouts weren't even in the overallPass exemption list, so this
+  // could fail the whole run's final verdict on a genuinely successful
+  // seed — which is exactly what happened on the real chalkie-app run.
+  console.log('\n5. Verification report (approximate/presence checks reflect real counts)');
+  await check("the old '~N' vs 'N' comparison really was always false (documents the root cause)", () => {
+    assert.equal(String('~34') === String('34'), false, "this being 'true' would have meant the bug never existed");
+  });
+  await check('a genuinely successful seed run reports PASS, not a false failure', async () => {
+    const db = makeFakeDb();
+    const auth = makeFakeAuth();
+
+    await seedCoreStructure(db, noopLog);
+    await seedTeams(db, noopLog);
+    await seedPlayers(db, noopLog);
+    await seedTeamAccounts(db, auth, noopLog);
+    await seedAdminPersonas(db, auth, noopLog);
+
+    const schedule = buildSchedule();
+    await writeAllFixturesAsScheduled(db, schedule, noopLog);
+
+    // Simulate a fully successful live run's end state: every toConfirm
+    // match actually landed as 'confirmed', and the two special matches
+    // reached their intended states — exactly what onSubmissionWrite/
+    // onMatchConfirmed are supposed to produce, without re-simulating the
+    // Cloud Functions themselves (out of scope for an offline check).
+    for (const fx of schedule.toConfirm) {
+      const id = matchId(fx.homeTeamIndex, fx.awayTeamIndex, fx.round);
+      const existing = (await db.collection('matches').doc(id).get()).data();
+      db._raw.set(`matches/${id}`, { ...existing, status: 'confirmed', homeGamesWon: 4, awayGamesWon: 3 });
+    }
+    const acId = matchId(schedule.awaitingConfirmation.homeTeamIndex, schedule.awaitingConfirmation.awayTeamIndex, schedule.awaitingConfirmation.round);
+    const acExisting = (await db.collection('matches').doc(acId).get()).data();
+    db._raw.set(`matches/${acId}`, { ...acExisting, status: 'awaiting_confirmation' });
+    const dId = matchId(schedule.disputed.homeTeamIndex, schedule.disputed.awayTeamIndex, schedule.disputed.round);
+    const dExisting = (await db.collection('matches').doc(dId).get()).data();
+    db._raw.set(`matches/${dId}`, { ...dExisting, status: 'disputed' });
+
+    // Derived stats the real Cloud Functions would have produced — 8
+    // division-table rows, and player-season-stats for fewer than all 48
+    // players (realistic: not every player is guaranteed a matchday slot
+    // across only 20 confirmed matches), with real 180s/checkouts present.
+    for (let t = 0; t < TEAM_COUNT; t++) {
+      db._raw.set(`divisionTables/${SEASON_ID}_${DIVISION_ID}_${teamId(t)}`, {
+        leagueId: LEAGUE_ID, seasonId: SEASON_ID, divisionId: DIVISION_ID, teamId: teamId(t),
+        played: 5, won: 3, lost: 2, points: 6, legsFor: 20, legsAgainst: 15, legDiff: 5, position: t + 1,
+      });
+    }
+    let playersWithStats = 0;
+    for (let t = 0; t < TEAM_COUNT; t++) {
+      for (let p = 0; p < PLAYERS_PER_TEAM - 1; p++) { // deliberately fewer than all 48
+        const pid = playerId(t, p);
+        db._raw.set(`playerSeasonStats/${SEASON_ID}_${pid}`, {
+          leagueId: LEAGUE_ID, seasonId: SEASON_ID, divisionId: DIVISION_ID, teamId: teamId(t), playerId: pid,
+          played: 4, won: 2, lost: 2, oneEighties: playersWithStats === 0 ? 3 : 0,
+          highCheckouts: playersWithStats === 1 ? [{ value: '170', matchId: 'x', date: new Date() }] : [],
+        });
+        playersWithStats += 1;
+      }
+    }
+
+    const report = await verifyShowcaseDataset(
+      db, auth, schedule, schedule.toConfirm.length,
+      { awaitingConfirmationOk: true, disputedOk: true },
+    );
+
+    const byLabel = Object.fromEntries(report.checks.map((c) => [c.label, c]));
+    assert.equal(byLabel['Scheduled matches'].pass, true,
+      `Scheduled matches should pass when the count is exactly right (was ${byLabel['Scheduled matches'].actual}, expected ${byLabel['Scheduled matches'].expected})`);
+    assert.equal(byLabel['Player season stats'].pass, true, 'Player season stats should pass with some (not all) players covered');
+    assert.equal(byLabel['180s'].pass, true, '180s should pass — total180s > 0 in this scenario');
+    assert.equal(byLabel['High checkouts'].pass, true, 'High checkouts should pass — totalCheckouts > 0 in this scenario');
+    assert.equal(report.overallPass, true, 'a fully successful seed run must report overall PASS, not a false failure');
   });
 
   console.log(`\n${failures === 0 ? 'ALL OFFLINE CHECKS PASSED' : `${failures} OFFLINE CHECK(S) FAILED`}`);
