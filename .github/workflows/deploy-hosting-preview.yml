@@ -1,0 +1,72 @@
+name: Deploy Hosting Preview (manual)
+
+# Manual-only, on purpose: no push/pull_request/schedule trigger exists here,
+# so this can never fire on its own. Dispatch it from whichever branch you
+# want built and previewed — workflow_dispatch runs against the branch/ref
+# you pick in the "Run workflow" UI, so this does not require merging to
+# main. Scope is deliberately narrow: this only ever runs
+# `firebase hosting:channel:deploy`, never `firebase deploy` — it cannot
+# touch Functions, Firestore rules/indexes, or any Firebase data, and it
+# never modifies deploy-firebase.yml or anything else in the repo.
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install mobile dependencies
+        working-directory: mobile
+        run: npm ci
+
+      - name: Build Expo web export
+        working-directory: mobile
+        run: npx expo export -p web
+
+      # Same write-to-temp-file pattern deploy-firebase.yml already uses for
+      # this same secret, just scoped to $RUNNER_TEMP instead of a fixed
+      # /tmp path. Never printed, never passed as a command argument.
+      - name: Write Firebase service-account credential
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > "$RUNNER_TEMP/service-account.json"
+
+      # hosting:channel:deploy only — never `firebase deploy`, and no
+      # --only flag that could ever include functions/firestore. --project
+      # is hard-coded to chalkie-app, not read from any input or secret.
+      - name: Deploy Hosting preview channel
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/service-account.json
+        run: |
+          npx firebase-tools hosting:channel:deploy table-diagnostic \
+            --project chalkie-app \
+            --expires 7d \
+            --json > "$RUNNER_TEMP/deploy-result.json"
+          cat "$RUNNER_TEMP/deploy-result.json"
+
+      - name: Print preview URL and deployed commit
+        run: |
+          echo "Deployed commit SHA: ${{ github.sha }}"
+          node -e "
+            const fs = require('fs');
+            const out = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + '/deploy-result.json', 'utf8'));
+            const entries = Object.values(out.result || {});
+            const entry = entries[0] || {};
+            console.log('Preview URL:', entry.url || '(not found — see raw JSON in the previous step)');
+            console.log('Expires:', entry.expireTime || '(not found — see raw JSON in the previous step)');
+          " | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove credential file
+        if: always()
+        run: rm -f "$RUNNER_TEMP/service-account.json"
