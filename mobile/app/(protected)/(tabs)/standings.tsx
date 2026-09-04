@@ -24,10 +24,28 @@ function resolveSeasonId(seasons: Season[], viewerSeasonId: string | null | unde
   return active?.id ?? seasons[0]?.id ?? null;
 }
 
+// ── TEMPORARY DIAGNOSTIC — remove once the failing read is identified ──────
+// Records the outcome (success or the exact Firestore error code) of each of
+// this screen's 5 reads independently, so a single permission failure can be
+// pinned to one specific read instead of just showing "something failed" via
+// the one shared loadError banner below. Safe to delete entirely once we
+// know which read is denied — see CHALKIE BUG: TABLE TAB PERMISSION ERROR.
+type DiagStatus = { state: 'pending' | 'ok' | 'error'; detail: string };
+const DIAG_LABELS = ['leagues (get)', 'teams (query)', 'seasons (query)', 'divisions (query)', 'divisionTables (query)'] as const;
+type DiagLabel = (typeof DIAG_LABELS)[number];
+
 export default function StandingsScreen() {
   const { appUser } = useAuthStore();
   const { colorScheme } = useColorScheme();
   const isDark = colorScheme === 'dark';
+
+  const [diagnostics, setDiagnostics] = useState<Record<DiagLabel, DiagStatus>>(
+    () => Object.fromEntries(DIAG_LABELS.map((l) => [l, { state: 'pending', detail: 'not yet run' }])) as Record<DiagLabel, DiagStatus>,
+  );
+  const recordDiag = (label: DiagLabel, state: DiagStatus['state'], detail: string) => {
+    console.log(`[TABLE-DIAGNOSTIC] ${label}: ${state.toUpperCase()} — ${detail}`);
+    setDiagnostics((prev) => ({ ...prev, [label]: { state, detail } }));
+  };
 
   const [leagueName, setLeagueName] = useState<string | null>(null);
   const [seasons, setSeasons] = useState<Season[]>([]);
@@ -44,7 +62,12 @@ export default function StandingsScreen() {
   // Profile (this data essentially never changes).
   useEffect(() => {
     if (!appUser?.leagueId) return;
-    getDoc(doc(db, 'leagues', appUser.leagueId)).then((s) => setLeagueName(s.exists() ? s.data().name : null));
+    getDoc(doc(db, 'leagues', appUser.leagueId))
+      .then((s) => {
+        setLeagueName(s.exists() ? s.data().name : null);
+        recordDiag('leagues (get)', 'ok', s.exists() ? 'doc exists' : 'doc missing');
+      })
+      .catch((e) => recordDiag('leagues (get)', 'error', `${e.code ?? 'no-code'} — ${e.message}`));
   }, [appUser?.leagueId]);
 
   // League-wide team names (+ divisionId, for the "teams in this division"
@@ -58,7 +81,9 @@ export default function StandingsScreen() {
       (snap) => {
         setTeams(snap.docs.map((d) => ({ id: d.id, name: d.data().name, divisionId: d.data().divisionId } as TeamInfo)));
         setTeamsLoaded(true);
+        recordDiag('teams (query)', 'ok', `${snap.docs.length} doc(s)`);
       },
+      (e) => recordDiag('teams (query)', 'error', `${e.code ?? 'no-code'} — ${e.message}`),
     );
   }, [appUser?.leagueId]);
 
@@ -77,8 +102,9 @@ export default function StandingsScreen() {
           .sort((a, b) => (b as any).createdAt?.seconds - (a as any).createdAt?.seconds);
         setSeasons(list);
         setSelectedSeasonId((prev) => (prev && list.some((s) => s.id === prev) ? prev : resolveSeasonId(list, appUser.seasonId)));
+        recordDiag('seasons (query)', 'ok', `${list.length} doc(s)`);
       },
-      (e) => setLoadError(e.message),
+      (e) => { setLoadError(e.message); recordDiag('seasons (query)', 'error', `${e.code ?? 'no-code'} — ${e.message}`); },
     );
   }, [appUser?.leagueId, appUser?.seasonId]);
 
@@ -97,8 +123,9 @@ export default function StandingsScreen() {
             appUser.divisionId && list.some((d) => d.id === appUser.divisionId) ? appUser.divisionId : list[0]?.id ?? null
           )
         ));
+        recordDiag('divisions (query)', 'ok', `${list.length} doc(s)`);
       },
-      (e) => setLoadError(e.message),
+      (e) => { setLoadError(e.message); recordDiag('divisions (query)', 'error', `${e.code ?? 'no-code'} — ${e.message}`); },
     );
   }, [appUser?.leagueId, appUser?.divisionId, selectedSeasonId]);
 
@@ -128,8 +155,13 @@ export default function StandingsScreen() {
       (snap) => {
         setRows(snap.docs.map((d) => ({ id: d.id, ...d.data() } as DivisionTable)));
         setIsLoading(false);
+        recordDiag('divisionTables (query)', 'ok', `${snap.docs.length} doc(s)`);
       },
-      (e) => { setLoadError(e.message); setIsLoading(false); },
+      (e) => {
+        setLoadError(e.message);
+        setIsLoading(false);
+        recordDiag('divisionTables (query)', 'error', `${e.code ?? 'no-code'} — ${e.message}`);
+      },
     );
     return () => unsub();
   }, [appUser?.leagueId, selectedDivision?.seasonId, selectedDivision?.id]);
@@ -150,6 +182,24 @@ export default function StandingsScreen() {
 
   return (
     <Screen>
+      {/* TEMPORARY DIAGNOSTIC PANEL — remove once the failing read is
+          identified, see CHALKIE BUG: TABLE TAB PERMISSION ERROR. Always
+          visible (not gated on __DEV__) since this needs to show up in
+          exactly the build being tested against the live showcase data. */}
+      <Card tone="butter" className="mb-4">
+        <Caption className="mb-2">TEMPORARY DIAGNOSTIC — read status per query</Caption>
+        {DIAG_LABELS.map((label) => {
+          const d = diagnostics[label];
+          const tone = d.state === 'error' ? 'coral' : d.state === 'ok' ? 'strong' : 'dim';
+          const marker = d.state === 'error' ? '✗' : d.state === 'ok' ? '✓' : '…';
+          return (
+            <Body key={label} size="sm" tone={tone} className="mb-0.5">
+              {marker} {label}: {d.state.toUpperCase()} — {d.detail}
+            </Body>
+          );
+        })}
+      </Card>
+
       <View className="mb-4">
         <Heading size="lg">{leagueName ?? '…'}</Heading>
         {contextLine ? <Body size="sm" className="mt-1">{contextLine}</Body> : null}
