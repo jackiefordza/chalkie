@@ -1,0 +1,67 @@
+name: Showcase Seed (manual)
+
+# Manual-only. No push/pull_request/schedule trigger exists on this
+# workflow, so it can never fire on its own — only an explicit dispatch
+# (button click, gh CLI, or API call by someone with write access) starts
+# it, and even then the job below refuses to run unless the confirm input
+# matches exactly.
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type SEED-SHOWCASE-LEAGUE to seed the showcase dataset against the real chalkie-app Firebase project.'
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  seed:
+    # The whole job — including access to the environment's secret below —
+    # is skipped, not merely failed, unless this matches exactly.
+    if: inputs.confirm == 'SEED-SHOWCASE-LEAGUE'
+    runs-on: ubuntu-latest
+    # Environment protection rules (required reviewers, branch restriction)
+    # are configured manually in repo Settings — see the implementation
+    # report. Until that's done, this environment reference alone does not
+    # gate anything by itself.
+    environment: showcase-seed-production
+    defaults:
+      run:
+        working-directory: scripts/showcase-seed
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      # Writes the credential to disk without ever echoing it. The secret
+      # is only referenced on the right-hand side of this one env mapping —
+      # it is never passed as a command argument, never interpolated into a
+      # run: script body, and no step in this workflow prints an
+      # environment variable or file content.
+      - name: Write Firebase service-account credential
+        env:
+          SHOWCASE_SEED_SERVICE_ACCOUNT: ${{ secrets.SHOWCASE_SEED_SERVICE_ACCOUNT }}
+        run: printf '%s' "$SHOWCASE_SEED_SERVICE_ACCOUNT" > "$RUNNER_TEMP/sa.json"
+
+      # Exactly one command, exactly these flags — no --reset, nothing
+      # else. Every safety check (project ID, league ID, argument
+      # allowlist) lives in the unmodified script itself.
+      - name: Run showcase seed
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/sa.json
+        run: node dist/seed.js --confirm-showcase
+
+      - name: Remove credential file
+        if: always()
+        run: rm -f "$RUNNER_TEMP/sa.json"
