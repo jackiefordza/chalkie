@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useContext } from 'react';
 import { View, ScrollView, ActivityIndicator } from 'react-native';
 import { BottomTabBarHeightContext } from '@react-navigation/bottom-tabs';
 import { useColorScheme } from 'nativewind';
+import { router } from 'expo-router';
 import { collection, doc, onSnapshot, query, where, type DocumentData } from 'firebase/firestore';
 import { db } from '@/config/firebase';
 import { useAuthStore } from '@/stores/authStore';
@@ -52,6 +53,7 @@ export default function StatsScreen() {
       ? onSnapshot(
           query(
             collection(db, 'playerSeasonStats'),
+            where('leagueId', '==', appUser.leagueId),
             where('seasonId', '==', appUser.seasonId),
             where('divisionId', '==', appUser.divisionId),
           ),
@@ -159,7 +161,7 @@ export default function StatsScreen() {
               mostOneEighties.map((s, i) => (
                 <View key={s.id} className="flex-row py-2 items-center">
                   <Body size="sm" className="w-6">{i + 1}</Body>
-                  <Body tone="strong" className="flex-1">{playerName(s.playerId)}</Body>
+                  <Body tone="strong" className="flex-1" onPress={() => router.push(`/(protected)/player-profile?playerId=${s.playerId}`)}>{playerName(s.playerId)}</Body>
                   <Body tone="strong" weight="bold">{s.oneEighties}</Body>
                 </View>
               ))
@@ -175,7 +177,7 @@ export default function StatsScreen() {
               bestWinRate.map((s, i) => (
                 <View key={s.id} className="flex-row py-2 items-center">
                   <Body size="sm" className="w-6">{i + 1}</Body>
-                  <Body tone="strong" className="flex-1">{playerName(s.playerId)}</Body>
+                  <Body tone="strong" className="flex-1" onPress={() => router.push(`/(protected)/player-profile?playerId=${s.playerId}`)}>{playerName(s.playerId)}</Body>
                   <Body tone="strong" weight="bold">{Math.round((s.won / s.played) * 100)}% ({s.played})</Body>
                 </View>
               ))
@@ -191,7 +193,7 @@ export default function StatsScreen() {
               notableCheckouts.map((c, i) => (
                 <View key={i} className="flex-row py-2 items-center">
                   <Body tone="butter" weight="bold" className="w-14">{c.value}</Body>
-                  <Body tone="strong" className="flex-1">{playerName(c.playerId)}</Body>
+                  <Body tone="strong" className="flex-1" onPress={() => router.push(`/(protected)/player-profile?playerId=${c.playerId}`)}>{playerName(c.playerId)}</Body>
                   <Body size="sm">{formatDate(c.date)}</Body>
                 </View>
               ))

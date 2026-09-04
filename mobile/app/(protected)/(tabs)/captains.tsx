@@ -10,9 +10,9 @@ import { db } from '@/config/firebase';
 import { useAuthStore } from '@/stores/authStore';
 import { RAW } from '@/lib/theme';
 import {
-  Screen, Heading, Body, Chip, Button, Card, Badge, Avatar, Input, Label, Sheet, VisibilityPicker, AppIcon,
+  Screen, Heading, Body, Chip, Button, Card, Badge, Avatar, Input, Label, Sheet, VisibilityPicker, AppIcon, ListRow,
 } from '@/components/ui';
-import type { Match, PhoneVisibility, JoinRequest } from '@/types';
+import type { Match, MatchStatus, PhoneVisibility, JoinRequest } from '@/types';
 
 interface Player {
   id: string; name: string;
@@ -20,7 +20,7 @@ interface Player {
   teamId: string;
 }
 interface ActionableMatch {
-  id: string; opponentName: string; isHome: boolean; scheduledDate: Date;
+  id: string; opponentName: string; isHome: boolean; scheduledDate: Date; status: MatchStatus;
 }
 
 type TeamRole = 'captain' | 'viceCaptain' | 'player';
@@ -136,8 +136,13 @@ export default function CaptainsScreen() {
           scheduledDate: d.data().scheduledDate?.toDate() ?? new Date(),
         } as Match));
 
+        // A disputed match always needs a captain's attention (either side can
+        // reconcile it — see results-entry.tsx's "Resolve Differences" flow) —
+        // previously excluded here entirely, so a disputed match would
+        // silently vanish from "Needs Your Action" the moment it flipped
+        // status, right when it most needed surfacing.
         const candidates = all.filter((m) => (
-          (m.status === 'scheduled' && m.scheduledDate <= now) || m.status === 'awaiting_confirmation'
+          (m.status === 'scheduled' && m.scheduledDate <= now) || m.status === 'awaiting_confirmation' || m.status === 'disputed'
         ));
 
         const teamNamesSnap = await getDocs(query(collection(db, 'teams'), where('leagueId', '==', appUser.leagueId)));
@@ -155,6 +160,7 @@ export default function CaptainsScreen() {
             opponentName: teamNames[opponentId] ?? '…',
             isHome: m.homeTeamId === teamId,
             scheduledDate: m.scheduledDate,
+            status: m.status,
           } as ActionableMatch;
         }));
 
@@ -359,6 +365,17 @@ export default function CaptainsScreen() {
             </Body>
           </View>
 
+          {teamId && (
+            <ListRow
+              className="mb-4"
+              avatar={<AppIcon name="trophy" size={20} color={isDark ? RAW.brandInkDark : RAW.brandInk} />}
+              title="View Team Profile"
+              subtitle="League position, form, fixtures and squad"
+              trailing={<AppIcon name="chevron-right" size={18} color={isDark ? RAW.textFaintDark : RAW.textFaint} />}
+              onPress={() => router.push(`/(protected)/team-profile?teamId=${teamId}`)}
+            />
+          )}
+
           {/* Home venue */}
           <Card className="mb-4">
             <View className="flex-row items-center mb-2.5">
@@ -496,13 +513,19 @@ export default function CaptainsScreen() {
               return (
                 <Card key={player.id} tone={isClaimed ? 'sage' : 'default'} className="mb-2.5">
                   <View className="flex-row items-center">
-                    <Avatar initial={player.name.charAt(0)} tone={isClaimed ? 'sage' : 'brand'} size="sm" className="mr-3" />
-                    <View className="flex-1">
-                      <Body tone="strong" weight="semibold">{player.name}</Body>
-                      {!isClaimed && (
-                        <Body size="xs" className="mt-0.5">Not yet claimed</Body>
-                      )}
-                    </View>
+                    <TouchableOpacity
+                      activeOpacity={0.7}
+                      className="flex-1 flex-row items-center"
+                      onPress={() => router.push(`/(protected)/player-profile?playerId=${player.id}`)}
+                    >
+                      <Avatar initial={player.name.charAt(0)} tone={isClaimed ? 'sage' : 'brand'} size="sm" className="mr-3" />
+                      <View className="flex-1">
+                        <Body tone="strong" weight="semibold">{player.name}</Body>
+                        {!isClaimed && (
+                          <Body size="xs" className="mt-0.5">Not yet claimed</Body>
+                        )}
+                      </View>
+                    </TouchableOpacity>
                     {role && role !== 'player' && (
                       <Badge tone="brand" className="mr-2">{ROLE_BADGE_LABEL[role]}</Badge>
                     )}
@@ -574,15 +597,17 @@ export default function CaptainsScreen() {
           ) : (
             <View className="mb-5">
               {actionableMatches.map((m) => (
-                <Card key={m.id} tone="butter" className="mb-2.5">
+                <Card key={m.id} tone={m.status === 'disputed' ? 'coral' : 'butter'} className="mb-2.5">
                   <View className="flex-row items-center justify-between mb-3">
                     <Body tone="strong" weight="semibold">
                       {m.isHome ? 'vs' : '@'} {m.opponentName}
                     </Body>
-                    <Badge tone="butter">Result needed</Badge>
+                    <Badge tone={m.status === 'disputed' ? 'coral' : 'butter'}>
+                      {m.status === 'disputed' ? 'Disputed' : 'Result needed'}
+                    </Badge>
                   </View>
                   <Button size="sm" onPress={() => router.push(`/(protected)/results-entry?matchId=${m.id}`)}>
-                    Enter Result
+                    {m.status === 'disputed' ? 'Resolve Differences' : 'Enter Result'}
                   </Button>
                 </Card>
               ))}

@@ -52,7 +52,116 @@ function gamesEqual(a: MatchGame[], b: MatchGame[]): boolean {
   return JSON.stringify(normalizeGames(a)) === JSON.stringify(normalizeGames(b));
 }
 
+// ── Server-side result validation ───────────────────────────────────────────
+// Authoritative validator for submitted match data. firestore.rules can only
+// cheaply check that `games` is a 7-element array (see the comment there);
+// full per-game/per-leg structure and — especially — cross-referencing every
+// player ID against the `players` collection to confirm they're really on
+// the right team needs real backend logic, not rules-language tricks. This
+// is the single source of truth for "is this games array legitimate",
+// reused by onSubmissionWrite (to quarantine bad submissions before they can
+// ever be compared/confirmed) and defensively by onMatchConfirmed /
+// onMatchDeleted (so no path — including a future one — can hand
+// applyMatchResultDelta data that was never actually checked).
+const GAMES_PER_MATCH = 7;
+const SINGLES_GAMES = 5; // games 1-5 singles, 6-7 pairs — see Match type comment
+const LEGS_PER_GAME = 3;
+
+function isValidLeg(leg: unknown, eligiblePlayerIds: Set<string>): leg is MatchLeg {
+  if (!leg || typeof leg !== 'object') return false;
+  const l = leg as Record<string, unknown>;
+  // An unrecognized winner must be rejected outright here — never allowed to
+  // reach computeTotals, where falling through to "not home" would silently
+  // become a phantom away-leg win.
+  if (l.winner !== 'home' && l.winner !== 'away') return false;
+  if (!Array.isArray(l.oneEighties) || !l.oneEighties.every((id) => typeof id === 'string' && eligiblePlayerIds.has(id))) {
+    return false;
+  }
+  if (l.highCheckout !== null) {
+    if (!l.highCheckout || typeof l.highCheckout !== 'object') return false;
+    const hc = l.highCheckout as Record<string, unknown>;
+    if (typeof hc.playerId !== 'string' || !eligiblePlayerIds.has(hc.playerId)) return false;
+    if (typeof hc.value !== 'string') return false; // free text by design — no numeric validation
+  }
+  return true;
+}
+
+function isValidGame(game: unknown): game is MatchGame {
+  if (!game || typeof game !== 'object') return false;
+  const g = game as Record<string, unknown>;
+  if (typeof g.order !== 'number' || !Number.isInteger(g.order) || g.order < 1 || g.order > GAMES_PER_MATCH) return false;
+  const expectedType: GameType = g.order > SINGLES_GAMES ? 'pairs' : 'singles';
+  const expectedPlayerCount = expectedType === 'pairs' ? 2 : 1;
+  if (g.type !== expectedType) return false;
+  if (!Array.isArray(g.homePlayerIds) || g.homePlayerIds.length !== expectedPlayerCount) return false;
+  if (!Array.isArray(g.awayPlayerIds) || g.awayPlayerIds.length !== expectedPlayerCount) return false;
+  if (!g.homePlayerIds.every((id) => typeof id === 'string') || !g.awayPlayerIds.every((id) => typeof id === 'string')) {
+    return false;
+  }
+  const homeIds = g.homePlayerIds as string[];
+  const awayIds = g.awayPlayerIds as string[];
+  if (homeIds.some((id) => awayIds.includes(id))) return false; // can't play both sides
+  if (!Array.isArray(g.legs) || g.legs.length !== LEGS_PER_GAME) return false;
+  const eligible = new Set<string>([...homeIds, ...awayIds]);
+  return g.legs.every((leg) => isValidLeg(leg, eligible));
+}
+
+// Structural validation only: exactly 7 well-formed games with unique order
+// values covering 1..7, and every 180/checkout attributed to a player who is
+// actually listed on that specific game. Does NOT confirm the player IDs are
+// real roster members of the right team — see allPlayersLegitimate.
+function isValidGamesShape(games: unknown): games is MatchGame[] {
+  if (!Array.isArray(games) || games.length !== GAMES_PER_MATCH) return false;
+  const seenOrders = new Set<number>();
+  for (const g of games) {
+    if (!isValidGame(g)) return false;
+    if (seenOrders.has(g.order)) return false;
+    seenOrders.add(g.order);
+  }
+  return seenOrders.size === GAMES_PER_MATCH;
+}
+
+// Cross-references every player ID used in `games` against the `players`
+// collection: each must exist and belong to whichever side (home/away team)
+// they're listed on. Rejects nonexistent player IDs and players who belong
+// to a different team (whether in this league or another league/season
+// entirely) than the side they're claimed to be playing for.
+async function allPlayersLegitimate(games: MatchGame[], homeTeamId: string, awayTeamId: string): Promise<boolean> {
+  const homeIds = new Set<string>();
+  const awayIds = new Set<string>();
+  for (const g of games) {
+    g.homePlayerIds.forEach((id) => homeIds.add(id));
+    g.awayPlayerIds.forEach((id) => awayIds.add(id));
+  }
+  const allIds = [...new Set([...homeIds, ...awayIds])];
+  const snaps = await db.getAll(...allIds.map((id) => db.doc(`players/${id}`)));
+  const teamIdById = new Map(snaps.map((s) => [s.id, s.exists ? (s.data() as { teamId?: string }).teamId : undefined]));
+  for (const id of homeIds) if (teamIdById.get(id) !== homeTeamId) return false;
+  for (const id of awayIds) if (teamIdById.get(id) !== awayTeamId) return false;
+  return true;
+}
+
+async function isValidSubmission(data: unknown, homeTeamId: string, awayTeamId: string): Promise<boolean> {
+  if (!data || typeof data !== 'object') return false;
+  const { games } = data as { games?: unknown };
+  if (!isValidGamesShape(games)) return false;
+  return allPlayersLegitimate(games, homeTeamId, awayTeamId);
+}
+
 // ── Submission comparison: auto-confirm when both teams agree, else dispute ─
+//
+// Security invariants (complementing firestore.rules, which enforces the doc
+// ID == submittedByTeamId convention that makes this lookup-by-identity
+// possible in the first place — see the comment there):
+//  - Submissions are read by TEAM IDENTITY (doc IDs homeTeamId/awayTeamId),
+//    never by array position or count — two submissions from the same team
+//    can no longer be mistaken for "both sides agreed".
+//  - Each submission is re-validated (structure + real player/team
+//    membership) before it's allowed to count towards confirmation. An
+//    invalid submission is deleted (quarantined) rather than silently
+//    skipped, so it can never combine with a later resubmission and slip
+//    through, and so the submitting captain sees it actually disappeared
+//    rather than being invisibly ignored.
 export const onSubmissionWrite = onDocumentWritten(
   'matches/{matchId}/submissions/{submissionId}',
   async (event) => {
@@ -63,25 +172,52 @@ export const onSubmissionWrite = onDocumentWritten(
     const match = matchSnap.data()!;
     if (match.status === 'confirmed') return; // locked once confirmed — resubmission can't reopen it
 
-    const subsSnap = await matchRef.collection('submissions').get();
-    if (subsSnap.empty) return;
+    const homeTeamId = match.homeTeamId as string;
+    const awayTeamId = match.awayTeamId as string;
 
-    if (subsSnap.size === 1) {
+    const [homeSnap, awaySnap] = await Promise.all([
+      matchRef.collection('submissions').doc(homeTeamId).get(),
+      matchRef.collection('submissions').doc(awayTeamId).get(),
+    ]);
+
+    const [homeValid, awayValid] = await Promise.all([
+      homeSnap.exists && homeSnap.data()!.submittedByTeamId === homeTeamId
+        ? isValidSubmission(homeSnap.data(), homeTeamId, awayTeamId)
+        : Promise.resolve(false),
+      awaySnap.exists && awaySnap.data()!.submittedByTeamId === awayTeamId
+        ? isValidSubmission(awaySnap.data(), homeTeamId, awayTeamId)
+        : Promise.resolve(false),
+    ]);
+
+    const toQuarantine = [
+      ...(homeSnap.exists && !homeValid ? [homeSnap.ref] : []),
+      ...(awaySnap.exists && !awayValid ? [awaySnap.ref] : []),
+    ];
+    if (toQuarantine.length) {
+      console.warn(`onSubmissionWrite: deleting ${toQuarantine.length} invalid submission(s) for match ${matchId}`);
+      await Promise.all(toQuarantine.map((ref) => ref.delete()));
+    }
+
+    const validCount = (homeValid ? 1 : 0) + (awayValid ? 1 : 0);
+    if (validCount === 0) return;
+    if (validCount === 1) {
       if (match.status === 'scheduled') {
         await matchRef.update({ status: 'awaiting_confirmation' });
       }
       return;
     }
 
-    const [subA, subB] = subsSnap.docs.map((d) => d.data() as MatchSubmissionData);
-    if (!gamesEqual(subA.games, subB.games)) {
+    // Both sides have a genuinely valid, correctly-attributed submission.
+    const homeData = homeSnap.data() as MatchSubmissionData;
+    const awayData = awaySnap.data() as MatchSubmissionData;
+    if (!gamesEqual(homeData.games, awayData.games)) {
       await matchRef.update({ status: 'disputed' });
       return;
     }
 
     // Both submissions agree — confirm using the canonical (normalized) games.
     // onMatchConfirmed picks up from here to compute totals + standings/stats.
-    await matchRef.update({ status: 'confirmed', games: normalizeGames(subA.games) });
+    await matchRef.update({ status: 'confirmed', games: normalizeGames(homeData.games) });
   },
 );
 
@@ -90,7 +226,14 @@ function computeTotals(games: MatchGame[]) {
   for (const game of games) {
     let gameHomeLegs = 0, gameAwayLegs = 0;
     for (const leg of game.legs) {
-      if (leg.winner === 'home') { gameHomeLegs++; homeLegsWon++; } else { gameAwayLegs++; awayLegsWon++; }
+      // Every caller of computeTotals is expected to have already run its
+      // games through isValidGamesShape, so this should never trigger — but
+      // an unrecognized winner must never silently fall into the "away"
+      // bucket, so we fail loudly instead of guessing (see isValidLeg, which
+      // is what actually keeps bad data out in the first place).
+      if (leg.winner === 'home') { gameHomeLegs++; homeLegsWon++; }
+      else if (leg.winner === 'away') { gameAwayLegs++; awayLegsWon++; }
+      else throw new Error(`computeTotals: invalid leg winner ${JSON.stringify((leg as { winner: unknown }).winner)}`);
     }
     if (gameHomeLegs > gameAwayLegs) homeGamesWon++; else awayGamesWon++;
   }
@@ -297,27 +440,42 @@ export const onMatchConfirmed = onDocumentUpdated('matches/{matchId}', async (ev
   if (!before || !after) return;
   if (after.status !== 'confirmed') return;
 
-  // Only treat before.games as a real prior result if the match was already
-  // confirmed — otherwise (first confirmation) there's nothing to reverse.
-  const beforeGames = (before.status === 'confirmed' ? (before.games ?? []) : []) as MatchGame[];
-  const afterGames = (after.games ?? []) as MatchGame[];
-  if (JSON.stringify(beforeGames) === JSON.stringify(afterGames)) return; // no actual result change (e.g. venue/date edit)
-
   const matchId = event.params.matchId;
   const { leagueId, seasonId, divisionId, homeTeamId, awayTeamId, scheduledDate } = after as {
     leagueId: string; seasonId: string; divisionId: string;
     homeTeamId: string; awayTeamId: string; scheduledDate: FirebaseFirestore.Timestamp;
   };
 
-  await db.doc(`matches/${matchId}`).update(computeTotals(afterGames));
+  // Defense in depth: onSubmissionWrite only ever confirms using games it has
+  // already validated, and the admin dispute-resolution UI builds its
+  // finalGames out of those same validated submissions — but this is the
+  // last stop before games reaches applyMatchResultDelta/playerSeasonStats,
+  // so it re-validates rather than trusting the caller. Anything that got
+  // here some other way (a manual Console edit, a future code path) must not
+  // be able to corrupt statistics.
+  if (!isValidGamesShape(after.games) || !(await allPlayersLegitimate(after.games, homeTeamId, awayTeamId))) {
+    console.error(`onMatchConfirmed: match ${matchId} is "confirmed" with invalid games — refusing to touch statistics.`);
+    return;
+  }
 
-  await applyMatchResultDelta({
-    matchId, leagueId, seasonId, divisionId, homeTeamId, awayTeamId,
-    scheduledDate: scheduledDate.toDate(),
-    oldGames: beforeGames,
-    newGames: afterGames,
-    playedDelta: before.status !== 'confirmed' ? 1 : 0,
-  });
+  // Only treat before.games as a real prior result if the match was already
+  // confirmed — otherwise (first confirmation) there's nothing to reverse.
+  const beforeGames = (before.status === 'confirmed' ? (before.games ?? []) : []) as MatchGame[];
+  const afterGames = after.games as MatchGame[];
+  if (JSON.stringify(beforeGames) === JSON.stringify(afterGames)) return; // no actual result change (e.g. venue/date edit)
+
+  try {
+    await db.doc(`matches/${matchId}`).update(computeTotals(afterGames));
+    await applyMatchResultDelta({
+      matchId, leagueId, seasonId, divisionId, homeTeamId, awayTeamId,
+      scheduledDate: scheduledDate.toDate(),
+      oldGames: beforeGames,
+      newGames: afterGames,
+      playedDelta: before.status !== 'confirmed' ? 1 : 0,
+    });
+  } catch (err) {
+    console.error(`onMatchConfirmed: failed to apply result delta for match ${matchId}`, err);
+  }
 });
 
 // ── On delete of a confirmed match: fully reverse its contribution to
@@ -334,13 +492,25 @@ export const onMatchDeleted = onDocumentDeleted('matches/{matchId}', async (even
   };
   const games = (before.games ?? []) as MatchGame[];
 
-  await applyMatchResultDelta({
-    matchId, leagueId, seasonId, divisionId, homeTeamId, awayTeamId,
-    scheduledDate: scheduledDate.toDate(),
-    oldGames: games,
-    newGames: [],
-    playedDelta: -1,
-  });
+  // Defense in depth — see onMatchConfirmed. A confirmed match's games should
+  // already be valid (that's what got it confirmed), but this is the last
+  // stop before the reversal delta touches statistics.
+  if (games.length > 0 && (!isValidGamesShape(games) || !(await allPlayersLegitimate(games, homeTeamId, awayTeamId)))) {
+    console.error(`onMatchDeleted: confirmed match ${matchId} had invalid games — refusing to reverse statistics.`);
+    return;
+  }
+
+  try {
+    await applyMatchResultDelta({
+      matchId, leagueId, seasonId, divisionId, homeTeamId, awayTeamId,
+      scheduledDate: scheduledDate.toDate(),
+      oldGames: games,
+      newGames: [],
+      playedDelta: -1,
+    });
+  } catch (err) {
+    console.error(`onMatchDeleted: failed to reverse result delta for match ${matchId}`, err);
+  }
 });
 
 // ── Admin cascading deletes ─────────────────────────────────────────────────
@@ -355,7 +525,9 @@ async function assertLeagueAdmin(uid: string | undefined, leagueId: string): Pro
   if (!uid) throw new HttpsError('unauthenticated', 'Sign in required.');
   const userSnap = await db.doc(`users/${uid}`).get();
   const user = userSnap.data();
-  if (!user || user.isLeagueAdmin !== true || user.leagueId !== leagueId) {
+  const isGlobalAdmin = user?.isGlobalAdmin === true;
+  const isScopedLeagueAdmin = user?.isLeagueAdmin === true && user?.leagueId === leagueId;
+  if (!user || (!isGlobalAdmin && !isScopedLeagueAdmin)) {
     throw new HttpsError('permission-denied', 'League admin access required.');
   }
 }

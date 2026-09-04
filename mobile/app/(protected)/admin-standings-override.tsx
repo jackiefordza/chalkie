@@ -69,10 +69,10 @@ function useStandingsOverrideController(seasonId: string | undefined, divisionId
   }, [divisionId, leagueId]);
 
   useEffect(() => {
-    if (!seasonId || !divisionId) return;
+    if (!seasonId || !divisionId || !leagueId) return;
 
     const unsubTables = onSnapshot(
-      query(collection(db, 'divisionTables'), where('seasonId', '==', seasonId), where('divisionId', '==', divisionId)),
+      query(collection(db, 'divisionTables'), where('leagueId', '==', leagueId), where('seasonId', '==', seasonId), where('divisionId', '==', divisionId)),
       (snap) => {
         setTeamRows(snap.docs.map((d) => {
           const data = d.data();
@@ -87,7 +87,7 @@ function useStandingsOverrideController(seasonId: string | undefined, divisionId
     );
 
     const unsubStats = onSnapshot(
-      query(collection(db, 'playerSeasonStats'), where('seasonId', '==', seasonId), where('divisionId', '==', divisionId)),
+      query(collection(db, 'playerSeasonStats'), where('leagueId', '==', leagueId), where('seasonId', '==', seasonId), where('divisionId', '==', divisionId)),
       (snap) => {
         setPlayerRows(snap.docs.map((d) => {
           const data = d.data();
@@ -105,7 +105,7 @@ function useStandingsOverrideController(seasonId: string | undefined, divisionId
     // the rows themselves and would otherwise restart these listeners on every
     // name lookup update; row content re-renders fine off the next snapshot.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [seasonId, divisionId]);
+  }, [seasonId, divisionId, leagueId]);
 
   const sortedTeamRows = useMemo(
     () => [...teamRows].sort((a, b) => (b.points - a.points) || ((b.legsFor - b.legsAgainst) - (a.legsFor - a.legsAgainst))),

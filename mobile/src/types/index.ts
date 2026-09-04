@@ -11,6 +11,8 @@ export interface AppUser {
   nickname: string | null;
   role: UserRole;
   isLeagueAdmin: boolean;
+  /** Platform-wide admin: manages data across every league, not just leagueId below. Console-granted only, same as isLeagueAdmin. */
+  isGlobalAdmin: boolean;
   leagueId: string | null;
   seasonId: string | null;
   teamId: string | null;

@@ -78,27 +78,40 @@ export default function AdminSeasonScreen() {
       }
     });
 
-    const unsubDivisions = onSnapshot(
-      query(collection(db, 'divisions'), where('seasonId', '==', seasonId)),
-      (snap) => {
-        setDivisions(
-          snap.docs
-            .map((d) => ({ id: d.id, ...d.data() } as Division))
-            .sort((a, b) => a.order - b.order),
-        );
-      },
-    );
+    // leagueId filter required: firestore.rules now requires it (the admin
+    // read branch is scoped to the caller's own league — same reasoning as
+    // the teams query fix below), and Firestore rejects a collection query
+    // outright if it can't prove the rule holds for every possible result —
+    // a seasonId-only filter no longer qualifies.
+    const unsubDivisions = appUser?.leagueId
+      ? onSnapshot(
+          query(collection(db, 'divisions'), where('leagueId', '==', appUser.leagueId), where('seasonId', '==', seasonId)),
+          (snap) => {
+            setDivisions(
+              snap.docs
+                .map((d) => ({ id: d.id, ...d.data() } as Division))
+                .sort((a, b) => a.order - b.order),
+            );
+          },
+        )
+      : undefined;
 
-    const unsubTeams = onSnapshot(
-      query(collection(db, 'teams'), where('seasonId', '==', seasonId)),
-      (snap) => {
-        setTeams(snap.docs.map((d) => ({ id: d.id, ...d.data() } as Team)));
-        setIsLoading(false);
-      },
-    );
+    // leagueId filter required: firestore.rules now requires it (the admin
+    // read branch is scoped to the caller's own league), and Firestore
+    // rejects a collection query outright if it can't prove the rule holds
+    // for every possible result — a seasonId-only filter no longer qualifies.
+    const unsubTeams = appUser?.leagueId
+      ? onSnapshot(
+          query(collection(db, 'teams'), where('leagueId', '==', appUser.leagueId), where('seasonId', '==', seasonId)),
+          (snap) => {
+            setTeams(snap.docs.map((d) => ({ id: d.id, ...d.data() } as Team)));
+            setIsLoading(false);
+          },
+        )
+      : undefined;
 
-    return () => { unsubSeason(); unsubDivisions(); unsubTeams(); };
-  }, [seasonId]);
+    return () => { unsubSeason(); unsubDivisions?.(); unsubTeams?.(); };
+  }, [seasonId, appUser?.leagueId]);
 
   async function setStatus(status: string) {
     if (!seasonId) return;
