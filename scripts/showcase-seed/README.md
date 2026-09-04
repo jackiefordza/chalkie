@@ -140,20 +140,41 @@ implementation report for the exact commands used.
 ## Idempotency — running the seed more than once
 
 Every document uses a fixed, deterministic ID (`showcase-league`,
-`showcase-team-1`…`8`, `showcase-player-{team}-{n}`, etc.) and every write
-is an upsert (`{merge: true}`). Auth accounts are looked up by email first,
-created only if missing. Running `node dist/seed.js --confirm-showcase`
-again after a successful run re-asserts the same end state — it does not
-create a second copy of anything. (`createdAt` timestamps are only set the
-first time a document is created, not refreshed on every re-run.)
+`showcase-team-1`…`8`, `showcase-player-{team}-{n}`, etc.). Auth accounts
+are looked up by email first, created only if missing. `createdAt`
+timestamps are only set the first time a document is created, never
+refreshed on a re-run.
 
-**One caveat**: re-running the seed *without* resetting first will attempt
-to write the same submission documents again for the already-confirmed
-matches. `onSubmissionWrite` itself refuses to reprocess a match once its
-status is `'confirmed'`, so this is a safe no-op for those, not a
-double-count — but the awaiting-confirmation and disputed matches' state
-depends on which submissions already exist, so if you need a guaranteed
-identical result, use reset first.
+Documents that must never be silently overwritten once real state has been
+computed for them — most importantly `matches`, but also `leagues`,
+`seasons`, `divisions`, `teams`, and `players` — are written with a
+create-if-missing helper (`createOnce` in `src/seedCore.ts`): if the
+document already exists, it is left completely untouched, whatever state
+it's since reached. This is what makes re-running
+`node dist/seed.js --confirm-showcase` safe even after matches have been
+confirmed: an already-confirmed match's `status`/`games`/totals are never
+reset back to `'scheduled'`, so the real Cloud Function pipeline's own
+`if (match.status === 'confirmed') return;` guard (`onSubmissionWrite`,
+`functions/src/index.ts`) is what makes re-submitting the same
+(deterministic) result to it a safe no-op — not a double-confirmation, and
+not a double-increment of `divisionTables`/`playerSeasonStats`. The same
+applies to the awaiting-confirmation and disputed matches: their submission
+content is deterministic, so writing it again reproduces the identical
+state rather than depending on what happened to already exist. Running the
+seed a second time on top of a fully successful first run reproduces the
+exact same end state; running it on top of a *partially* successful first
+run (e.g. some match confirmations timed out) safely retries only what
+didn't complete.
+
+A handful of fields legitimately get re-asserted on every run regardless —
+`captainUserId`/`viceCaptainUserId` on `teams`, role/admin flags on
+`users` — because they're always resolved to the same deterministic uid or
+value, so re-writing them is a genuine no-op, not drift.
+
+See `offline-checks.js` (run with `node offline-checks.js` after
+`npm run build` — no Firebase, no network, pure in-memory fakes) for
+automated checks covering this, the reset write-guard registration below,
+and the admin-flag/`adminUserId` fixes.
 
 ## Reset — what it deletes, and in what order
 
@@ -217,6 +238,12 @@ the same way the app's own Cloud Functions do — no manual step is needed):
 
 - League admin: `isLeagueAdmin: true`, `isGlobalAdmin: false`, `leagueId: "showcase-league"`
 - Global admin: `isLeagueAdmin: false`, `isGlobalAdmin: true`, `leagueId: null`
+
+Every other showcase persona (the 8 captains, 8 vice-captains, and the one
+normal player) explicitly has `isLeagueAdmin: false, isGlobalAdmin: false`
+written on their `users/{uid}` doc — matching the real signup flow
+(`authStore.ts`'s `register()`) exactly, rather than leaving those fields
+unset.
 
 **If you'd rather grant these by hand instead** (e.g. you want a visible,
 separately-audited moment where admin access is granted), the equivalent

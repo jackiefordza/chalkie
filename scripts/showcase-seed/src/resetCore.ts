@@ -8,7 +8,7 @@ import {
   DIVISION_ID, LEAGUE_ID, PLAYERS_PER_TEAM, SEASON_ID, TEAM_COUNT,
   allShowcaseEmails, matchId, playerId, teamId,
 } from './constants';
-import { safeDelete } from './firebaseAdmin';
+import { registerShowcaseUserId, safeDelete } from './firebaseAdmin';
 import { generateRoundRobinFixtures } from './fixtures';
 
 // All 56 possible showcase match IDs, independent of any particular
@@ -126,10 +126,19 @@ export async function resetShowcaseDataset(
   // Step 6 — known showcase Auth accounts, found by email (never by a
   // query over `users` — the global-admin persona deliberately has no
   // leagueId to query on, and email lookup is unambiguous either way).
+  //
+  // The resolved uid must be registered with the write guard before
+  // safeDelete will allow the users/{uid} deletion — registerShowcaseUserId
+  // is the same mechanism seeding uses (seedCore.ts's ensureAuthUser), just
+  // invoked here on the reset path instead. It is only ever called with a
+  // uid that came from auth.getUserByEmail(email) for one of the fixed 19
+  // emails in allShowcaseEmails() — there is no way for this loop to
+  // register (and therefore become able to delete) any other account.
   log('Step 6/7: deleting showcase Auth accounts + their users/ docs…');
   for (const email of allShowcaseEmails()) {
     try {
       const user = await auth.getUserByEmail(email);
+      registerShowcaseUserId(user.uid);
       const userDocExists = (await db.collection('users').doc(user.uid).get()).exists;
       if (userDocExists) await safeDelete(db, 'users', user.uid);
       await auth.deleteUser(user.uid);

@@ -88,9 +88,16 @@ const PLAYER_STATS_ID_RE = new RegExp(`^${SEASON_ID}_showcase-player-[1-8]-[1-6]
 const SUBMISSIONS_COLLECTION_RE = /^matches\/showcase-match-r\d+-[1-8]v[1-8]\/submissions$/;
 
 // Populated at runtime as each showcase Auth account is resolved (created or
-// found) — a `users/{uid}` write is only ever allowed for a uid that has
-// been explicitly registered here first. This is what stops a `users/`
-// write from being a blanket "any uid" allowance.
+// found) — a `users/{uid}` write OR delete is only ever allowed for a uid
+// that has been explicitly registered here first. This is what stops a
+// `users/` write/delete from being a blanket "any uid" allowance.
+//
+// Used by two call sites, both of which only ever resolve a uid from one of
+// the 19 fixed showcase emails in constants.ts's allShowcaseEmails() — never
+// from arbitrary input: seedCore.ts's ensureAuthUser (get-or-create, for
+// seeding) and resetCore.ts's Auth-account lookup loop (get-by-email only,
+// for deletion). There is no third call site, so no path exists for a
+// non-showcase uid to ever end up in this set.
 const allowedUserIds = new Set<string>();
 export function registerShowcaseUserId(uid: string): void {
   allowedUserIds.add(uid);

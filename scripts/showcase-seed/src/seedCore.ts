@@ -44,21 +44,53 @@ async function ensureBaseUserDoc(db: admin.firestore.Firestore, uid: string, ema
   await safeSet(db, 'users', uid, {
     email, displayName, role: 'pending',
     leagueId: null, teamId: null, divisionId: null, playerId: null,
+    // Matches the real signup flow (authStore.ts's register()) exactly —
+    // every genuine account always has these two explicitly false at
+    // creation. Only seedAdminPersonas's later, deliberate update ever
+    // flips either to true — never leave them unset.
+    isLeagueAdmin: false, isGlobalAdmin: false,
     pendingRequestType: null, createdAt: FieldValue.serverTimestamp(),
   });
+}
+
+// Idempotent "create if missing, otherwise leave completely untouched" —
+// used for every document phases 1/2/3/6 create. This is what makes
+// re-running the seed on top of an already-seeded (or partially-seeded)
+// dataset safe: an existing document — in particular an already-confirmed
+// match — is never rewritten, never has its status reset, and never bumps
+// createdAt. See writeAllFixturesAsScheduled for the phase this matters
+// most for.
+async function createOnce(
+  db: admin.firestore.Firestore,
+  collectionPath: string,
+  docId: string,
+  data: FirebaseFirestore.DocumentData,
+): Promise<boolean> {
+  const existing = await db.collection(collectionPath).doc(docId).get();
+  if (existing.exists) return false;
+  await safeSet(db, collectionPath, docId, data);
+  return true;
 }
 
 // ── Phase 1: league / season / division ─────────────────────────────────
 
 export async function seedCoreStructure(db: admin.firestore.Firestore, log: (msg: string) => void): Promise<void> {
   log('Phase 1/9: league, season, division…');
-  await safeSet(db, 'leagues', LEAGUE_ID, {
-    name: LEAGUE_NAME, adminUserId: null, createdAt: FieldValue.serverTimestamp(),
+  // adminUserId is deliberately not set here: the real schema
+  // (mobile/src/types/index.ts's League.adminUserId) requires a real,
+  // non-null string, and the only correct value for it is the showcase
+  // league-admin persona's own uid — which doesn't exist yet at this point
+  // in the run. seedAdminPersonas (phase 5) fills it in once that account
+  // is resolved, before this script finishes. createOnce (not a plain
+  // safeSet) means this never re-runs — and so never clobbers that later
+  // value — on a second seed.
+  await createOnce(db, 'leagues', LEAGUE_ID, {
+    name: LEAGUE_NAME, createdAt: FieldValue.serverTimestamp(),
   });
-  await safeSet(db, 'seasons', SEASON_ID, {
+  await createOnce(db, 'seasons', SEASON_ID, {
     leagueId: LEAGUE_ID, name: SEASON_NAME, status: 'active', createdAt: FieldValue.serverTimestamp(),
   });
-  await safeSet(db, 'divisions', DIVISION_ID, {
+  await createOnce(db, 'divisions', DIVISION_ID, {
     leagueId: LEAGUE_ID, seasonId: SEASON_ID, name: DIVISION_NAME, order: 1, createdAt: FieldValue.serverTimestamp(),
   });
 }
@@ -68,7 +100,7 @@ export async function seedCoreStructure(db: admin.firestore.Firestore, log: (msg
 export async function seedTeams(db: admin.firestore.Firestore, log: (msg: string) => void): Promise<void> {
   log('Phase 2/9: 8 teams…');
   for (let i = 0; i < TEAM_COUNT; i++) {
-    await safeSet(db, 'teams', teamId(i), {
+    await createOnce(db, 'teams', teamId(i), {
       leagueId: LEAGUE_ID, seasonId: SEASON_ID, divisionId: DIVISION_ID, name: TEAM_NAMES[i],
       captainUserId: null, viceCaptainUserId: null, address: null, venuePhone: null,
       createdAt: FieldValue.serverTimestamp(),
@@ -82,7 +114,7 @@ export async function seedPlayers(db: admin.firestore.Firestore, log: (msg: stri
   log('Phase 3/9: 48 players…');
   for (let t = 0; t < TEAM_COUNT; t++) {
     for (let p = 0; p < PLAYERS_PER_TEAM; p++) {
-      await safeSet(db, 'players', playerId(t, p), {
+      await createOnce(db, 'players', playerId(t, p), {
         leagueId: LEAGUE_ID, seasonId: SEASON_ID, divisionId: DIVISION_ID, teamId: teamId(t),
         name: PLAYER_NAMES[t][p], claimedByUserId: null, claimedAt: null,
         createdByUserId: null, createdAt: FieldValue.serverTimestamp(),
@@ -104,11 +136,20 @@ async function linkTeamMember(
   await safeSet(db, 'users', uid, {
     role, leagueId: LEAGUE_ID, seasonId: SEASON_ID, teamId: teamId(teamIdx), divisionId: DIVISION_ID,
     playerId: playerId(teamIdx, rosterIdx), displayName: name,
+    // Explicit, not just inherited from ensureBaseUserDoc's first write —
+    // every captain/VC/normal-player persona's FINAL doc state should be
+    // unambiguous on its own, matching the real signup shape exactly.
+    isLeagueAdmin: false, isGlobalAdmin: false,
     pendingRequestType: null, pendingRequestId: null,
   });
-  await safeSet(db, 'players', playerId(teamIdx, rosterIdx), {
-    claimedByUserId: uid, claimedAt: FieldValue.serverTimestamp(),
-  });
+
+  // Only write the claim if it isn't already exactly this — keeps a re-seed
+  // from bumping claimedAt (or re-writing an identical claim) every time.
+  const pid = playerId(teamIdx, rosterIdx);
+  const playerSnap = await db.collection('players').doc(pid).get();
+  if (playerSnap.data()?.claimedByUserId !== uid) {
+    await safeSet(db, 'players', pid, { claimedByUserId: uid, claimedAt: FieldValue.serverTimestamp() });
+  }
   return uid;
 }
 
@@ -140,6 +181,15 @@ export async function seedAdminPersonas(db: admin.firestore.Firestore, auth: adm
     // Scoped to the showcase league specifically, per the approved design.
     leagueId: LEAGUE_ID, isLeagueAdmin: true, isGlobalAdmin: false,
   });
+
+  // League.adminUserId is a required, non-nullable string in the real
+  // schema (mobile/src/types/index.ts) — the showcase league-admin persona
+  // is the correct real-world value for it, exactly what a genuine admin
+  // doing "Create League" in the app produces for themselves (admin.tsx's
+  // handleCreateLeague sets adminUserId: appUser.uid). Written here, now
+  // that the uid is actually resolved, rather than guessed at in
+  // seedCoreStructure. Naturally idempotent — same uid every run.
+  await safeSet(db, 'leagues', LEAGUE_ID, { adminUserId: leagueAdminUid });
 
   const globalAdminUid = await ensureAuthUser(auth, GLOBAL_ADMIN_EMAIL, 'Showcase Global Admin');
   await ensureBaseUserDoc(db, globalAdminUid, GLOBAL_ADMIN_EMAIL, 'Showcase Global Admin');
@@ -195,17 +245,36 @@ export function buildSchedule(): BuiltSchedule {
   return { all, disputed, awaitingConfirmation, scheduledExamples, toConfirm };
 }
 
+// Uses createOnce, not a plain safeSet — this is the fix for the double-
+// counting bug a code review found: writing every fixture unconditionally
+// on every seed run meant a match this script had already confirmed on a
+// prior run got its status merge-written back to 'scheduled' here, which
+// then made confirmMatchesSequentially's re-submission look like a genuine
+// first confirmation to onMatchConfirmed (before.status !== 'confirmed'),
+// double-incrementing divisionTables/playerSeasonStats. createOnce leaves
+// any match that already exists — confirmed, disputed, awaiting
+// confirmation, or still scheduled — completely untouched, so a re-seed can
+// never regress or reprocess it. onSubmissionWrite's own
+// `if (match.status === 'confirmed') return;` guard (functions/src/index.ts)
+// is then what makes confirmMatchesSequentially/seedSpecialStates safe to
+// call again on top of that: since status is never reset out from under
+// them, re-submitting identical (deterministic) results to an
+// already-confirmed match is always a no-op.
 export async function writeAllFixturesAsScheduled(db: admin.firestore.Firestore, schedule: BuiltSchedule, log: (msg: string) => void): Promise<void> {
-  log(`Phase 6/9: writing all ${schedule.all.length} fixtures as 'scheduled'…`);
+  log(`Phase 6/9: writing all ${schedule.all.length} fixtures as 'scheduled' (existing matches are left exactly as they are)…`);
+  let created = 0;
+  let alreadyExisted = 0;
   for (const fx of schedule.all) {
-    await safeSet(db, 'matches', matchId(fx.homeTeamIndex, fx.awayTeamIndex, fx.round), {
+    const wasCreated = await createOnce(db, 'matches', matchId(fx.homeTeamIndex, fx.awayTeamIndex, fx.round), {
       leagueId: LEAGUE_ID, seasonId: SEASON_ID, divisionId: DIVISION_ID, round: fx.round,
       homeTeamId: teamId(fx.homeTeamIndex), awayTeamId: teamId(fx.awayTeamIndex),
       scheduledDate: fx.scheduledDate, venue: null, status: 'scheduled',
       homeGamesWon: null, awayGamesWon: null, homeLegsWon: null, awayLegsWon: null,
       games: null, createdAt: FieldValue.serverTimestamp(),
     });
+    if (wasCreated) created += 1; else alreadyExisted += 1;
   }
+  log(`  ${created} match(es) newly created, ${alreadyExisted} already existed (left untouched).`);
 }
 
 // ── Phase 7: confirm matches through the real pipeline, sequentially ───────
