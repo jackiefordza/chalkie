@@ -1,0 +1,91 @@
+name: Deploy Hosting to Production (manual)
+
+# Manual-only, on purpose: no push/pull_request/schedule trigger exists
+# here, so this can never fire on its own. Unlike the preview-channel
+# workflow, this one is meant to build whatever main currently is — that
+# is the fix (production Hosting is stale; see the root-cause writeup for
+# commit df8b791) — so the checkout step deliberately does NOT pin a SHA;
+# it builds the ref the run is dispatched against, which should be main.
+#
+# Because this overwrites the real, live production Hosting site (not a
+# disposable preview channel), it also requires typing an exact
+# confirmation string before the job runs at all.
+#
+# Scope is deliberately narrow: the only firebase command run here is
+# `deploy --only hosting` — never a bare `firebase deploy`, and no --only
+# value that includes functions, firestore, or firestore's rules/indexes.
+# --project is hard-coded to chalkie-app, never read from an input,
+# branch, or secret. This file never modifies deploy-firebase.yml or
+# anything else in the repo.
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type DEPLOY-HOSTING-PRODUCTION to confirm overwriting the live chalkie-app Hosting site'
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    # The whole job — including access to the credential below — is
+    # skipped, not merely failed, unless this matches exactly.
+    if: inputs.confirm == 'DEPLOY-HOSTING-PRODUCTION'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install mobile dependencies
+        working-directory: mobile
+        run: npm ci
+
+      - name: Build Expo web export
+        working-directory: mobile
+        run: npx expo export -p web
+
+      # Same write-to-temp-file pattern deploy-firebase.yml already uses for
+      # this same secret, just scoped to $RUNNER_TEMP instead of a fixed
+      # /tmp path. Never printed, never passed as a command argument.
+      - name: Write Firebase service-account credential
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > "$RUNNER_TEMP/service-account.json"
+
+      # --only hosting, nothing else — structurally incapable of touching
+      # functions, firestore rules, or firestore indexes. --non-interactive
+      # --force matches the exact flags deploy-firebase.yml already uses
+      # for this same secret's other deploys.
+      - name: Deploy Hosting only to production
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/service-account.json
+        run: |
+          echo "Deploying commit $(git rev-parse HEAD) (ref: ${{ github.ref_name }}) to Firebase Hosting — chalkie-app, hosting only."
+          npx firebase-tools deploy --only hosting --project chalkie-app --non-interactive --force --json > "$RUNNER_TEMP/deploy-result.json"
+          cat "$RUNNER_TEMP/deploy-result.json"
+
+      - name: Print deployed commit and result summary
+        run: |
+          {
+            echo "Deployed commit SHA: $(git rev-parse HEAD)"
+            node -e "
+              const fs = require('fs');
+              try {
+                const out = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + '/deploy-result.json', 'utf8'));
+                console.log('Deploy status:', out.status);
+                console.log('Result:', JSON.stringify(out.result, null, 2));
+              } catch (e) {
+                console.log('Could not parse deploy JSON output — see the raw output printed in the previous step.', e.message);
+              }
+            "
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove credential file
+        if: always()
+        run: rm -f "$RUNNER_TEMP/service-account.json"
