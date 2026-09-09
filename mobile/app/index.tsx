@@ -26,11 +26,12 @@ export default function IndexScreen() {
       return;
     }
 
-    // isLeagueAdmin is independent of role — a captain/player can also be a
-    // league admin, so it no longer overrides where their role sends them.
-    // The one case it does affect is a pure admin with no team of their own
-    // yet: they'd otherwise get funneled into "find your league" onboarding,
-    // which makes no sense for someone who already administers a league.
+    // isLeagueAdmin/isGlobalAdmin are independent of role — a captain/player
+    // can also be an admin, so neither overrides where their role sends them.
+    // The one case either does affect is a pure admin with no team of their
+    // own yet (League Admin) or no league at all (Global Admin): they'd
+    // otherwise get funneled into "find your league" onboarding, which makes
+    // no sense for someone who already administers a league — or every league.
     switch (appUser.role) {
       case 'captain':
       case 'viceCaptain':
@@ -43,7 +44,7 @@ export default function IndexScreen() {
         if (appUser.pendingRequestType) {
           // Already submitted a request — go to waiting screen
           router.replace('/(protected)/request-pending');
-        } else if (appUser.isLeagueAdmin) {
+        } else if (appUser.isLeagueAdmin || appUser.isGlobalAdmin) {
           // Admin who's never onboarded as a player on any team — nothing to
           // find/join, go straight to admin.
           router.replace('/(protected)/(tabs)/admin');

@@ -4,7 +4,7 @@
 
 Date: 2026-09-09
 Current production commit: `8e56219873f1c506812f3a88cb4a8e3631cf2465` (main — includes PR #16, Hosting-deployed and verified)
-Overall status: League Admin walkthrough (session 1) complete. Captain + Normal Player walkthrough (session 2) complete. BUG-004 (session 3) fixed and verified by code inspection + typecheck + build. One dormant P1 (BUG-001), two P2s (BUG-002, BUG-003) remain open, pending approval — not touched this session per explicit scope.
+Overall status: League Admin walkthrough (session 1) complete. Captain + Normal Player walkthrough (session 2) complete. BUG-004 (session 3) implemented, merged (PR #17), deployed to production, and manually runtime-verified by the user for League Admin, Captain, and Normal Player — CLOSED. Global Admin walkthrough (session 4) found BUG-005; session 5 implemented, verified by typecheck + build + full 5-persona routing trace (CODE-REVIEWED ONLY — not yet runtime-verified), and opened a clean PR (not merged, not deployed). BUG-001 (dormant), BUG-002, BUG-003 remain open and untouched.
 
 **Methodology note (applies to both sessions):** all testing was a systematic static code walkthrough (reading the actual routed screens against `origin/main`) rather than interactive device/browser testing — this remote environment has no Firebase credentials and no way to sign in as any live user (League Admin, Captain, or Normal Player) against the real showcase data. Every finding below is a traced code-path defect, not an observed runtime failure, except where noted otherwise. Every screen/component below is explicitly noted as **CODE-REVIEWED ONLY** — none of it was interactively exercised — and no showcase data was seeded, reset, or modified, consistent with the standing instruction, since no live session was possible in the first place. The working branch (`claude/chalkie-audit-prep-5o84ya`) was found to be behind `origin/main` (missing PRs #14/#15/#16); every file cited below was individually diff-checked against `origin/main` (via `git diff HEAD origin/main -- <path>`) before being trusted, and findings reflect the **current production code**, not the stale branch.
 
@@ -36,6 +36,19 @@ Overall status: League Admin walkthrough (session 1) complete. Captain + Normal 
 - **Personal profile** (`edit-profile.tsx`, `components/ui/AccountMenu.tsx`, `components/ui/AppHeader.tsx`): name/nickname editing available to every role equally; account menu correctly shows "Contact Details" only for captain/VC, "Admin" line only when `isLeagueAdmin`, role label for everyone else — no defects found, no privileged actions exposed.
 - **Availability / RSVP feature**: does not exist anywhere in the current codebase (`grep -ri availab` across `mobile/` turns up nothing but an unrelated code comment using the word "available"). Not a bug — nothing to test.
 
+**Session 4 additions (Global Admin, CODE-REVIEWED ONLY — not runtime-verified, see methodology note above):**
+
+Persona traced: `showcase.globaladmin@chalkie.test`, seeded (`scripts/showcase-seed/src/seedCore.ts`) as `role: 'pending', pendingRequestType: null, leagueId: null, isLeagueAdmin: false, isGlobalAdmin: true` — deliberately unscoped to any league ("the most honest representation of 'genuinely global'", per the seed script's own comment).
+
+- **Login/post-login routing** (`app/index.tsx`): traced the exact showcase persona through the `role === 'pending'` switch case. As found (pre-fix), since `pendingRequestType` is `null` and `isLeagueAdmin` is `false`, it fell to the `else` branch — `router.replace('/(protected)/find-league')`. **This was the actual landing page for the showcase Global Admin: the new-player "search for your league to join" onboarding screen** — filed and fixed as BUG-005 (see Fixed bugs; PR open, not yet merged/deployed).
+- **Whether Admin access is available via normal navigation**: As found (pre-fix), no. `find-league.tsx` has no admin affordance (just a league search box); the tab bar (`TabBar.tsx`) rendered zero tabs for this exact `role`+flag combination; `find-league.tsx` doesn't even render the header avatar that opens the account menu (that's wired only into `(tabs)/_layout.tsx`, not this standalone route) — filed and fixed as BUG-005 (see Fixed bugs; PR open, not yet merged/deployed).
+- **Whether accidentally blocked by the new BUG-004 route guard**: **No — confirmed not blocked.** `(protected)/_layout.tsx`'s guard correctly checks `isLeagueAdmin || isGlobalAdmin`, so a Global Admin who reaches `/admin` by any means (a typed URL is currently the only way — see above) passes through cleanly. This was the one piece of good news to specifically verify given BUG-004 shipped this session, and it holds.
+- **What happens once at `/admin` with no `leagueId`**: `admin.tsx` has no internal `isLeagueAdmin`/`isGlobalAdmin` check of its own — it only branches on `appUser.leagueId`. With `leagueId: null`, it always renders the "Set up your league" prompt (the same screen a brand-new League Admin sees), never any cross-league or "choose a league" view. This is the confirmed, precise shape of the existing architectural limitation the task described — see Existing Limitations below. Not filed as a bug.
+- **Existing global-admin-specific UI controls**: none exist. The only client-side references to `isGlobalAdmin` at all are the BUG-004 guard (`_layout.tsx`), the `isAdmin` flag in `results-entry.tsx`, and an explanatory code comment in `team-profile.tsx`. There is no global-admin dashboard, league picker, or cross-league summary anywhere in the UI.
+- **Inappropriate/non-global controls exposed**: none found — a Global Admin never reaches any team/fixture/standings data without a league context first (there's nothing to leak), so this is a clean PASS.
+- **Navigation / back behavior**: `find-league.tsx` is reached via `router.replace()` (no back-stack entry), consistent with how every other post-login landing route in `index.tsx` works — no dead end beyond the discovery problem already noted.
+- **Loading/error/empty states**: `find-league.tsx` has a proper `onSnapshot` error handler and loading spinner — no defects there.
+
 ## Open bugs
 
 | ID | Priority | Area | Issue | Status |
@@ -43,7 +56,8 @@ Overall status: League Admin walkthrough (session 1) complete. Captain + Normal 
 | BUG-001 | P1 (dormant — see notes) | Standings navigation | Mobile League Admin "Table" button ignores which division was tapped; always opens the tab-bar Standings screen with no division context | Investigated — fix proposed, not implemented |
 | BUG-002 | P2 | Fixtures | "Delete all & regenerate" has no status guard, unlike the single-fixture delete path | Investigated — fix proposed, not implemented |
 | BUG-003 | P2 | Multiple admin screens | Several `onSnapshot` listeners have no error callback, so a permission/rules failure fails silently into "all caught up" / empty states instead of a visible error | Investigated — fix proposed, not implemented |
-| BUG-004 | P1 | Security / role-based navigation | No admin screen checked `isLeagueAdmin`/`isGlobalAdmin` — a Captain or Normal Player who navigated directly to `/admin` or any `/admin-*` route saw the real admin dashboard shell with real data | **FIXED** — see Fixed bugs |
+| BUG-004 | P1 | Security / role-based navigation | No admin screen checked `isLeagueAdmin`/`isGlobalAdmin` — a Captain or Normal Player who navigated directly to `/admin` or any `/admin-*` route saw the real admin dashboard shell with real data | **FIXED, deployed (`34330725367`), user-verified for League Admin/Captain/Normal Player — CLOSED** |
+| BUG-005 | P1 (Functional bug) | Global Admin navigation | `index.tsx`, `TabBar.tsx`, `AppHeader.tsx`, `AccountMenu.tsx` check `appUser.isLeagueAdmin` only, never `isGlobalAdmin` — the showcase Global Admin persona lands on the new-player "find your league" onboarding screen after login, with zero tab-bar or menu path to `/admin` | **FIXED — see Fixed bugs** (PR open, not merged/deployed) |
 
 ## Detailed findings
 
@@ -137,11 +151,23 @@ The confirmation dialog itself warns *"This can't be undone — only do this if 
 
 **Recommended action (proposed, not applied):** Not urgent — no active failure — but worth a follow-up pass to bring these screens in line with the error-handling pattern already established elsewhere, given the direct precedent of the Table tab bug.
 
+## Existing limitations
+
+*(Confirmed via code, not filed as bugs — matches the pre-existing architectural gap the task described up front. No fix proposed or implied; a league-selector feature is explicitly out of scope.)*
+
+### Admin screens are single-league-scoped by design; Global Admin has no way to select which league to manage
+
+Every `admin-*.tsx` screen, plus `AdminShell.tsx`'s season/division "Working In" context switcher, reads exclusively from `appUser.leagueId` — there is no concept anywhere in the client of "the league I'm currently managing" as something distinct from "the league on my own user doc." That's correct and sufficient for a League Admin (their `leagueId` is permanently, and correctly, pinned to the one league they created). For a Global Admin — deliberately seeded with `leagueId: null` ("the most honest representation of 'genuinely global'," per `seedCore.ts`'s own comment) — it means there is currently no UI path to select and manage an *existing* league (e.g. the showcase league itself). The only available action once at `/admin` is "Set up your league," i.e. **create a brand-new league**, which would also set `leagueId` on the Global Admin's own user doc going forward (`handleCreateLeague()` in `admin.tsx` does `batch.update(doc(db,'users',appUser.uid), { leagueId: leagueRef.id })` unconditionally) — permanently narrowing a genuinely platform-wide admin into a single-league admin, as an unintended side effect of the only button available. This was not tested live (no Firebase credentials, and doing so would create real showcase data) — flagged as a code-confirmed risk, not a live-observed one.
+
+This is exactly the limitation described up front in this task's brief. `firestore.rules` and the Cloud Functions already grant a Global Admin full cross-league read/write, so this is purely a client UI/product gap, not a data-layer one — nothing here blocks a hypothetical future league-selector from working immediately once built. No fix proposed, per explicit scope.
+
 ## Fixed bugs
 
 *(carried forward from prior sessions this engagement unless noted)*
 
-- **BUG-004 — No role-based route guard on League Admin screens (fixed this session).**
+- **BUG-004 — No role-based route guard on League Admin screens (fixed, merged, deployed, and user-verified — CLOSED).**
+
+  **Shipped:** PR #17 (`fix/bug-004-admin-route-guard`, cut clean from `origin/main`, exactly 2 files), merged as `cc2b36a3452f29f7f75ceae81c8f35f03cac9e37`. Deployed to production via `deploy-hosting-production.yml` run `34330725367` (Hosting only, Firebase version `projects/947789418402/sites/chalkie-app/versions/442ad5f5d8293868`). Manually runtime-verified by the user in production for League Admin, Captain, and Normal Player.
 
   **Root cause:** No admin screen, and no shared layout, ever checked `appUser.isLeagueAdmin`/`isGlobalAdmin`. `(protected)/_layout.tsx` — the one layout wrapping every route under `(protected)/`, including all 8 admin routes (`/admin` tab plus `admin-team`, `admin-dispute`, `admin-inbox`, `admin-fixtures`, `admin-tools`, `admin-season`, `admin-standings-override`) — only guarded on *authentication* (`firebaseUser` present), never on *role*. `TabBar.tsx` hides the Admin tab from non-admins, but that's tab-bar cosmetics only; it doesn't stop a typed URL, deep link, or `router.push`. Confirmed via `firestore.rules` that this was a real, if read-only, exposure — `seasons`/`matches`/`teams` are readable by any league member (by design, used legitimately elsewhere), so a non-admin landing on `/admin` directly saw real season names/statuses and accurate dispute/team counts (not just an empty shell); `seasons`/`teams`/etc. **write** rules are correctly `isAdminFor(...)`-gated, so no unauthorized write was ever possible — the gap was UI-layer exposure of admin screens/data, not a data-mutation risk.
 
@@ -159,7 +185,7 @@ The confirmation dialog itself warns *"This can't be undone — only do this if 
   - No automated test framework exists in this repo for this layer, so verification is by code-path inspection (documented per-role below) plus the two checks above, per the task's own guidance not to introduce a new test framework for this fix.
   - Traced all 5 required scenarios against the new guard logic:
     1. **League Admin** (`isLeagueAdmin: true`) → `isAuthorizedAdmin` true → block condition false → admin screens render normally, no change from before.
-    2. **Global Admin** (`isGlobalAdmin: true`, `leagueId: null`) → `isAuthorizedAdmin` true via the `isGlobalAdmin` branch, `leagueId` never consulted → not blocked, reaches `/admin` directly. (Note: `index.tsx`'s own *initial-login* routing switch only checks `isLeagueAdmin`, not `isGlobalAdmin`, when deciding where a `pending`-role user lands — that's a pre-existing gap in `index.tsx`, untouched by this fix, and out of this task's scope; it does not affect this guard, which never blocks a Global Admin who navigates to an admin route by any means.)
+    2. **Global Admin** (`isGlobalAdmin: true`, `leagueId: null`) → `isAuthorizedAdmin` true via the `isGlobalAdmin` branch, `leagueId` never consulted → not blocked, reaches `/admin` directly if they get there by any means. (Note: `index.tsx`'s own *initial-login* routing switch, and three other UI spots, only check `isLeagueAdmin`, not `isGlobalAdmin` — confirmed and filed as **BUG-005** in the session 4 Global Admin walkthrough below; untouched by this fix and out of this task's scope. It does not affect this guard, which never blocks a Global Admin who navigates to an admin route by any means — confirmed live-relevant in BUG-005's own investigation.)
     3. **Captain** (`role: 'captain'`, no admin flags) → `isAuthorizedAdmin` false → blocked (spinner, no admin content mounts) → effect redirects to `/` → `index.tsx` sends them to the Captain Home tab, exactly where they'd already land after login.
     4. **Normal Player** (`role: 'player'`) → same as Captain, redirected to the Home tab.
     5. **Pending/non-admin user** (`role: 'pending'`, no admin flags) → blocked, redirected to `/` → `index.tsx` sends them to `request-pending` or `find-league` as appropriate — existing onboarding destinations, no new UX invented. A `pending`-role user who *is* `isLeagueAdmin` (the legitimate "admin with no team yet" persona) is correctly **not** blocked.
@@ -167,8 +193,39 @@ The confirmation dialog itself warns *"This can't be undone — only do this if 
 
   **Remaining limitations:**
   - This is a client-side UI guard, not a new security boundary — the actual data-mutation protection was already, and remains, enforced by `firestore.rules` (unchanged in this fix, per scope). This fix closes the *exposure* gap (seeing admin screens/data you shouldn't), not a *mutation* gap (which didn't exist).
-  - `index.tsx`'s own initial-login routing still doesn't special-case a `pending`-role pure Global Admin (see note under scenario 2) — pre-existing, unrelated to BUG-004, and out of scope for this fix.
+  - `index.tsx`'s own initial-login routing still doesn't special-case a `pending`-role pure Global Admin (see note under scenario 2) — pre-existing, unrelated to BUG-004, and out of scope for this fix. **Fixed separately as BUG-005, below.**
   - BUG-001, BUG-002, BUG-003 are unchanged and still open — explicitly out of scope for this task.
+
+- **BUG-005 — `isGlobalAdmin` not checked in 4 client-side navigation/UI spots (fixed, PR open, not yet merged/deployed).**
+
+  **Root cause:** `isGlobalAdmin` was introduced as a platform-wide flag independent of `isLeagueAdmin`/`role`/`leagueId`, and every data-layer check (`firestore.rules`' `isAdminFor()`, every admin-only Cloud Function, `results-entry.tsx`'s `isAdmin` flag, and BUG-004's own `_layout.tsx` guard) was already written to treat it as equivalent to `isLeagueAdmin` — but four earlier-written UI files were missed and never updated to match: `app/index.tsx`'s post-login routing switch, `TabBar.tsx`'s `visibleRouteNames()`, `AppHeader.tsx`'s avatar badge, and `AccountMenu.tsx`'s "Admin" info row all checked `appUser.isLeagueAdmin` alone. Concrete effect on the showcase persona (`role: 'pending'`, `pendingRequestType: null`, `leagueId: null`, `isLeagueAdmin: false`, `isGlobalAdmin: true`): landed on `/find-league` (the new-player onboarding screen) on every login, with no tab, badge, or menu entry pointing at `/admin` anywhere in normal navigation. Confirmed the BUG-004 route guard itself was never affected — it already checked both flags, so a Global Admin was never blocked from `/admin` once there by any means (only *getting* there was broken).
+
+  **Fix:** The same minimal `appUser.isLeagueAdmin || appUser.isGlobalAdmin` expression applied at each of the 4 call sites, mirroring the pattern already proven in `results-entry.tsx` and the BUG-004 guard — no shared helper introduced, since none existed to prefer (both prior correct usages are inline, so inline is the established pattern):
+  - `app/index.tsx` — `case 'pending'`: `else if (appUser.isLeagueAdmin || appUser.isGlobalAdmin) { .../admin }`.
+  - `components/ui/TabBar.tsx` — `visibleRouteNames(role, isAdmin)` (parameter renamed for honesty), called as `visibleRouteNames(appUser?.role, appUser?.isLeagueAdmin || appUser?.isGlobalAdmin)`.
+  - `components/ui/AppHeader.tsx` — `const isAdmin = appUser?.isLeagueAdmin || appUser?.isGlobalAdmin; const badge = isAdmin ? 'A' : ...`.
+  - `components/ui/AccountMenu.tsx` — condition changed to `(appUser?.isLeagueAdmin || appUser?.isGlobalAdmin)`, and the previously-hardcoded label text "League Admin" is now conditional (`appUser?.isGlobalAdmin ? 'Global Admin' : 'League Admin'`) since showing "League Admin" for a genuine Global Admin would itself have been inaccurate.
+
+  No new routes, no league selector, no schema change, no other file touched.
+
+  **Files changed:** `mobile/app/index.tsx`, `mobile/src/components/ui/TabBar.tsx`, `mobile/src/components/ui/AppHeader.tsx`, `mobile/src/components/ui/AccountMenu.tsx` (4 files).
+
+  **Tests/checks:**
+  - `npx tsc --noEmit` — clean, no errors.
+  - `npx expo export -p web` — production web build succeeds (build output removed afterward, not committed).
+  - Full routing trace for all 5 personas against the actual seeded field values (`scripts/showcase-seed/src/seedCore.ts`), confirming the fix changes *only* the Global Admin case and leaves every other persona provably unchanged (the OR only flips an already-true value to still-true for League Admin, or leaves an already-false pair false for everyone else):
+
+    | Persona | `role` | `isLeagueAdmin` | `isGlobalAdmin` | `index.tsx` destination | Tab bar |
+    |---|---|---|---|---|---|
+    | League Admin | `pending` | `true` | `false` | `/admin` (unchanged) | `[admin]` (unchanged) |
+    | Global Admin | `pending` | `false` | `true` | `/find-league` → **`/admin` (fixed)** | `[]` → **`[admin]` (fixed)** |
+    | Captain | `captain` | `false` | `false` | `/captain` (unchanged — routed before the pending/admin check is even reached) | `[captain, captains, fixtures, standings, stats]` (unchanged) |
+    | Normal Player | `player` | `false` | `false` | `/home` (unchanged) | `[home, fixtures, standings, stats]` (unchanged) |
+    | Pending non-admin | `pending` | `false` | `false` | `/find-league` (unchanged) | `[]` (unchanged) |
+
+  **Remaining limitation (unchanged by this fix, exactly as scoped):** the existing admin UI remains league-scoped and has no league selector; this is a future product feature, not part of BUG-005. A Global Admin who now reaches `/admin` via normal navigation still only sees "Set up your league" (see Existing Limitations above) — this fix only gets them to that screen through the UI instead of a typed URL, it does not add any way to manage an existing league.
+
+  **Deployment status:** Not merged, not deployed. PR opened against `main` from a clean branch (see PR link below); awaiting review/merge/deploy approval, same as BUG-004's process.
 
 - **Admin standings/leaderboard missing team & player names** — stale-closure bug in `admin-standings-override.tsx` (names resolved inside the `onSnapshot` callback at fetch time instead of re-derived at render time). Fixed in PR #16 (commit `359cfea71ae7c14630cdafeec9fe1ce4ff59d008`, merged as `8e56219873f1c506812f3a88cb4a8e3631cf2465`). Verified present and correct on `origin/main` this session; user manually verified in production (all 8 team names + player names display correctly).
 - **Table tab "Missing or insufficient permissions"** — root cause was a stale production Hosting build (pre-`df8b791`), not a Firestore rules defect. Fixed by deploying Hosting from current `main` (workflow run `34323588630`, success).
@@ -195,7 +252,7 @@ The confirmation dialog itself warns *"This can't be undone — only do this if 
 | League Admin | Navigation (desktop shell) | PASS (code walkthrough) |
 | League Admin | Navigation (mobile) | 1 P1 found (BUG-001) |
 | League Admin | Loading/error/empty states | PASS with 1 P2 (BUG-003, latent) |
-| League Admin | Route-level access control | **FIXED — BUG-004** (centralized guard in `(protected)/_layout.tsx`) |
+| League Admin | Route-level access control | **CLOSED — BUG-004** (centralized guard in `(protected)/_layout.tsx`, deployed, user-verified) |
 | Captain | Navigation (login, tabs, dead ends) | CODE-REVIEWED ONLY — PASS |
 | Captain | Home / Dashboard | CODE-REVIEWED ONLY — PASS |
 | Captain | Fixtures | CODE-REVIEWED ONLY — PASS |
@@ -214,9 +271,15 @@ The confirmation dialog itself warns *"This can't be undone — only do this if 
 | Normal Player | Fixtures / Match Centre (read-only) | CODE-REVIEWED ONLY — PASS |
 | Normal Player | Standings | CODE-REVIEWED ONLY — PASS |
 | Normal Player | Player statistics (own + leaderboard) | CODE-REVIEWED ONLY — PASS |
-| Normal Player | Role-gating (no captain/admin controls visible) | CODE-REVIEWED ONLY — PASS *within the tab bar*; direct-navigation gap **FIXED — BUG-004** |
+| Normal Player | Role-gating (no captain/admin controls visible) | CODE-REVIEWED ONLY — PASS *within the tab bar*; direct-navigation gap **CLOSED — BUG-004** |
+| Global Admin | Login / post-login routing | CODE-REVIEWED ONLY — **FIXED, BUG-005** (now routes to `/admin`; not yet merged/deployed) |
+| Global Admin | Admin access via normal navigation (tabs/menu) | CODE-REVIEWED ONLY — **FIXED, BUG-005** (tab, badge, and menu label all now appear; not yet merged/deployed) |
+| Global Admin | Admin access via direct URL, and BUG-004 guard interaction | CODE-REVIEWED ONLY — PASS (not blocked by BUG-004 — confirmed) |
+| Global Admin | Admin dashboard behavior with no `leagueId` | CODE-REVIEWED ONLY — matches the pre-existing Existing Limitation described above; not a new bug |
+| Global Admin | Inappropriate/non-global control exposure | CODE-REVIEWED ONLY — PASS (none found) |
+| Global Admin | Navigation/back behavior, loading/error/empty states | CODE-REVIEWED ONLY — PASS |
 
-*No row above is "actually tested and PASS" in the sense of a live interactive session — this remote environment has no Firebase credentials, so no role could be signed in and driven live. Every PASS is a traced-code-path result; see the methodology note at the top of this file.*
+*No row above is "actually tested and PASS" in the sense of a live interactive session, with one exception: BUG-004 was manually runtime-verified by the user in production for League Admin, Captain, and Normal Player (noted in Fixed bugs). Everything else, Global Admin included, is a traced-code-path result only — this remote environment has no Firebase credentials, so those roles could not be signed in and driven live. See the methodology note at the top of this file.*
 
 ## Showcase readiness
 
@@ -224,13 +287,14 @@ The confirmation dialog itself warns *"This can't be undone — only do this if 
 - Showcase dataset: PASS (previously verified; single division/season, so BUG-001 does not manifest)
 - Captain journey: PASS (code-reviewed only — see Role coverage)
 - Normal player journey: PASS (code-reviewed only — see Role coverage)
-- League admin journey: PASS (code-reviewed; BUG-001 dormant, BUG-002/BUG-003 non-blocking follow-ups; BUG-004 fixed this session)
+- League admin journey: PASS (code-reviewed; BUG-001 dormant, BUG-002/BUG-003 non-blocking follow-ups; BUG-004 fixed, deployed, and user-verified)
+- Global admin journey: **FIXED (BUG-005), not yet deployed.** Code-reviewed only, not runtime-verified — a PR is open but not merged or deployed. Once deployed, the named showcase persona will route to `/admin` on login, with a tab, header badge, and "Global Admin" account-menu label all present. `admin.tsx` will still only offer "Set up your league" once there (the pre-existing, out-of-scope Existing Limitation, unchanged by this fix) — that is expected and documented, not a defect.
 - Result submission: PASS (code-reviewed)
 - Result confirmation: PASS (code-reviewed; confirmed automatic/backend-driven, not a missing captain feature)
 - Dispute handling: PASS (code-reviewed, both League Admin and Captain-side reconcile flow)
 - Standings: PASS (PR #16 verified on `origin/main` and in production; correct for all three roles)
 - Player statistics: PASS (code-reviewed)
 - Team/player profiles: PASS (code-reviewed)
-- Production deployment: PASS for PR #16 (Hosting redeployed from `8e56219`, verified Hosting-only). **BUG-004's fix is NOT yet deployed** — committed to `claude/chalkie-audit-prep-5o84ya` only; production is still running without the route guard until this is merged and a Hosting deploy is run.
+- Production deployment: PASS. BUG-004 merged (PR #17) and deployed to production Hosting (run `34330725367`, Hosting-only, confirmed). Manually runtime-verified by the user for League Admin, Captain, and Normal Player.
 
-**Overall recommendation: READY FOR SHOWCASE.** No P0s, no open P1s. BUG-001 is dormant (unreachable with the current single-division showcase dataset). BUG-002/BUG-003 are non-blocking follow-ups, still open. BUG-004 is fixed (centralized route guard, verified by typecheck + build + full code-path trace across all 5 roles) — not yet deployed to production (see below).
+**Overall recommendation: READY FOR SHOWCASE for League Admin, Captain, and Normal Player** — no P0s; BUG-001 dormant, BUG-002/BUG-003 non-blocking follow-ups still open; BUG-004 fixed, deployed, and user-verified. **The Global Admin persona's fix (BUG-005) is code-complete and checks-passing but NOT yet merged or deployed** — production still has the old behavior until the open PR is reviewed, merged, and a Hosting deploy is run (same process as BUG-004). Once deployed: `showcase.globaladmin@chalkie.test` will route to `/admin` on login with a visible tab/badge/menu label; `admin.tsx` will still only offer "Set up your league" (the pre-existing, out-of-scope Existing Limitation) — that remains expected, not a defect. Do not treat Global Admin as demo-ready until this PR is merged and deployed and BUG-005 is runtime-verified the same way BUG-004 was.

@@ -18,16 +18,17 @@ const TAB_META: Record<string, { icon: AppIconName; label: string }> = {
   stats: { icon: 'target', label: 'Stats' },
 };
 
-// isLeagueAdmin is independent of role now — an admin can also be a captain
-// or player of a team in the same league, so the admin tab is layered on top
-// of whatever role-based tabs apply, rather than being its own exclusive case.
-function visibleRouteNames(role: string | undefined, isLeagueAdmin: boolean | undefined): string[] {
+// isAdmin (isLeagueAdmin or isGlobalAdmin) is independent of role now — an
+// admin can also be a captain or player of a team in the same league, so the
+// admin tab is layered on top of whatever role-based tabs apply, rather than
+// being its own exclusive case.
+function visibleRouteNames(role: string | undefined, isAdmin: boolean | undefined): string[] {
   const roleTabs = role === 'player'
     ? ['home', 'fixtures', 'standings', 'stats']
     : role === 'pending'
       ? [] // admin-only, not yet onboarded as a player on any team
       : ['captain', 'captains', 'fixtures', 'standings', 'stats']; // captain, viceCaptain, or not-yet-loaded default
-  return isLeagueAdmin ? ['admin', ...roleTabs] : roleTabs;
+  return isAdmin ? ['admin', ...roleTabs] : roleTabs;
 }
 
 interface TabLayout { x: number; y: number; width: number; height: number }
@@ -37,7 +38,7 @@ export function TabBar({ state, navigation }: BottomTabBarProps) {
   const insets = useSafeAreaInsets();
   const { colorScheme } = useColorScheme();
   const isDark = colorScheme === 'dark';
-  const names = visibleRouteNames(appUser?.role, appUser?.isLeagueAdmin);
+  const names = visibleRouteNames(appUser?.role, appUser?.isLeagueAdmin || appUser?.isGlobalAdmin);
 
   const focusedIndex = names.findIndex((name) => state.routes.find((r) => r.name === name)?.key === state.routes[state.index]?.key);
 

@@ -15,10 +15,12 @@ const ROLE_BADGE: Record<string, string> = {
 export function HeaderAvatar() {
   const { appUser } = useAuthStore();
   const openAccountMenu = useUiStore((s) => s.openAccountMenu);
-  // isLeagueAdmin is independent of role and takes priority in this one-badge
-  // slot — a captain/VC who's also an admin sees "A" here, not "C"/"VC"; the
-  // full picture (both role and admin status) is in the account menu itself.
-  const badge = appUser?.isLeagueAdmin ? 'A' : appUser?.role ? ROLE_BADGE[appUser.role] : undefined;
+  // isLeagueAdmin/isGlobalAdmin are independent of role and take priority in
+  // this one-badge slot — a captain/VC who's also an admin sees "A" here, not
+  // "C"/"VC"; the full picture (both role and admin status) is in the account
+  // menu itself.
+  const isAdmin = appUser?.isLeagueAdmin || appUser?.isGlobalAdmin;
+  const badge = isAdmin ? 'A' : appUser?.role ? ROLE_BADGE[appUser.role] : undefined;
 
   return (
     <TouchableOpacity onPress={openAccountMenu} activeOpacity={0.7} hitSlop={12} className="ml-4">
