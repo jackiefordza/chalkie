@@ -24,9 +24,6 @@ export default function LoginScreen() {
     setIsSubmitting(true);
     try {
       await signIn(email.trim().toLowerCase(), password);
-      // [DIAG-BUG005] temporary — remove before merging
-      console.log('[DIAG-BUG005 login.tsx] signIn() succeeded', { uid: useAuthStore.getState().firebaseUser?.uid ?? null });
-      console.log('[DIAG-BUG005 login.tsx] about to router.replace("/")');
       router.replace('/');
     } catch {
       // error is set in the store

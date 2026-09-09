@@ -131,8 +131,6 @@ export function initAuthListener() {
   let userUnsub: (() => void) | null = null;
 
   const authUnsub = onAuthStateChanged(auth, (user) => {
-    // [DIAG-BUG005] temporary — remove before merging
-    console.log('[DIAG-BUG005 authStore] onAuthStateChanged fired', { uid: user?.uid ?? null });
     if (userUnsub) { userUnsub(); userUnsub = null; }
 
     if (!user) {
@@ -146,17 +144,6 @@ export function initAuthListener() {
     userUnsub = onSnapshot(
       doc(db, 'users', user.uid),
       (snap) => {
-        // [DIAG-BUG005] temporary — remove before merging
-        console.log('[DIAG-BUG005 authStore] users/{uid} onSnapshot fired', {
-          uid: user.uid,
-          exists: snap.exists(),
-          fromCache: snap.metadata.fromCache,
-          role: snap.data()?.role,
-          isGlobalAdmin: snap.data()?.isGlobalAdmin,
-          isLeagueAdmin: snap.data()?.isLeagueAdmin,
-          leagueId: snap.data()?.leagueId,
-          pendingRequestType: snap.data()?.pendingRequestType,
-        });
         if (snap.exists()) {
           const d = snap.data();
           useAuthStore.setState({
