@@ -17,7 +17,7 @@ interface TeamRow {
   played: number; won: number; lost: number; points: number; legsFor: number; legsAgainst: number;
 }
 interface PlayerRow {
-  id: string; playerId: string; playerName: string; teamName: string;
+  id: string; playerId: string; teamId: string; playerName: string; teamName: string;
   played: number; won: number; lost: number; oneEighties: number;
 }
 
@@ -92,7 +92,11 @@ function useStandingsOverrideController(seasonId: string | undefined, divisionId
         setPlayerRows(snap.docs.map((d) => {
           const data = d.data();
           return {
-            id: d.id, playerId: data.playerId, playerName: playerNames[data.playerId] ?? '…',
+            id: d.id, playerId: data.playerId, teamId: data.teamId,
+            // Best-effort at snapshot time — sortedPlayerRows below re-resolves
+            // these from the current teamNames/playerNames on every render, so
+            // this is only what's briefly shown before those maps first load.
+            playerName: playerNames[data.playerId] ?? '…',
             teamName: teamNames[data.teamId] ?? '…',
             played: data.played ?? 0, won: data.won ?? 0, lost: data.lost ?? 0, oneEighties: data.oneEighties ?? 0,
           };
@@ -102,14 +106,38 @@ function useStandingsOverrideController(seasonId: string | undefined, divisionId
 
     return () => { unsubTables(); unsubStats(); };
     // teamNames/playerNames intentionally excluded — they resolve moments after
-    // the rows themselves and would otherwise restart these listeners on every
-    // name lookup update; row content re-renders fine off the next snapshot.
+    // the rows themselves, and re-subscribing these listeners every time a name
+    // resolves would be wasteful. That's still correct; what named resolution
+    // depended on it being safe to bake into these rows at snapshot time
+    // wasn't — see sortedTeamRows/sortedPlayerRows below, which re-resolve
+    // names from the current maps on every render instead.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [seasonId, divisionId, leagueId]);
 
+  // Resolved here, not inside the divisionTables/playerSeasonStats onSnapshot
+  // callbacks above — those callbacks are only re-created when
+  // seasonId/divisionId/leagueId change (see the comment on that effect), so
+  // a name baked in there at snapshot time would stay stale forever once
+  // teamNames/playerNames finish loading a moment later. Re-deriving here on
+  // every render where teamRows/playerRows or the name maps change is the
+  // same pattern standings.tsx and stats.tsx already use (look up the name
+  // at render time, not at fetch time).
   const sortedTeamRows = useMemo(
-    () => [...teamRows].sort((a, b) => (b.points - a.points) || ((b.legsFor - b.legsAgainst) - (a.legsFor - a.legsAgainst))),
-    [teamRows],
+    () => [...teamRows]
+      .map((row) => ({ ...row, teamName: teamNames[row.teamId] ?? row.teamName }))
+      .sort((a, b) => (b.points - a.points) || ((b.legsFor - b.legsAgainst) - (a.legsFor - a.legsAgainst))),
+    [teamRows, teamNames],
+  );
+
+  const sortedPlayerRows = useMemo(
+    () => [...playerRows]
+      .map((row) => ({
+        ...row,
+        playerName: playerNames[row.playerId] ?? row.playerName,
+        teamName: teamNames[row.teamId] ?? row.teamName,
+      }))
+      .sort((a, b) => b.won - a.won),
+    [playerRows, playerNames, teamNames],
   );
 
   function openEditTeam(row: TeamRow) {
@@ -171,7 +199,7 @@ function useStandingsOverrideController(seasonId: string | undefined, divisionId
   }
 
   return {
-    tab, setTab, teamRows, sortedTeamRows, playerRows, isLoading,
+    tab, setTab, teamRows, sortedTeamRows, playerRows, sortedPlayerRows, isLoading,
     editTeamRow, setEditTeamRow, teamDraft, setTeamDraft, isSavingTeam, openEditTeam, saveTeamRow,
     editPlayerRow, setEditPlayerRow, playerDraft, setPlayerDraft, isSavingPlayer, openEditPlayer, savePlayerRow,
   };
@@ -209,9 +237,7 @@ function StandingsBody({ c }: { c: StandingsController }) {
         </View>
       ) : (
         <View className="gap-2">
-          {c.playerRows
-            .sort((a, b) => b.won - a.won)
-            .map((row) => (
+          {c.sortedPlayerRows.map((row) => (
               <TouchableOpacity key={row.id} activeOpacity={0.7} onPress={() => c.openEditPlayer(row)}>
                 <Card className="flex-row items-center">
                   <View className="flex-1">
