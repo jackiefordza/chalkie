@@ -132,10 +132,12 @@ export function AccountMenu() {
               </View>
             )}
 
-            {appUser?.isLeagueAdmin && (
+            {(appUser?.isLeagueAdmin || appUser?.isGlobalAdmin) && (
               <View>
                 <Caption>Admin</Caption>
-                <Body tone="strong" weight="semibold" className="mt-0.5">League Admin</Body>
+                <Body tone="strong" weight="semibold" className="mt-0.5">
+                  {appUser?.isGlobalAdmin ? 'Global Admin' : 'League Admin'}
+                </Body>
               </View>
             )}
 
