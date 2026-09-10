@@ -1,10 +1,16 @@
 import { useEffect } from 'react';
-import { View, ActivityIndicator, Alert } from 'react-native';
+import { View, Text, ActivityIndicator, Alert } from 'react-native';
 import { router } from 'expo-router';
+import { useColorScheme } from 'nativewind';
 import { useAuthStore } from '@/stores/authStore';
+import { RAW } from '@/lib/theme';
+import { FONT_DISPLAY } from '@/styles/typography';
+import { Body, AppIcon } from '@/components/ui';
 
 export default function IndexScreen() {
   const { firebaseUser, appUser, isLoading, logOut } = useAuthStore();
+  const { colorScheme } = useColorScheme();
+  const isDark = colorScheme === 'dark';
 
   useEffect(() => {
     if (isLoading) return;
@@ -57,8 +63,18 @@ export default function IndexScreen() {
   }, [firebaseUser, appUser, isLoading]);
 
   return (
-    <View className="flex-1 bg-black items-center justify-center">
-      <ActivityIndicator size="large" color="#007AFF" />
+    <View className="flex-1 bg-bg dark:bg-bg-dark items-center justify-center">
+      <View className="w-20 h-20 rounded-full items-center justify-center bg-brand-fill dark:bg-brand-fill-dark mb-3">
+        <AppIcon name="target" size={40} color={isDark ? RAW.brandInkDark : RAW.brandInk} />
+      </View>
+      <Text
+        className="text-text dark:text-text-dark"
+        style={{ fontFamily: FONT_DISPLAY, fontSize: 36, fontWeight: '700', letterSpacing: -0.5 }}
+      >
+        Chalkie
+      </Text>
+      <Body className="mt-1 mb-8">Darts League Management</Body>
+      <ActivityIndicator size="large" color={RAW.brand} />
     </View>
   );
 }

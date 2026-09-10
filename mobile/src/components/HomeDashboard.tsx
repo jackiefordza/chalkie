@@ -7,26 +7,14 @@ import {
 } from 'firebase/firestore';
 import { db } from '@/config/firebase';
 import { useAuthStore } from '@/stores/authStore';
-import { RAW, type SemanticTone } from '@/lib/theme';
+import { RAW } from '@/lib/theme';
+import { STATUS_LABEL, STATUS_TONE } from '@/lib/matchStatus';
 import {
   Screen, Heading, Body, Caption, Badge, Card, StatTile, ListRow, Button, AppIcon, FormBadge,
 } from '@/components/ui';
-import type { Match, MatchStatus, DivisionTable, PlayerSeasonStats } from '@/types';
+import type { Match, DivisionTable, PlayerSeasonStats } from '@/types';
 
 interface OpponentContact { name: string; phone: string }
-
-const STATUS_LABEL: Record<MatchStatus, string> = {
-  scheduled: 'Scheduled',
-  awaiting_confirmation: 'Awaiting confirmation',
-  disputed: 'Disputed',
-  confirmed: 'Final',
-};
-const STATUS_TONE: Record<MatchStatus, SemanticTone | null> = {
-  scheduled: null,
-  awaiting_confirmation: 'butter',
-  disputed: 'coral',
-  confirmed: 'sage',
-};
 
 function formatDate(date: Date): string {
   return date.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });

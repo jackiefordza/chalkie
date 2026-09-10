@@ -3,23 +3,11 @@ import { View, TouchableOpacity } from 'react-native';
 import { router } from 'expo-router';
 import { useColorScheme } from 'nativewind';
 import { RAW, type SemanticTone } from '@/lib/theme';
+import { STATUS_LABEL, STATUS_TONE } from '@/lib/matchStatus';
 import {
   Heading, Body, Caption, Stat, Badge, Card, Button, AppIcon,
 } from '@/components/ui';
-import type { Match, MatchGame, MatchStatus } from '@/types';
-
-export const STATUS_LABEL: Record<MatchStatus, string> = {
-  scheduled: 'Scheduled',
-  awaiting_confirmation: 'Awaiting Confirmation',
-  disputed: 'Disputed',
-  confirmed: 'Confirmed',
-};
-export const STATUS_TONE: Record<MatchStatus, SemanticTone | null> = {
-  scheduled: null,
-  awaiting_confirmation: 'butter',
-  disputed: 'coral',
-  confirmed: 'sage',
-};
+import type { Match, MatchGame } from '@/types';
 
 export function formatMatchDate(date: Date): string {
   return date.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' });

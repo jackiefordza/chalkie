@@ -8,7 +8,8 @@ import {
 import { db } from '@/config/firebase';
 import { useAuthStore } from '@/stores/authStore';
 import { generateRoundRobinFixtures } from '@/lib/fixtures';
-import { RAW, type SemanticTone } from '@/lib/theme';
+import { RAW } from '@/lib/theme';
+import { STATUS_LABEL, STATUS_TONE } from '@/lib/matchStatus';
 import { Screen, Heading, Body, Caption, Badge, Button, Card, ListRow, Input, Label, Sheet, AppBar } from '@/components/ui';
 import { AdminShell } from '@/components/admin/AdminShell';
 import type { Match } from '@/types';
@@ -33,13 +34,6 @@ function parseDateInput(text: string): Date | null {
 function formatDate(date: Date): string {
   return date.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
 }
-
-const STATUS_TONE: Record<Match['status'], SemanticTone | null> = {
-  scheduled: null,
-  awaiting_confirmation: 'butter',
-  disputed: 'coral',
-  confirmed: 'sage',
-};
 
 function groupByRound(matches: Match[]): [number, Match[]][] {
   const byRound = new Map<number, Match[]>();
@@ -103,7 +97,7 @@ function ResultsTable({
             <Body size="sm" className="w-24">{match.homeLegsWon ?? '–'}-{match.awayLegsWon ?? '–'}</Body>
             <Body size="sm" className="w-36">{formatDate(match.scheduledDate)}</Body>
             <View className="w-32">
-              {tone ? <Badge tone={tone}>{match.status}</Badge> : <Body size="sm">{match.status}</Body>}
+              {tone ? <Badge tone={tone}>{STATUS_LABEL[match.status]}</Badge> : <Body size="sm">{STATUS_LABEL[match.status]}</Body>}
             </View>
           </TouchableOpacity>
         );
@@ -155,7 +149,7 @@ function DesktopFixtureTable({
             <Body size="sm" className="w-36">{formatDate(match.scheduledDate)}</Body>
             <Body size="sm" className="flex-1" numberOfLines={1}>{match.venue ?? '—'}</Body>
             <View className="w-32">
-              {tone ? <Badge tone={tone}>{match.status}</Badge> : <Body size="sm">{match.status}</Body>}
+              {tone ? <Badge tone={tone}>{STATUS_LABEL[match.status]}</Badge> : <Body size="sm">{STATUS_LABEL[match.status]}</Body>}
             </View>
           </TouchableOpacity>
         );
@@ -467,7 +461,7 @@ function FixturesBody({ c, isDesktop, statusFilter }: { c: FixturesController; i
                   <ListRow
                     key={match.id}
                     title={`${c.teamName(match.homeTeamId)} vs ${c.teamName(match.awayTeamId)}`}
-                    subtitle={`${match.venue ?? 'No venue set'}${match.status !== 'scheduled' ? ` · ${match.status}` : ''}`}
+                    subtitle={`${match.venue ?? 'No venue set'}${match.status !== 'scheduled' ? ` · ${STATUS_LABEL[match.status]}` : ''}`}
                     onPress={() => c.openEdit(match)}
                   />
                 ))}
