@@ -320,6 +320,7 @@ function useFixturesController(divisionId: string | undefined, leagueId: string 
             // result recorded, regardless of what the check above saw.
             const snap = await getDocs(query(
               collection(db, 'matches'),
+              where('leagueId', '==', leagueId),
               where('divisionId', '==', divisionId),
               where('status', '==', 'scheduled'),
             ));
