@@ -7,6 +7,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '@/config/firebase';
 import { RAW } from '@/lib/theme';
+import { STATUS_LABEL, STATUS_TONE } from '@/lib/matchStatus';
 import {
   Screen, AppBar, Heading, Body, Caption, Badge, Card, StatTile, Avatar, AppIcon, FormBadge,
 } from '@/components/ui';
@@ -324,8 +325,8 @@ export default function TeamProfileScreen() {
                         <Body tone="strong" weight="semibold" className="flex-1" numberOfLines={1}>
                           {isHome ? 'vs' : '@'} {teamNamesById[opponentId] ?? '…'}
                         </Body>
-                        <Badge tone={m.status === 'disputed' ? 'coral' : m.status === 'awaiting_confirmation' ? 'butter' : 'brand'}>
-                          {m.status === 'disputed' ? 'Disputed' : m.status === 'awaiting_confirmation' ? 'Awaiting confirmation' : 'Scheduled'}
+                        <Badge tone={STATUS_TONE[m.status] ?? 'brand'}>
+                          {STATUS_LABEL[m.status]}
                         </Badge>
                       </View>
                       <Body size="sm">

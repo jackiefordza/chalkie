@@ -6,23 +6,10 @@ import { useColorScheme } from 'nativewind';
 import { collection, onSnapshot, query, where, orderBy, and, or } from 'firebase/firestore';
 import { db } from '@/config/firebase';
 import { useAuthStore } from '@/stores/authStore';
-import { RAW, type SemanticTone } from '@/lib/theme';
+import { RAW } from '@/lib/theme';
+import { STATUS_LABEL, STATUS_TONE } from '@/lib/matchStatus';
 import { Heading, Body, Badge, Card, Chip, Button, AppIcon } from '@/components/ui';
 import type { Match } from '@/types';
-
-const STATUS_LABEL: Record<Match['status'], string> = {
-  scheduled: 'Upcoming',
-  awaiting_confirmation: 'Awaiting confirmation',
-  disputed: 'Disputed',
-  confirmed: 'Final',
-};
-
-const STATUS_TONE: Record<Match['status'], SemanticTone | null> = {
-  scheduled: null,
-  awaiting_confirmation: 'butter',
-  disputed: 'coral',
-  confirmed: 'sage',
-};
 
 function formatDate(date: Date): string {
   return date.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
