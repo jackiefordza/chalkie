@@ -289,16 +289,44 @@ function useFixturesController(divisionId: string | undefined, leagueId: string 
     }
   }
 
+  // BUG-002 fix: bulk delete must be at least as safe as the single-fixture
+  // delete path (deleteFixture below, which refuses anything but a
+  // 'scheduled' match) — previously this wiped every match in the division
+  // unconditionally, confirmed/disputed/awaiting-confirmation included.
   async function deleteAllFixtures() {
+    const nonScheduled = matches.filter((m) => m.status !== 'scheduled');
+    if (nonScheduled.length > 0) {
+      Alert.alert(
+        'Can’t regenerate fixtures',
+        `${nonScheduled.length} fixture${nonScheduled.length === 1 ? '' : 's'} in ${divisionName} already ${nonScheduled.length === 1 ? 'has' : 'have'} a result recorded (submitted, confirmed, or disputed). Regenerating would destroy that history, so it's blocked while any exist — resolve or correct those results first, or delete individual still-scheduled fixtures one at a time instead.`,
+        [{ text: 'OK' }],
+      );
+      return;
+    }
+
+    const expectedCount = matches.length;
     Alert.alert(
       'Delete all fixtures',
-      `Delete all ${matches.length} fixtures for ${divisionName}? This can't be undone — only do this if no results have been submitted yet.`,
+      `Delete all ${expectedCount} fixtures for ${divisionName}? This can't be undone.`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Delete All', style: 'destructive',
           onPress: async () => {
-            const snap = await getDocs(query(collection(db, 'matches'), where('divisionId', '==', divisionId)));
+            // Defense in depth against a race (e.g. a result gets submitted
+            // in the moment between opening this dialog and confirming it):
+            // scope the actual delete query to status=='scheduled' so this
+            // is structurally incapable of deleting a fixture with any
+            // result recorded, regardless of what the check above saw.
+            const snap = await getDocs(query(
+              collection(db, 'matches'),
+              where('divisionId', '==', divisionId),
+              where('status', '==', 'scheduled'),
+            ));
+            if (snap.size !== expectedCount) {
+              Alert.alert('Fixtures changed', 'Something changed since you opened this screen — please review the fixtures and try again.');
+              return;
+            }
             const batch = writeBatch(db);
             snap.docs.forEach((d) => batch.delete(d.ref));
             await batch.commit();

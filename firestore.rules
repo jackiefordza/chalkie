@@ -300,7 +300,22 @@ service cloud.firestore {
     match /matches/{matchId} {
       allow read: if isSignedIn() && (me().leagueId == resource.data.leagueId || isGlobalAdmin());
       allow create: if isAdminFor(request.resource.data.leagueId);
-      allow update, delete: if isAdminFor(resource.data.leagueId);
+      allow update: if isAdminFor(resource.data.leagueId);
+
+      // BUG-002 hardening: two legitimate admin flows delete a match —
+      // admin-fixtures.tsx's single/bulk fixture delete (mobile app requires
+      // 'scheduled' before offering it) and results-entry.tsx's "Delete
+      // Fixture" undo of a confirmed result (requires 'confirmed'). Neither
+      // ever deletes a 'disputed' or 'awaiting_confirmation' match — those
+      // statuses mean a real submission exists that hasn't been resolved
+      // yet, and are blocked here so that invariant holds even if a client
+      // bypasses the app's own guards (e.g. a bulk-delete call constructed
+      // to skip admin-fixtures.tsx's status check). This is a client-
+      // independent floor under the app-layer checks, not a replacement for
+      // them — the app still decides which of 'scheduled'/'confirmed' a
+      // given screen may act on.
+      allow delete: if isAdminFor(resource.data.leagueId)
+        && (resource.data.status == 'scheduled' || resource.data.status == 'confirmed');
 
       match /submissions/{submissionId} {
         function matchData() {

@@ -40,7 +40,8 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "build:web": "expo export -p web"
+    "build:web": "expo export -p web",
+    "test": "tsc -p tsconfig.test.json && node --test \"dist-test/lib/**/*.test.js\""
   },
   "private": true
 }

@@ -14,96 +14,15 @@ import {
 } from '@/components/ui';
 import { AdminShell } from '@/components/admin/AdminShell';
 import { MatchHeader, MatchSummary, GameRow, ActionBanner } from '@/components/MatchCentre';
-import type { Match, MatchGame, GameType, MatchSide, HighCheckout } from '@/types';
+import {
+  LEGS_PER_GAME, blankGames, toDraft, toMatchGame, slotsFor, isGameComplete, normalizeGameForCompare,
+  type DraftGame,
+} from '@/lib/matchResultDraft';
+import type { Match, MatchGame, MatchSide } from '@/types';
 
 const DESKTOP_BREAKPOINT = 768;
 
 interface Player { id: string; name: string; teamId: string }
-
-interface DraftGame {
-  order: number;
-  type: GameType;
-  homePlayerIds: string[];
-  awayPlayerIds: string[];
-  // Legs won, home–away. Always sums to 3 (all 3 legs are always played).
-  score: { home: number; away: number } | null;
-  oneEighties: string[]; // playerId per 180 thrown (a player can appear more than once)
-  highCheckouts: { playerId: string; value: string }[]; // at most one per leg, so max 3
-}
-
-function blankGames(): DraftGame[] {
-  return Array.from({ length: 7 }, (_, i) => ({
-    order: i + 1,
-    type: (i < 5 ? 'singles' : 'pairs') as GameType,
-    homePlayerIds: [],
-    awayPlayerIds: [],
-    score: null,
-    oneEighties: [],
-    highCheckouts: [],
-  }));
-}
-
-function toDraft(games: MatchGame[]): DraftGame[] {
-  return games.map((g) => ({
-    order: g.order,
-    type: g.type,
-    homePlayerIds: [...g.homePlayerIds],
-    awayPlayerIds: [...g.awayPlayerIds],
-    score: {
-      home: g.legs.filter((l) => l.winner === 'home').length,
-      away: g.legs.filter((l) => l.winner === 'away').length,
-    },
-    oneEighties: g.legs.flatMap((l) => l.oneEighties),
-    highCheckouts: g.legs
-      .map((l) => l.highCheckout)
-      .filter((hc): hc is HighCheckout => hc !== null)
-      .map((hc) => ({ ...hc })),
-  }));
-}
-
-function toMatchGame(g: DraftGame): MatchGame {
-  const score = g.score as { home: number; away: number };
-  const winners: MatchSide[] = [
-    ...Array(score.home).fill('home' as MatchSide),
-    ...Array(score.away).fill('away' as MatchSide),
-  ];
-  return {
-    order: g.order,
-    type: g.type,
-    homePlayerIds: g.homePlayerIds,
-    awayPlayerIds: g.awayPlayerIds,
-    legs: winners.map((winner, i) => ({
-      winner,
-      oneEighties: i === 0 ? g.oneEighties : [],
-      highCheckout: g.highCheckouts[i] ?? null,
-    })),
-  };
-}
-
-function slotsFor(type: GameType) {
-  return type === 'singles' ? 1 : 2;
-}
-
-function isGameComplete(game: DraftGame): boolean {
-  const need = slotsFor(game.type);
-  return (
-    game.homePlayerIds.length === need
-    && game.awayPlayerIds.length === need
-    && game.score !== null
-  );
-}
-
-function normalizeGameForCompare(g: DraftGame): string {
-  return JSON.stringify({
-    homePlayerIds: [...g.homePlayerIds].sort(),
-    awayPlayerIds: [...g.awayPlayerIds].sort(),
-    score: g.score,
-    oneEighties: [...g.oneEighties].sort(),
-    highCheckouts: [...g.highCheckouts]
-      .map((hc) => `${hc.playerId}:${hc.value}`)
-      .sort(),
-  });
-}
 
 export default function ResultsEntryScreen() {
   const { matchId } = useLocalSearchParams<{ matchId: string }>();
@@ -131,10 +50,18 @@ export default function ResultsEntryScreen() {
   // player-picker modal
   const [picker, setPicker] = useState<{ gameIndex: number; side: MatchSide } | null>(null);
 
+  // Which leg (0-2) new 180s get attributed to, per game — defaults to the
+  // first leg. Lets a captain tap through several 180s in the same leg
+  // without re-selecting it each time, matching the existing tap-to-add
+  // interaction; switching legs is one extra tap when a 180 happened later
+  // in the game.
+  const [activeLeg, setActiveLeg] = useState<Record<number, number>>({});
+
   // high-checkout modal (add new, or edit an existing entry) for a given game
   const [checkoutModal, setCheckoutModal] = useState<{ gameIndex: number; editIndex: number | null } | null>(null);
   const [checkoutPlayerId, setCheckoutPlayerId] = useState<string | null>(null);
   const [checkoutValue, setCheckoutValue] = useState('');
+  const [checkoutLegIndex, setCheckoutLegIndex] = useState<number | null>(null);
 
   const teamId = appUser?.teamId ?? null;
   const isHome = match ? teamId === match.homeTeamId : false;
@@ -319,13 +246,22 @@ export default function ResultsEntryScreen() {
     }
   }
 
-  function addOneEighty(gameIndex: number, playerId: string) {
-    updateGame(gameIndex, { oneEighties: [...games[gameIndex].oneEighties, playerId] });
+  function legIndexFor(gameIndex: number): number {
+    return activeLeg[gameIndex] ?? 0;
   }
 
+  function addOneEighty(gameIndex: number, playerId: string) {
+    const legIndex = legIndexFor(gameIndex);
+    updateGame(gameIndex, { oneEighties: [...games[gameIndex].oneEighties, { playerId, legIndex }] });
+  }
+
+  // Removes one 180 for this player from the currently-selected leg — the UI
+  // only offers this when one exists there (see the "−" button's condition
+  // in the render below), so there's always a matching entry to remove.
   function removeOneEighty(gameIndex: number, playerId: string) {
+    const legIndex = legIndexFor(gameIndex);
     const list = [...games[gameIndex].oneEighties];
-    const idx = list.lastIndexOf(playerId);
+    const idx = list.findIndex((o) => o.playerId === playerId && o.legIndex === legIndex);
     if (idx !== -1) list.splice(idx, 1);
     updateGame(gameIndex, { oneEighties: list });
   }
@@ -333,6 +269,7 @@ export default function ResultsEntryScreen() {
   function openAddCheckout(gameIndex: number) {
     setCheckoutPlayerId(null);
     setCheckoutValue('');
+    setCheckoutLegIndex(null);
     setCheckoutModal({ gameIndex, editIndex: null });
   }
 
@@ -340,13 +277,14 @@ export default function ResultsEntryScreen() {
     const existing = games[gameIndex].highCheckouts[editIndex];
     setCheckoutPlayerId(existing.playerId);
     setCheckoutValue(existing.value);
+    setCheckoutLegIndex(existing.legIndex);
     setCheckoutModal({ gameIndex, editIndex });
   }
 
   function saveCheckout() {
-    if (!checkoutModal || !checkoutPlayerId || !checkoutValue.trim()) return;
+    if (!checkoutModal || !checkoutPlayerId || !checkoutValue.trim() || checkoutLegIndex === null) return;
     const { gameIndex, editIndex } = checkoutModal;
-    const entry = { playerId: checkoutPlayerId, value: checkoutValue.trim() };
+    const entry = { playerId: checkoutPlayerId, value: checkoutValue.trim(), legIndex: checkoutLegIndex };
     const list = [...games[gameIndex].highCheckouts];
     if (editIndex === null) list.push(entry); else list[editIndex] = entry;
     updateGame(gameIndex, { highCheckouts: list });
@@ -619,28 +557,43 @@ export default function ResultsEntryScreen() {
                     </Chip>
                   </View>
 
-                  {/* 180s */}
+                  {/* 180s — attributed to a specific leg (fixes BUG-007: these
+                      used to always land on leg 1 regardless of which leg
+                      they actually happened in). "Leg" here uses the same
+                      ordering Show Legs displays: home's legs first, then
+                      away's, matching how the score above determines them. */}
                   {participants.length > 0 && (
                     <>
-                      <Caption className="mb-1.5">180s (tap to add, tap − to remove)</Caption>
+                      <Caption className="mb-1.5">180s — which leg?</Caption>
+                      <View className="flex-row gap-2 mb-2.5">
+                        {Array.from({ length: LEGS_PER_GAME }, (_, legIndex) => (
+                          <Chip
+                            key={legIndex}
+                            label={`Leg ${legIndex + 1}`}
+                            selected={legIndexFor(gameIndex) === legIndex}
+                            onPress={() => setActiveLeg((prev) => ({ ...prev, [gameIndex]: legIndex }))}
+                          />
+                        ))}
+                      </View>
+                      <Caption className="mb-1.5">180s in this leg (tap to add, tap − to remove)</Caption>
                       <View className="flex-row flex-wrap gap-2 mb-3.5">
                         {participants.map((id) => {
-                          const count = game.oneEighties.filter((x) => x === id).length;
-                          const active = count > 0;
+                          const totalCount = game.oneEighties.filter((o) => o.playerId === id).length;
+                          const activeOnThisLeg = game.oneEighties.some((o) => o.playerId === id && o.legIndex === legIndexFor(gameIndex));
                           return (
                             <View
                               key={id}
                               className={[
                                 'flex-row min-h-[44px] rounded-full items-center pl-1',
-                                active ? 'bg-butter-fill dark:bg-butter-fill-dark' : 'bg-surface-2 dark:bg-surface-2-dark',
+                                totalCount > 0 ? 'bg-butter-fill dark:bg-butter-fill-dark' : 'bg-surface-2 dark:bg-surface-2-dark',
                               ].join(' ')}
                             >
                               <TouchableOpacity activeOpacity={0.7} onPress={() => addOneEighty(gameIndex, id)} className="px-2.5 py-2.5">
-                                <Body size="sm" tone={active ? 'butter' : 'dim'} weight="semibold">
-                                  {playerName(id)}{active ? ` × ${count}` : ''}
+                                <Body size="sm" tone={totalCount > 0 ? 'butter' : 'dim'} weight="semibold">
+                                  {playerName(id)}{totalCount > 0 ? ` × ${totalCount}` : ''}
                                 </Body>
                               </TouchableOpacity>
-                              {active && (
+                              {activeOnThisLeg && (
                                 <TouchableOpacity activeOpacity={0.7}
                                   onPress={() => removeOneEighty(gameIndex, id)}
                                   hitSlop={8}
@@ -656,7 +609,10 @@ export default function ResultsEntryScreen() {
                     </>
                   )}
 
-                  {/* High checkouts */}
+                  {/* High checkouts — each now carries the leg it happened in
+                      (fixes BUG-007: previously mapped to a leg purely by
+                      array position, unrelated to the leg it actually
+                      happened in). Capped at one per leg, same as before. */}
                   <Caption className="mb-1.5">High checkouts</Caption>
                   <View className="flex-row flex-wrap gap-2">
                     {game.highCheckouts.map((hc, i) => (
@@ -665,10 +621,10 @@ export default function ResultsEntryScreen() {
                         tone="butter"
                         selected
                         onPress={() => openEditCheckout(gameIndex, i)}
-                        label={`${playerName(hc.playerId)} — ${hc.value}`}
+                        label={`Leg ${hc.legIndex + 1}: ${playerName(hc.playerId)} — ${hc.value}`}
                       />
                     ))}
-                    {participants.length > 0 && game.highCheckouts.length < 3 && (
+                    {participants.length > 0 && game.highCheckouts.length < LEGS_PER_GAME && (
                       <Chip onPress={() => openAddCheckout(gameIndex)} label="+ Add high checkout" />
                     )}
                   </View>
@@ -729,6 +685,29 @@ export default function ResultsEntryScreen() {
       {/* High checkout modal */}
       <Sheet visible={!!checkoutModal} onClose={() => setCheckoutModal(null)}>
         <Heading className="mb-4">High Checkout</Heading>
+        <Label>Which leg?</Label>
+        <View className="flex-row gap-1.5 mb-4">
+          {checkoutModal && Array.from({ length: LEGS_PER_GAME }, (_, legIndex) => {
+            // At most one checkout per leg — a leg already claimed by a
+            // DIFFERENT entry than the one being edited can't be picked.
+            const takenByAnother = games[checkoutModal.gameIndex].highCheckouts.some(
+              (hc, i) => hc.legIndex === legIndex && i !== checkoutModal.editIndex,
+            );
+            return (
+              <Chip
+                key={legIndex}
+                label={`Leg ${legIndex + 1}`}
+                selected={checkoutLegIndex === legIndex}
+                disabled={takenByAnother}
+                className={takenByAnother ? 'opacity-40' : ''}
+                onPress={() => setCheckoutLegIndex(legIndex)}
+              />
+            );
+          })}
+        </View>
+        {checkoutLegIndex === null && (
+          <Body size="sm" tone="dim" className="mb-3 -mt-2">Pick which leg this happened in before saving.</Body>
+        )}
         <Label>Player</Label>
         <View className="flex-row flex-wrap gap-1.5 mb-4">
           {checkoutModal && [...games[checkoutModal.gameIndex].homePlayerIds, ...games[checkoutModal.gameIndex].awayPlayerIds].map((id) => (
@@ -755,7 +734,7 @@ export default function ResultsEntryScreen() {
           {checkoutModal?.editIndex !== null && (
             <Button variant="danger" className="flex-1" onPress={removeCheckout}>Remove</Button>
           )}
-          <Button className="flex-1" disabled={!checkoutPlayerId || !checkoutValue.trim()} onPress={saveCheckout}>Save</Button>
+          <Button className="flex-1" disabled={!checkoutPlayerId || !checkoutValue.trim() || checkoutLegIndex === null} onPress={saveCheckout}>Save</Button>
         </View>
       </Sheet>
     </>
