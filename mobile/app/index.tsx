@@ -3,6 +3,7 @@ import { View, Text, ActivityIndicator, Alert } from 'react-native';
 import { router } from 'expo-router';
 import { useColorScheme } from 'nativewind';
 import { useAuthStore } from '@/stores/authStore';
+import { useOnboardingStore } from '@/stores/onboardingStore';
 import { RAW } from '@/lib/theme';
 import { FONT_DISPLAY } from '@/styles/typography';
 import { Body, AppIcon } from '@/components/ui';
@@ -55,8 +56,16 @@ export default function IndexScreen() {
           // find/join, go straight to admin.
           router.replace('/(protected)/(tabs)/admin');
         } else {
-          // Fresh pending user — start onboarding
-          router.replace('/(protected)/find-league');
+          // Fresh pending user — start onboarding, unless they arrived via a
+          // captain-invite link (register.tsx pre-filled league+team into
+          // onboardingStore), in which case skip straight past the league/
+          // team search to the request form itself.
+          const { league, team, skipChoosePath } = useOnboardingStore.getState();
+          if (skipChoosePath && league && team) {
+            router.replace('/(protected)/request-captain-role');
+          } else {
+            router.replace('/(protected)/find-league');
+          }
         }
         break;
     }

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { View, TouchableOpacity, ActivityIndicator, Alert, useWindowDimensions } from 'react-native';
+import { View, TouchableOpacity, ActivityIndicator, Alert, Platform, useWindowDimensions } from 'react-native';
 import { Stack, useLocalSearchParams } from 'expo-router';
 import {
   collection, doc, onSnapshot, query, where, updateDoc, getDoc, addDoc, writeBatch,
@@ -38,6 +38,7 @@ export default function AdminTeamScreen() {
   const isDesktop = width >= DESKTOP_BREAKPOINT;
 
   const [teamName, setTeamName] = useState('');
+  const [teamLeagueId, setTeamLeagueId] = useState<string | null>(null);
   const [teamAddress, setTeamAddress] = useState<string | null>(null);
   const [teamVenuePhone, setTeamVenuePhone] = useState<string | null>(null);
   const [seasonId, setSeasonId] = useState<string | null>(null);
@@ -73,6 +74,8 @@ export default function AdminTeamScreen() {
   const [moveTarget, setMoveTarget] = useState<Player | null>(null);
   const [isMoving, setIsMoving] = useState(false);
 
+  const [showInvite, setShowInvite] = useState(false);
+
   useEffect(() => {
     if (!teamId) return;
 
@@ -80,6 +83,7 @@ export default function AdminTeamScreen() {
       if (!snap.exists()) return;
       const data = snap.data();
       setTeamName(data.name);
+      setTeamLeagueId(data.leagueId ?? null);
       setTeamAddress(data.address ?? null);
       setTeamVenuePhone(data.venuePhone ?? null);
 
@@ -361,6 +365,38 @@ export default function AdminTeamScreen() {
     </Card>
   );
 
+  // Web-only (no native deep-link scheme is wired up, and mobile web is the
+  // whole pilot experience anyway) — a link straight into register.tsx with
+  // this team pre-filled (see register.tsx's applyCaptainInvite), so a new
+  // captain skips searching for the league/team themselves. They still pick
+  // Captain vs Vice Captain and enter their own phone number, and the
+  // request still goes through the normal admin/captain approval flow —
+  // this only removes the search step, not the approval gate.
+  const inviteUrl = Platform.OS === 'web' && teamLeagueId
+    ? `${window.location.origin}/register?league=${teamLeagueId}&team=${teamId}`
+    : null;
+
+  const inviteCard = inviteUrl && (
+    <Card className="mb-4">
+      <View className="flex-row items-center mb-2.5">
+        <Heading size="sm" className="flex-1">Invite a Captain</Heading>
+        <Button variant="secondary" size="sm" onPress={() => setShowInvite((v) => !v)}>
+          {showInvite ? 'Hide' : 'Get Link'}
+        </Button>
+      </View>
+      {showInvite ? (
+        <>
+          <Body size="sm" className="mb-2.5">
+            Share this link — it skips straight to sign-up for {teamName}, no league/team search needed.
+          </Body>
+          <Input value={inviteUrl} editable={false} selectTextOnFocus />
+        </>
+      ) : (
+        <Body size="sm">Skip the league/team search for a new captain with a direct sign-up link.</Body>
+      )}
+    </Card>
+  );
+
   const captainCard = (
     <Card className="mb-4">
       <View className={vcName ? 'mb-3' : ''}>
@@ -434,6 +470,7 @@ export default function AdminTeamScreen() {
     <>
       {nameCard}
       {captainCard}
+      {inviteCard}
       {venueCard}
 
       <View className="flex-row items-center mb-2.5">

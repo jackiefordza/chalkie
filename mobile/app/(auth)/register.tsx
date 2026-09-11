@@ -1,7 +1,10 @@
 import { useState, useRef } from 'react';
 import { View, KeyboardAvoidingView, Platform, ScrollView, type TextInput as TextInputType } from 'react-native';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
+import { doc, getDoc } from 'firebase/firestore';
+import { db } from '@/config/firebase';
 import { useAuthStore } from '@/stores/authStore';
+import { useOnboardingStore } from '@/stores/onboardingStore';
 import { goBack } from '@/lib/navigation';
 import { Heading, Body, Button, Card, Input, Label } from '@/components/ui';
 
@@ -18,6 +21,11 @@ export default function RegisterScreen() {
   const confirmRef = useRef<TextInputType>(null);
 
   const { register, error, clearError } = useAuthStore();
+  // Captain-invite deep link (admin-team.tsx's "Invite a Captain" link):
+  // /register?league=<id>&team=<id>. Best-effort only — an invalid/missing
+  // id, or either doc failing to load, just falls through to the normal
+  // find-your-league onboarding rather than blocking registration.
+  const { league: invitedLeagueId, team: invitedTeamId } = useLocalSearchParams<{ league?: string; team?: string }>();
 
   async function handleRegister() {
     setValidationError(null);
@@ -31,11 +39,30 @@ export default function RegisterScreen() {
     setIsSubmitting(true);
     try {
       await register(email.trim().toLowerCase(), password, name.trim());
+      if (invitedLeagueId && invitedTeamId) await applyCaptainInvite(invitedLeagueId, invitedTeamId);
       router.replace('/');
     } catch {
       // error is set in the store
     } finally {
       setIsSubmitting(false);
+    }
+  }
+
+  async function applyCaptainInvite(leagueId: string, teamId: string) {
+    try {
+      const [leagueSnap, teamSnap] = await Promise.all([
+        getDoc(doc(db, 'leagues', leagueId)),
+        getDoc(doc(db, 'teams', teamId)),
+      ]);
+      if (!leagueSnap.exists() || !teamSnap.exists()) return;
+      const { setLeague, setTeam, setSkipChoosePath, setCaptainPath } = useOnboardingStore.getState();
+      setLeague({ id: leagueSnap.id, name: leagueSnap.data().name });
+      setTeam({ id: teamSnap.id, name: teamSnap.data().name });
+      setCaptainPath(true);
+      setSkipChoosePath(true);
+    } catch {
+      // Invite pre-fill is a convenience, not a requirement — registration
+      // itself already succeeded, so just proceed to normal onboarding.
     }
   }
 

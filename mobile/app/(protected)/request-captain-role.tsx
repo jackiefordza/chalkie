@@ -31,7 +31,7 @@ export default function RequestCaptainRoleScreen() {
   const [error, setError] = useState<string | null>(null);
 
   const { appUser } = useAuthStore();
-  const { league, hasHydrated, setCaptainPath } = useOnboardingStore();
+  const { league, hasHydrated, team: invitedTeam, setCaptainPath } = useOnboardingStore();
 
   const captainTaken = !!selected?.captainUserId;
   const vcTaken = !!selected?.viceCaptainUserId;
@@ -60,6 +60,16 @@ export default function RequestCaptainRoleScreen() {
       .catch(() => setError('Could not load teams.'))
       .finally(() => setIsLoading(false));
   }, [league, hasHydrated]);
+
+  // Arrived via a captain-invite link (admin-team.tsx) — pre-select that
+  // team the moment it's in the fetched list, skipping the search step.
+  // Only runs while nothing is selected yet, so it never fights a manual
+  // pick (e.g. someone using a stale/wrong invite and choosing differently).
+  useEffect(() => {
+    if (!invitedTeam || selected || teams.length === 0) return;
+    const match = teams.find((t) => t.id === invitedTeam.id);
+    if (match) setSelected(match);
+  }, [invitedTeam, teams, selected]);
 
   // Steer toward whichever role is actually open on the selected team — a
   // team that already has a Captain should default to Vice Captain, and
