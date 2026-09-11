@@ -302,20 +302,24 @@ service cloud.firestore {
       allow create: if isAdminFor(request.resource.data.leagueId);
       allow update: if isAdminFor(resource.data.leagueId);
 
-      // BUG-002 hardening: two legitimate admin flows delete a match —
+      // BUG-002 hardening: legitimate admin flows delete a match —
       // admin-fixtures.tsx's single/bulk fixture delete (mobile app requires
-      // 'scheduled' before offering it) and results-entry.tsx's "Delete
-      // Fixture" undo of a confirmed result (requires 'confirmed'). Neither
-      // ever deletes a 'disputed' or 'awaiting_confirmation' match — those
+      // 'scheduled', or, since Phase A, 'postponed'/'cancelled', before
+      // offering it) and results-entry.tsx's "Delete Fixture" undo of a
+      // confirmed result (requires 'confirmed'). Postponed/cancelled are
+      // included alongside scheduled — like scheduled, neither ever received
+      // a submitted result, so deleting one destroys no result history.
+      // Deletion never covers 'disputed' or 'awaiting_confirmation' — those
       // statuses mean a real submission exists that hasn't been resolved
       // yet, and are blocked here so that invariant holds even if a client
       // bypasses the app's own guards (e.g. a bulk-delete call constructed
       // to skip admin-fixtures.tsx's status check). This is a client-
       // independent floor under the app-layer checks, not a replacement for
-      // them — the app still decides which of 'scheduled'/'confirmed' a
-      // given screen may act on.
+      // them — the app still decides which of these statuses a given screen
+      // may act on.
       allow delete: if isAdminFor(resource.data.leagueId)
-        && (resource.data.status == 'scheduled' || resource.data.status == 'confirmed');
+        && (resource.data.status == 'scheduled' || resource.data.status == 'confirmed'
+            || resource.data.status == 'postponed' || resource.data.status == 'cancelled');
 
       match /submissions/{submissionId} {
         function matchData() {
@@ -362,12 +366,22 @@ service cloud.firestore {
         //    isValidSubmission in functions/src/index.ts) — this is the
         //    "Firestore rules alone are not sufficient" case in practice,
         //    not just in principle.
+        // Phase A: a postponed/cancelled match is an admin-declared exception
+        // that never receives a result through the normal submission
+        // pipeline — previously only 'confirmed' was blocked here, which
+        // meant a captain could still write a submission against a fixture
+        // the admin had just postponed or cancelled (the app's own UI
+        // already refuses to offer this, but the rule is the client-
+        // independent floor under that, same reasoning as the delete rule
+        // above).
         allow create, update: if isCaptainOrVC()
           && me().teamId == request.resource.data.submittedByTeamId
           && submissionId == request.resource.data.submittedByTeamId
           && (request.resource.data.submittedByTeamId == matchData().homeTeamId
               || request.resource.data.submittedByTeamId == matchData().awayTeamId)
           && matchData().status != 'confirmed'
+          && matchData().status != 'postponed'
+          && matchData().status != 'cancelled'
           && request.resource.data.games is list
           && request.resource.data.games.size() == 7;
 

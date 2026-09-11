@@ -7,7 +7,7 @@ import { collection, onSnapshot, query, where, orderBy, and, or } from 'firebase
 import { db } from '@/config/firebase';
 import { useAuthStore } from '@/stores/authStore';
 import { RAW } from '@/lib/theme';
-import { STATUS_LABEL, STATUS_TONE } from '@/lib/matchStatus';
+import { STATUS_LABEL, STATUS_TONE, isFixtureException } from '@/lib/matchStatus';
 import { Heading, Body, Badge, Card, Chip, Button, AppIcon } from '@/components/ui';
 import type { Match } from '@/types';
 
@@ -74,7 +74,11 @@ export default function FixturesScreen() {
   function FixtureRow({ match }: { match: Match }) {
     const opponentId = match.homeTeamId === teamId ? match.awayTeamId : match.homeTeamId;
     const isHome = match.homeTeamId === teamId;
-    const canSubmit = canSubmitResults && match.status !== 'confirmed';
+    // Postponed/cancelled are admin exceptions, not something a captain can
+    // act on — excluded here (rather than just relying on `!== 'confirmed'`)
+    // so neither ever offers Enter Result / View-Edit Result. The Firestore
+    // rules independently block the write even if this were bypassed.
+    const canSubmit = canSubmitResults && match.status !== 'confirmed' && !isFixtureException(match.status);
     // Every fixture opens into the Match Centre — anyone on either team can
     // view any match regardless of status (results-entry.tsx's own canView
     // check); it correctly shows a read-only view for non-captains and a

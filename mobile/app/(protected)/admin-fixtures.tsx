@@ -12,7 +12,7 @@ import { parseFixtureCSV, validateFixtureRows, type FixtureImportResult } from '
 import { importFixtures } from '@/lib/importFixtures';
 import { pickCSVFile } from '@/lib/pickCSVFile';
 import { RAW } from '@/lib/theme';
-import { STATUS_LABEL, STATUS_TONE } from '@/lib/matchStatus';
+import { STATUS_LABEL, STATUS_TONE, isFixtureException } from '@/lib/matchStatus';
 import { Screen, Heading, Body, Caption, Badge, Button, Card, ListRow, Input, Label, Sheet, AppBar } from '@/components/ui';
 import { AdminShell } from '@/components/admin/AdminShell';
 import type { Match } from '@/types';
@@ -345,7 +345,7 @@ function useFixturesController(divisionId: string | undefined, leagueId: string 
     if (nonScheduled.length > 0) {
       Alert.alert(
         'Can’t regenerate fixtures',
-        `${nonScheduled.length} fixture${nonScheduled.length === 1 ? '' : 's'} in ${divisionName} already ${nonScheduled.length === 1 ? 'has' : 'have'} a result recorded (submitted, confirmed, or disputed). Regenerating would destroy that history, so it's blocked while any exist — resolve or correct those results first, or delete individual still-scheduled fixtures one at a time instead.`,
+        `${nonScheduled.length} fixture${nonScheduled.length === 1 ? '' : 's'} in ${divisionName} ${nonScheduled.length === 1 ? 'is' : 'are'} no longer just scheduled (a result recorded, or postponed/cancelled). Regenerating would leave that history behind or duplicate it, so it's blocked while any exist — resolve those fixtures first, or delete individual still-scheduled fixtures one at a time instead.`,
         [{ text: 'OK' }],
       );
       return;
@@ -408,6 +408,10 @@ function useFixturesController(divisionId: string | undefined, leagueId: string 
       await updateDoc(doc(db, 'matches', editTarget.id), {
         scheduledDate: parsed,
         venue: editVenue.trim() || null,
+        // Saving a new date for a postponed fixture is how it gets
+        // rescheduled — reuses this same edit sheet rather than a separate
+        // reschedule flow, per the approved plan.
+        ...(editTarget.status === 'postponed' ? { status: 'scheduled' } : {}),
       });
       setEditTarget(null);
     } finally {
@@ -415,14 +419,60 @@ function useFixturesController(divisionId: string | undefined, leagueId: string 
     }
   }
 
+  // Postponed/cancelled fixtures never received a result, so deleting them
+  // is as safe as deleting a still-scheduled one — unlike a confirmed or
+  // disputed match, which represents (or partially represents) real
+  // submitted results. Confirmed-match deletion has its own separate flow
+  // (results-entry.tsx's deleteMatch), not this one.
   async function deleteFixture() {
     if (!editTarget) return;
-    if (editTarget.status !== 'scheduled') {
+    if (editTarget.status !== 'scheduled' && !isFixtureException(editTarget.status)) {
       Alert.alert('Can’t delete', 'This fixture already has results submitted against it.');
       return;
     }
     await deleteDoc(doc(db, 'matches', editTarget.id));
     setEditTarget(null);
+  }
+
+  // Only offered from a scheduled fixture, per the approved plan — a fixture
+  // already postponed/cancelled/awaiting confirmation/disputed/confirmed
+  // isn't a valid target for a fresh postpone/cancel decision.
+  async function markPostponed() {
+    if (!editTarget) return;
+    await updateDoc(doc(db, 'matches', editTarget.id), { status: 'postponed' });
+    setEditTarget(null);
+  }
+
+  async function markCancelled() {
+    if (!editTarget) return;
+    await updateDoc(doc(db, 'matches', editTarget.id), { status: 'cancelled' });
+    setEditTarget(null);
+  }
+
+  function confirmMarkPostponed() {
+    if (!editTarget) return;
+    const target = editTarget;
+    Alert.alert(
+      'Postpone this fixture',
+      `${teamName(target.homeTeamId)} vs ${teamName(target.awayTeamId)} will be marked postponed — captains won't be able to submit a result until it's rescheduled.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Postpone', onPress: markPostponed },
+      ],
+    );
+  }
+
+  function confirmMarkCancelled() {
+    if (!editTarget) return;
+    const target = editTarget;
+    Alert.alert(
+      'Cancel this fixture',
+      `${teamName(target.homeTeamId)} vs ${teamName(target.awayTeamId)} will be marked cancelled. This is terminal for the season — if it needs to be played after all, create a new fixture instead.`,
+      [
+        { text: 'Back', style: 'cancel' },
+        { text: 'Mark Cancelled', style: 'destructive', onPress: markCancelled },
+      ],
+    );
   }
 
   const showGenerator = !isLoading && (matches.length === 0 || isRegenerating);
@@ -432,6 +482,7 @@ function useFixturesController(divisionId: string | undefined, leagueId: string 
     startDateText, setStartDateText, intervalDays, setIntervalDays, isGenerating, genError, isRegenerating, setIsRegenerating,
     editTarget, setEditTarget, editDateText, setEditDateText, editVenue, setEditVenue, isSavingEdit,
     teamName, rounds, generateFixtures, deleteAllFixtures, openEdit, saveEdit, deleteFixture, showGenerator,
+    confirmMarkPostponed, confirmMarkCancelled,
     importFileName, importResult, importParseError, isPickingFile, isImporting,
     pickAndValidateCSV, closeImportSheet, confirmImport,
   };
@@ -545,24 +596,54 @@ function FixturesBody({ c, isDesktop, statusFilter }: { c: FixturesController; i
       )}
 
       <Sheet visible={!!c.editTarget} onClose={() => c.setEditTarget(null)}>
-        <Heading size="lg" className="mb-1">Edit Fixture</Heading>
+        <Heading size="lg" className="mb-1">
+          {c.editTarget?.status === 'cancelled' ? 'Cancelled Fixture' : c.editTarget?.status === 'postponed' ? 'Reschedule Fixture' : 'Edit Fixture'}
+        </Heading>
         <Body size="sm" className="mb-5">
           {c.editTarget ? `${c.teamName(c.editTarget.homeTeamId)} vs ${c.teamName(c.editTarget.awayTeamId)}` : ''}
         </Body>
 
-        <Label>Date (YYYY-MM-DD)</Label>
-        <Input value={c.editDateText} onChangeText={c.setEditDateText} autoCapitalize="none" autoCorrect={false} className="mb-4" />
+        {c.editTarget?.status === 'cancelled' ? (
+          <>
+            <Card tone="coral" className="mb-5">
+              <Body tone="coral" size="sm">
+                This fixture has been cancelled. If it needs to be played after all, create a new fixture instead.
+              </Body>
+            </Card>
+            <Button variant="danger" onPress={c.deleteFixture}>Delete this fixture</Button>
+          </>
+        ) : (
+          <>
+            {c.editTarget?.status === 'postponed' && (
+              <Card tone="butter" className="mb-4">
+                <Body size="sm">This fixture is postponed. Saving a new date below will reschedule it.</Body>
+              </Card>
+            )}
 
-        <Label>Venue</Label>
-        <Input value={c.editVenue} onChangeText={c.setEditVenue} placeholder="e.g. The Red Lion, 12 High St" autoCapitalize="words" className="mb-6" />
+            <Label>Date (YYYY-MM-DD)</Label>
+            <Input value={c.editDateText} onChangeText={c.setEditDateText} autoCapitalize="none" autoCorrect={false} className="mb-4" />
 
-        <View className="flex-row gap-2.5 mb-3">
-          <Button variant="ghost" className="flex-1" onPress={() => c.setEditTarget(null)}>Cancel</Button>
-          <Button className="flex-1" disabled={c.isSavingEdit} loading={c.isSavingEdit} onPress={c.saveEdit}>Save</Button>
-        </View>
+            <Label>Venue</Label>
+            <Input value={c.editVenue} onChangeText={c.setEditVenue} placeholder="e.g. The Red Lion, 12 High St" autoCapitalize="words" className="mb-6" />
 
-        {c.editTarget?.status === 'scheduled' && (
-          <Button variant="danger" onPress={c.deleteFixture}>Delete this fixture</Button>
+            <View className="flex-row gap-2.5 mb-3">
+              <Button variant="ghost" className="flex-1" onPress={() => c.setEditTarget(null)}>Cancel</Button>
+              <Button className="flex-1" disabled={c.isSavingEdit} loading={c.isSavingEdit} onPress={c.saveEdit}>
+                {c.editTarget?.status === 'postponed' ? 'Reschedule' : 'Save'}
+              </Button>
+            </View>
+
+            {c.editTarget?.status === 'scheduled' && (
+              <View className="flex-row gap-2.5 mb-3">
+                <Button variant="secondary" className="flex-1" onPress={c.confirmMarkPostponed}>Mark Postponed</Button>
+                <Button variant="danger" className="flex-1" onPress={c.confirmMarkCancelled}>Mark Cancelled</Button>
+              </View>
+            )}
+
+            {(c.editTarget?.status === 'scheduled' || c.editTarget?.status === 'postponed') && (
+              <Button variant="danger" onPress={c.deleteFixture}>Delete this fixture</Button>
+            )}
+          </>
         )}
       </Sheet>
 

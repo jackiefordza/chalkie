@@ -8,7 +8,7 @@ import {
 import { db } from '@/config/firebase';
 import { useAuthStore } from '@/stores/authStore';
 import { RAW } from '@/lib/theme';
-import { STATUS_LABEL, STATUS_TONE } from '@/lib/matchStatus';
+import { STATUS_LABEL, STATUS_TONE, isFixtureException } from '@/lib/matchStatus';
 import {
   Screen, Heading, Body, Caption, Badge, Card, StatTile, ListRow, Button, AppIcon, FormBadge, SponsorBanner,
 } from '@/components/ui';
@@ -408,7 +408,11 @@ export function HomeDashboard() {
     );
   }
 
-  const nextMatch = matches.find((m) => m.status !== 'confirmed') ?? null;
+  // "Next" is deliberately scheduled/awaiting_confirmation/disputed only —
+  // a postponed/cancelled match is an admin exception, not something to
+  // surface as "what needs my attention next" (see NextMatchCard's own
+  // header comment); `!== 'confirmed'` alone would still catch them.
+  const nextMatch = matches.find((m) => m.status !== 'confirmed' && !isFixtureException(m.status)) ?? null;
   const nextOpponentId = nextMatch ? (nextMatch.homeTeamId === teamId ? nextMatch.awayTeamId : nextMatch.homeTeamId) : null;
   const confirmedMatches = matches.filter((m) => m.status === 'confirmed');
   const recentMatch = confirmedMatches[confirmedMatches.length - 1] ?? null;

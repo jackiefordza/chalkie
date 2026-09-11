@@ -59,6 +59,8 @@ export function MatchHeader({ match, homeTeamName, awayTeamName }: { match: Matc
               reconcile flow below), admin review is the fallback, not the
               only path. */}
           {match.status === 'disputed' && 'The two submitted results don\'t match.'}
+          {match.status === 'postponed' && 'This fixture has been postponed and will be rescheduled.'}
+          {match.status === 'cancelled' && 'This fixture has been cancelled.'}
         </Body>
       )}
 

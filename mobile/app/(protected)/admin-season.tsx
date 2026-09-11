@@ -392,7 +392,7 @@ export default function AdminSeasonScreen() {
                 divisionId={currentDivision.id}
                 leagueId={appUser?.leagueId ?? undefined}
                 isDesktop
-                statusFilter={['scheduled', 'awaiting_confirmation']}
+                statusFilter={['scheduled', 'awaiting_confirmation', 'postponed', 'cancelled']}
               />
             )}
 

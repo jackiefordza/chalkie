@@ -143,6 +143,11 @@ export default function CaptainsScreen() {
         // previously excluded here entirely, so a disputed match would
         // silently vanish from "Needs Your Action" the moment it flipped
         // status, right when it most needed surfacing.
+        //
+        // This is an explicit allow-list, not a `!== 'confirmed'` exclusion —
+        // postponed/cancelled matches never match any of these three
+        // conditions, so they're already excluded from "Needs Your Action"
+        // by construction and require no separate isFixtureException() check.
         const candidates = all.filter((m) => (
           (m.status === 'scheduled' && m.scheduledDate <= now) || m.status === 'awaiting_confirmation' || m.status === 'disputed'
         ));

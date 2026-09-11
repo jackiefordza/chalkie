@@ -1,0 +1,11 @@
+{
+  "name": "chalkie-rules-tests",
+  "private": true,
+  "description": "Firestore security rules regression tests, run against a local emulator only — never touches the real chalkie-app project. See README.md in this directory.",
+  "scripts": {
+    "test": "npx --yes firebase-tools@15.28.2 emulators:exec --only firestore --project demo-chalkie-rules-test \"node --test *.rules.test.js\""
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^3.0.4"
+  }
+}

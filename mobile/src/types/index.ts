@@ -125,7 +125,16 @@ export interface JoinRequest {
 // A league match: 7 games (5 singles then 2 pairs), all 501, 3 legs per game,
 // all 3 legs always played. Match winner = team that wins more games (odd
 // count, so no draws are possible at match level).
-export type MatchStatus = 'scheduled' | 'awaiting_confirmation' | 'disputed' | 'confirmed';
+//
+// 'postponed'/'cancelled' are admin-only exception states — a match never
+// reaches either through the normal submission pipeline (onSubmissionWrite
+// only ever transitions scheduled -> awaiting_confirmation -> confirmed/
+// disputed). Neither is a "completed" result: there is no separate
+// completed status — 'confirmed' remains the only played/completed state.
+// A postponed match can be rescheduled (admin sets a new date and returns
+// it to 'scheduled'); cancelled is terminal for Season 1 — if it needs to
+// happen later, admin creates a fresh fixture rather than reviving this one.
+export type MatchStatus = 'scheduled' | 'awaiting_confirmation' | 'disputed' | 'confirmed' | 'postponed' | 'cancelled';
 export type GameType = 'singles' | 'pairs';
 export type MatchSide = 'home' | 'away';
 

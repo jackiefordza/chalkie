@@ -19,6 +19,7 @@ import {
   type DraftGame,
 } from '@/lib/matchResultDraft';
 import { loadResultDraft, saveResultDraft, clearResultDraft } from '@/lib/resultDraftStorage';
+import { isFixtureException } from '@/lib/matchStatus';
 import type { Match, MatchGame, MatchSide } from '@/types';
 
 const DESKTOP_BREAKPOINT = 768;
@@ -86,7 +87,11 @@ export default function ResultsEntryScreen() {
   // but only that team's captain/VC can act. This was previously unchecked:
   // any viewer who could see the match could open the full entry form, and
   // would only discover they lacked permission when the write itself failed.
-  const canAct = isCaptainOrVC && (isHome || isAway);
+  // A postponed/cancelled fixture is an admin exception, not something a
+  // captain can act on — excluded here so opening one never falls through
+  // to a blank Enter-Result form; the Firestore rules independently block
+  // the submission write even if this were bypassed.
+  const canAct = isCaptainOrVC && (isHome || isAway) && !!match && !isFixtureException(match.status);
 
   useEffect(() => {
     if (!matchId || !appUser?.leagueId) return;
@@ -517,6 +522,15 @@ export default function ResultsEntryScreen() {
             <Card tone="coral" className="mb-4">
               <Caption className="mb-1">Disputed</Caption>
               <Body size="sm">Both teams' submitted results don't match. Their captains or a league admin will sort this out.</Body>
+            </Card>
+          ) : isFixtureException(match!.status) ? (
+            <Card tone={match!.status === 'cancelled' ? 'coral' : 'butter'} className="mb-4">
+              <Caption className="mb-1">{match!.status === 'cancelled' ? 'Cancelled' : 'Postponed'}</Caption>
+              <Body size="sm">
+                {match!.status === 'cancelled'
+                  ? 'This fixture has been cancelled by the league admin.'
+                  : 'This fixture has been postponed and will be rescheduled by the league admin.'}
+              </Body>
             </Card>
           ) : null}
         </ScrollView>
