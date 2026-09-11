@@ -84,19 +84,21 @@ export const RAW = {
   butterInkDark: '#F0C368',
 
   // Phase E, Step 2 — Home V1 fixed dark palette; Step 3 — colour pass
-  // ("graphite + muted Chalkie green + off-white"), for the handful of
-  // props that can't take a className (AppIcon's color, ActivityIndicator,
-  // a BlurView tint). Mirrors tailwind.config.js's home-* tokens exactly —
-  // keep these two in sync if either changes.
-  homeBase: '#0D0F0E',
-  homeSurface: '#171A18',
-  homeElevated: '#202421',
-  homeText: '#F1F2EE',
-  homeTextDim: '#A7ADA8',
-  homeTextFaint: '#737A76',
-  homeAccent: '#AFC65A',
-  homeAccentStrong: '#BBD267',
-  homeAccentInk: '#0D0F0E',
+  // ("graphite + muted Chalkie green + off-white"); Step 4 — tonal
+  // refinement (lighter background/surface/elevated for real-device
+  // legibility, same structure). For the handful of props that can't take
+  // a className (AppIcon's color, ActivityIndicator, a BlurView tint).
+  // Mirrors tailwind.config.js's home-* tokens exactly — keep these two in
+  // sync if either changes.
+  homeBase: '#181B19',
+  homeSurface: '#242925',
+  homeElevated: '#2C322E',
+  homeText: '#F2F3EF',
+  homeTextDim: '#B4BAB6',
+  homeTextFaint: '#858D88',
+  homeAccent: '#B1C75E',
+  homeAccentStrong: '#B8CC67',
+  homeAccentInk: '#181B19',
   homeSuccess: '#69C98A',
   homeWarning: '#D5AE55',
   homeError: '#E66B6B',

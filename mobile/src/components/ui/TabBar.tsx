@@ -132,8 +132,8 @@ export function TabBar({ state, navigation }: BottomTabBarProps) {
                 // Muted-green-tinted glass, not a solid fill — "accent =
                 // active/selected" communicated at low opacity, matching
                 // Step 3's "restrained, not neon" direction. rgba of
-                // home-accent (#AFC65A), not the stronger CTA accent.
-                backgroundColor: 'rgba(175,198,90,0.16)',
+                // home-accent (#B1C75E), not the stronger CTA accent.
+                backgroundColor: 'rgba(177,199,94,0.16)',
                 width: highlight.width,
                 height: highlight.height,
                 top: highlight.y,

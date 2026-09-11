@@ -64,26 +64,31 @@ module.exports = {
         'admin-panel-border-dark': '#2A2E38',
 
         // Phase E, Step 2 — Home V1 visual prototype; Step 3 — colour pass
-        // ("graphite + muted Chalkie green + off-white"). A deliberately
-        // FIXED dark palette (no light/dark-variant pair) — same precedent
-        // as admin-sidebar/admin-canvas above, which are also fixed
-        // regardless of the app's light/dark toggle. Not yet the app-wide
-        // theme; currently used only by HomeDashboard, Header, and TabBar.
-        // The interface is mostly neutral graphite — home-accent is a
-        // restrained accent (numbers, active/selected state), never a
-        // background or decorative surface. There is no general-purpose
-        // "amber" token any more: home-warning exists solely for genuine
-        // warning/status meaning, not as a decorative secondary brand colour.
-        'home-base': '#0D0F0E',
-        'home-surface': '#171A18',
-        'home-elevated': '#202421',
-        'home-border': 'rgba(241,242,238,0.10)',
-        'home-text': '#F1F2EE',
-        'home-text-dim': '#A7ADA8',
-        'home-text-faint': '#737A76',
-        'home-accent': '#AFC65A',
-        'home-accent-strong': '#BBD267',
-        'home-accent-ink': '#0D0F0E',
+        // ("graphite + muted Chalkie green + off-white"); Step 4 — tonal
+        // refinement. V2's near-black base (#0D0F0E/#171A18/#202421) read
+        // as too dark on a real device, with insufficient separation
+        // between background/surface/elevated — this pass lightens all
+        // three (and text/accent to match) while keeping the same
+        // structure and the same restrained use of colour: "a dark room,
+        // not a black room". A deliberately FIXED dark palette (no
+        // light/dark-variant pair) — same precedent as admin-sidebar/
+        // admin-canvas above, which are also fixed regardless of the app's
+        // light/dark toggle. Not yet the app-wide theme; currently used
+        // only by HomeDashboard, Header, and TabBar. The interface is
+        // mostly neutral graphite — home-accent is a restrained accent
+        // (numbers, active/selected state), never a background or
+        // decorative surface. There is no general-purpose "amber" token:
+        // home-warning exists solely for genuine warning/status meaning.
+        'home-base': '#181B19',
+        'home-surface': '#242925',
+        'home-elevated': '#2C322E',
+        'home-border': 'rgba(242,243,239,0.12)',
+        'home-text': '#F2F3EF',
+        'home-text-dim': '#B4BAB6',
+        'home-text-faint': '#858D88',
+        'home-accent': '#B1C75E',
+        'home-accent-strong': '#B8CC67',
+        'home-accent-ink': '#181B19',
         'home-success': '#69C98A',
         'home-warning': '#D5AE55',
         'home-error': '#E66B6B',

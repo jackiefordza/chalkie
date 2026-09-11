@@ -22,7 +22,7 @@ const VARIANTS: Record<ButtonVariant, Variant> = {
   // emphasis. Deliberately no `dark:` pair — this variant is used
   // exclusively inside the new Home prototype, which doesn't follow the
   // app-wide light/dark toggle.
-  accent: { container: 'bg-home-accent-strong', text: 'text-home-accent-ink', spinner: '#0D0F0E' },
+  accent: { container: 'bg-home-accent-strong', text: 'text-home-accent-ink', spinner: '#181B19' },
 };
 
 interface ButtonProps extends Omit<TouchableOpacityProps, 'children'> {
