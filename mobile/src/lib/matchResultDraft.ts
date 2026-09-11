@@ -106,6 +106,20 @@ export function isGameComplete(game: DraftGame): boolean {
   );
 }
 
+// Whether any game in the draft has meaningful user-entered content —
+// used to decide whether a result-entry draft is worth persisting (MW-001)
+// and whether leaving the screen should warn the user first (MW-002). A
+// still-blank form (nothing selected, no score, no 180/checkout) is neither.
+export function hasAnyProgress(games: DraftGame[]): boolean {
+  return games.some((g) => (
+    g.homePlayerIds.length > 0
+    || g.awayPlayerIds.length > 0
+    || g.score !== null
+    || g.oneEighties.length > 0
+    || g.highCheckouts.length > 0
+  ));
+}
+
 export function normalizeGameForCompare(g: DraftGame): string {
   return JSON.stringify({
     homePlayerIds: [...g.homePlayerIds].sort(),

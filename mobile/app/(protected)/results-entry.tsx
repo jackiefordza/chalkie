@@ -1,7 +1,7 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { View, TouchableOpacity, ScrollView, ActivityIndicator, Alert, Platform, useWindowDimensions } from 'react-native';
 import * as Haptics from 'expo-haptics';
-import { Stack, useLocalSearchParams, router } from 'expo-router';
+import { Stack, useLocalSearchParams, useNavigation, router } from 'expo-router';
 import {
   collection, doc, onSnapshot, query, where, getDoc, setDoc, updateDoc, deleteDoc, serverTimestamp,
 } from 'firebase/firestore';
@@ -15,9 +15,10 @@ import {
 import { AdminShell } from '@/components/admin/AdminShell';
 import { MatchHeader, MatchSummary, GameRow, ActionBanner } from '@/components/MatchCentre';
 import {
-  LEGS_PER_GAME, blankGames, toDraft, toMatchGame, slotsFor, isGameComplete, normalizeGameForCompare,
+  LEGS_PER_GAME, blankGames, toDraft, toMatchGame, slotsFor, isGameComplete, hasAnyProgress, normalizeGameForCompare,
   type DraftGame,
 } from '@/lib/matchResultDraft';
+import { loadResultDraft, saveResultDraft, clearResultDraft } from '@/lib/resultDraftStorage';
 import type { Match, MatchGame, MatchSide } from '@/types';
 
 const DESKTOP_BREAKPOINT = 768;
@@ -29,6 +30,12 @@ export default function ResultsEntryScreen() {
   const { appUser } = useAuthStore();
   const { width } = useWindowDimensions();
   const isDesktop = width >= DESKTOP_BREAKPOINT;
+  const navigation = useNavigation();
+  // Guards MW-001's autosave from firing with the initial blank `games`
+  // state before the submissions/local-draft hydration below has actually
+  // resolved — without it, a fast connection-drop right after mount could
+  // overwrite a real saved draft with an empty one.
+  const hasHydratedDraft = useRef(false);
 
   const [match, setMatch] = useState<Match | null>(null);
   const [homeTeamName, setHomeTeamName] = useState('');
@@ -121,24 +128,86 @@ export default function ResultsEntryScreen() {
     return () => { unsubMatch(); unsubPlayers(); };
   }, [matchId, appUser?.leagueId]);
 
-  // Load our own existing submission (for edit) + the other team's (to review/reconcile)
+  // Load our own existing submission (for edit) + the other team's (to
+  // review/reconcile) + any locally-saved in-progress draft for this match
+  // (MW-001). Priority once all three resolve: an already-submitted result
+  // is canonical (a lingering local draft from before that submission is
+  // stale and must never resurface over it); otherwise a valid local draft
+  // wins over starting blank/from the other team's entry, since it's the
+  // captain's own unfinished work.
   useEffect(() => {
     if (!matchId || !myTeamId || !match) return;
     const otherTeamId = isHome ? match.awayTeamId : match.homeTeamId;
 
-    getDoc(doc(db, 'matches', matchId, 'submissions', myTeamId)).then((mySnap) => {
+    Promise.all([
+      getDoc(doc(db, 'matches', matchId, 'submissions', myTeamId)),
+      getDoc(doc(db, 'matches', matchId, 'submissions', otherTeamId)),
+      loadResultDraft(matchId),
+    ]).then(([mySnap, otherSnap, draft]) => {
       const myGames = mySnap.exists() ? (mySnap.data().games as MatchGame[]) : null;
-      if (myGames) { setMySubmission(myGames); setGames(toDraft(myGames)); }
+      const otherGames = otherSnap.exists() ? (otherSnap.data().games as MatchGame[]) : null;
+      setMySubmission(myGames);
+      setOtherSubmission(otherGames);
 
-      getDoc(doc(db, 'matches', matchId, 'submissions', otherTeamId)).then((otherSnap) => {
-        const otherGames = otherSnap.exists() ? (otherSnap.data().games as MatchGame[]) : null;
-        setOtherSubmission(otherGames);
-        // Nobody's submitted on our side yet, but the other team has — start
-        // from their entry (review mode) instead of a blank form.
-        if (!myGames && otherGames) setGames(toDraft(otherGames));
-      });
+      if (myGames) {
+        setGames(toDraft(myGames));
+      } else if (draft) {
+        setGames(draft.games);
+        setEditedGameIndexes(new Set(draft.editedGameIndexes));
+        setActiveLeg(draft.activeLeg);
+      } else if (otherGames) {
+        setGames(toDraft(otherGames));
+      }
+      hasHydratedDraft.current = true;
     });
   }, [matchId, myTeamId, match, isHome]);
+
+  // MW-001: debounced local autosave of the in-progress draft, keyed by
+  // match ID. Skipped for the separate admin-correction flow (a short,
+  // single-sitting override of an already-confirmed match, not the
+  // progressive captain entry this exists to protect) and before hydration
+  // has established a real starting point, so a slow load can't be
+  // overwritten with an empty draft.
+  useEffect(() => {
+    if (!matchId || !hasHydratedDraft.current || adminCorrecting || !editing || !hasAnyProgress(games)) return;
+    const timer = setTimeout(() => {
+      saveResultDraft(matchId, games, Array.from(editedGameIndexes), activeLeg);
+    }, 600);
+    return () => clearTimeout(timer);
+  }, [matchId, games, editedGameIndexes, activeLeg, adminCorrecting, editing]);
+
+  // MW-002: warn before in-app navigation discards unfinished progress.
+  // Draft persistence (above) is the primary safety net — this is a
+  // deliberate-abandonment confirmation, not the thing that actually
+  // protects the data.
+  useEffect(() => {
+    if (!hasHydratedDraft.current || adminCorrecting || !editing || !hasAnyProgress(games)) return;
+    return navigation.addListener('beforeRemove', (e) => {
+      e.preventDefault();
+      Alert.alert(
+        'Leave result entry?',
+        'You have an unfinished match result. Your progress has been saved.',
+        [
+          { text: 'Stay', style: 'cancel' },
+          { text: 'Leave', style: 'destructive', onPress: () => navigation.dispatch(e.data.action) },
+        ],
+      );
+    });
+  }, [navigation, adminCorrecting, editing, games]);
+
+  // Best-effort browser-level guard (refresh/tab close/URL bar) for the web
+  // build — secondary to draft persistence above, which already covers
+  // recovery from exactly this scenario, so this is just friction reduction
+  // against an accidental close, not a load-bearing protection.
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !hasHydratedDraft.current || adminCorrecting || !editing || !hasAnyProgress(games)) return;
+    function handleBeforeUnload(e: BeforeUnloadEvent) {
+      e.preventDefault();
+      e.returnValue = '';
+    }
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [adminCorrecting, editing, games]);
 
   type Mode = 'blank' | 'review' | 'waiting' | 'reconcile';
   const mode: Mode = otherSubmission && !mySubmission
@@ -310,6 +379,7 @@ export default function ResultsEntryScreen() {
         games: finalGames,
         createdAt: serverTimestamp(),
       });
+      await clearResultDraft(matchId);
       setEditing(false);
       if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       Alert.alert(
