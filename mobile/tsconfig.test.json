@@ -12,5 +12,5 @@
     },
     "outDir": "dist-test"
   },
-  "include": ["src/lib/**/*.test.ts", "src/lib/matchResultDraft.ts", "src/lib/resultDraftCodec.ts", "src/types/**/*.ts"]
+  "include": ["src/lib/**/*.test.ts", "src/lib/matchResultDraft.ts", "src/lib/resultDraftCodec.ts", "src/lib/chalkiePN.ts", "src/types/**/*.ts"]
 }

@@ -246,6 +246,7 @@ export default function PlayerProfileScreen() {
             <Avatar initial={player.name.charAt(0)} tone="brand" size="md" />
             <Heading size="lg" className="mt-3 text-center">{player.name}</Heading>
             {contextLine ? <Body size="sm" className="mt-1 text-center">{contextLine}</Body> : null}
+            {player.chalkiePN ? <Caption className="mt-1">{player.chalkiePN}</Caption> : null}
           </View>
 
           {/* SEASON STATS + NOTABLE PERFORMANCE — consolidated into one card;

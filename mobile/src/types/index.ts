@@ -22,6 +22,8 @@ export interface AppUser {
   pendingRequestId: string | null;
   phone: string | null;
   phoneVisibility: PhoneVisibility | null;
+  /** Mirrored from the linked Player once claimed — see Player.chalkiePN. */
+  chalkiePN: string | null;
   createdAt: Date;
 }
 
@@ -74,6 +76,14 @@ export interface Player {
   claimedByUserId: string | null;
   claimedAt: Date | null;
   createdByUserId: string | null;
+  /**
+   * Permanent, human-friendly person identifier ("CH-104827") — belongs to
+   * the person, not the team, and is never itself a login credential.
+   * Assigned once at player creation (Phase 9); null on any player created
+   * before this field existed. Currently informational only — not yet used
+   * for cross-season lookup/merge (see Phase 9 architecture report).
+   */
+  chalkiePN: string | null;
   createdAt: Date;
 }
 

@@ -8,6 +8,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '@/config/firebase';
 import { useAuthStore } from '@/stores/authStore';
+import { assignChalkiePN } from '@/lib/assignChalkiePN';
 import { RAW } from '@/lib/theme';
 import {
   Screen, Heading, Body, Chip, Button, Card, Badge, Avatar, Input, Label, Sheet, VisibilityPicker, AppIcon, ListRow,
@@ -18,6 +19,7 @@ interface Player {
   id: string; name: string;
   claimedByUserId: string | null;
   teamId: string;
+  chalkiePN: string | null;
 }
 interface ActionableMatch {
   id: string; opponentName: string; isHome: boolean; scheduledDate: Date; status: MatchStatus;
@@ -99,7 +101,7 @@ export default function CaptainsScreen() {
       (snap) => {
         setPlayers(
           snap.docs
-            .map((d) => ({ id: d.id, ...d.data() } as Player))
+            .map((d) => ({ id: d.id, ...d.data(), chalkiePN: d.data().chalkiePN ?? null } as Player))
             .sort((a, b) => a.name.localeCompare(b.name)),
         );
         setIsLoading(false);
@@ -201,12 +203,13 @@ export default function CaptainsScreen() {
 
   async function addPlayer() {
     if (!newPlayerName.trim()) return;
-    if (!appUser?.teamId) {
+    if (!appUser?.teamId || !appUser.leagueId) {
       Alert.alert('Error', 'Team not loaded yet — please wait a moment and try again.');
       return;
     }
     setIsAdding(true);
     try {
+      const chalkiePN = await assignChalkiePN(appUser.leagueId);
       await addDoc(collection(db, 'players'), {
         name: newPlayerName.trim(),
         leagueId: appUser.leagueId,
@@ -215,6 +218,7 @@ export default function CaptainsScreen() {
         claimedAt: null,
         createdAt: serverTimestamp(),
         createdByUserId: appUser.uid,
+        chalkiePN,
       });
       setAddedPlayerName(newPlayerName.trim());
       setNewPlayerName('');
@@ -250,6 +254,10 @@ export default function CaptainsScreen() {
           claimedByUserId: req.userId,
           claimedAt: serverTimestamp(),
         });
+        // Mirror the existing player's ChalkiePN onto the account claiming it
+        // (null for a player added before this field existed — never blocks
+        // approval).
+        const claimedChalkiePN = players.find((p) => p.id === req.claimPlayerId)?.chalkiePN ?? null;
         batch.update(doc(db, 'users', req.userId), {
           role: 'player',
           teamId: appUser.teamId,
@@ -259,10 +267,12 @@ export default function CaptainsScreen() {
           playerId: req.claimPlayerId,
           pendingRequestType: null,
           pendingRequestId: null,
+          chalkiePN: claimedChalkiePN,
         });
       } else {
         // Plain new player, or a VC-role request — either way, a fresh linked
         // player record (a captain/VC is always also a player).
+        const chalkiePN = await assignChalkiePN(appUser.leagueId);
         const playerRef = doc(collection(db, 'players'));
         batch.set(playerRef, {
           name: req.displayName,
@@ -272,6 +282,7 @@ export default function CaptainsScreen() {
           claimedAt: serverTimestamp(),
           createdAt: serverTimestamp(),
           createdByUserId: appUser.uid,
+          chalkiePN,
         });
         const role = req.requestType === 'captainRole' && req.requestedRole ? req.requestedRole : 'player';
         if (role === 'viceCaptain') {
@@ -281,6 +292,7 @@ export default function CaptainsScreen() {
           role,
           teamId: appUser.teamId,
           leagueId: appUser.leagueId,
+          chalkiePN,
           divisionId: appUser.divisionId,
           seasonId: teamSeasonId,
           playerId: playerRef.id,

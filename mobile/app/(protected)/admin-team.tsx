@@ -7,6 +7,7 @@ import {
 import { httpsCallable } from 'firebase/functions';
 import { db, functions } from '@/config/firebase';
 import { useAuthStore } from '@/stores/authStore';
+import { assignChalkiePN } from '@/lib/assignChalkiePN';
 import { goBack } from '@/lib/navigation';
 import { RAW } from '@/lib/theme';
 import { Screen, Heading, Body, Caption, Button, Card, Avatar, ListRow, Input, Label, Badge, Sheet } from '@/components/ui';
@@ -14,7 +15,7 @@ import { AdminShell } from '@/components/admin/AdminShell';
 
 const DESKTOP_BREAKPOINT = 768;
 
-interface Player { id: string; name: string; teamId: string; claimedByUserId: string | null }
+interface Player { id: string; name: string; teamId: string; claimedByUserId: string | null; chalkiePN: string | null }
 interface OtherTeam { id: string; name: string }
 
 type TeamRole = 'captain' | 'viceCaptain' | 'player';
@@ -118,7 +119,7 @@ export default function AdminTeamScreen() {
 
     const unsubPlayers = onSnapshot(
       query(collection(db, 'players'), where('teamId', '==', teamId)),
-      (snap) => setPlayers(snap.docs.map((d) => ({ id: d.id, ...d.data() } as Player))),
+      (snap) => setPlayers(snap.docs.map((d) => ({ id: d.id, ...d.data(), chalkiePN: d.data().chalkiePN ?? null } as Player))),
     );
 
     return () => { unsubTeam(); unsubPlayers(); };
@@ -236,11 +237,13 @@ export default function AdminTeamScreen() {
     if (!newPlayerName.trim() || !teamId || !appUser?.leagueId) return;
     setIsAddingPlayer(true);
     try {
+      const chalkiePN = await assignChalkiePN(appUser.leagueId);
       await addDoc(collection(db, 'players'), {
         leagueId: appUser.leagueId,
         teamId,
         name: newPlayerName.trim(),
         claimedByUserId: null,
+        chalkiePN,
       });
       setNewPlayerName('');
       setShowAddPlayer(false);
@@ -488,7 +491,7 @@ export default function AdminTeamScreen() {
                 key={player.id}
                 avatar={<Avatar initial={player.name.charAt(0)} tone="brand" size="sm" />}
                 title={player.name}
-                subtitle={role ? undefined : 'No account yet'}
+                subtitle={role ? player.chalkiePN ?? undefined : 'No account yet'}
                 trailing={(
                   <View className="items-end gap-1.5">
                     {role && <Badge tone={role === 'player' ? 'butter' : 'brand'}>{ROLE_BADGE_LABEL[role]}</Badge>}

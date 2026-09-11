@@ -9,6 +9,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '@/config/firebase';
 import { useAuthStore } from '@/stores/authStore';
+import { assignChalkiePN } from '@/lib/assignChalkiePN';
 import { RAW } from '@/lib/theme';
 import { Screen, Heading, Body, Button, Card, ListRow, AppBar, AppIcon } from '@/components/ui';
 import { AdminShell } from '@/components/admin/AdminShell';
@@ -93,6 +94,7 @@ export default function AdminInboxScreen() {
     try {
       const batch = writeBatch(db);
 
+      const chalkiePN = await assignChalkiePN(appUser.leagueId);
       const playerRef = doc(collection(db, 'players'));
       batch.set(playerRef, {
         name: req.displayName,
@@ -104,6 +106,7 @@ export default function AdminInboxScreen() {
         claimedAt: serverTimestamp(),
         createdAt: serverTimestamp(),
         createdByUserId: appUser.uid,
+        chalkiePN,
       });
 
       const teamField = req.requestedRole === 'viceCaptain' ? 'viceCaptainUserId' : 'captainUserId';
@@ -132,6 +135,7 @@ export default function AdminInboxScreen() {
         playerId: playerRef.id,
         pendingRequestType: null,
         pendingRequestId: null,
+        chalkiePN,
       });
 
       await batch.commit();
