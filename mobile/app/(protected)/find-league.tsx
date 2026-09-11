@@ -62,6 +62,14 @@ export default function FindLeagueScreen() {
 
             {isLoadingLeagues && <ActivityIndicator color={RAW.brand} style={{ marginTop: 16 }} />}
 
+            {/* MW-009: reinforce the "2 characters" hint right where the user is
+                actually looking (below the input, mid-typing) rather than only in
+                the caption above it, which is easy to miss once typing starts —
+                otherwise a genuinely new user sees nothing happen and no reason why. */}
+            {!isLoadingLeagues && search.trim().length > 0 && search.trim().length < 2 && (
+              <Body size="sm" className="mt-3 text-center">Keep typing — just one more character</Body>
+            )}
+
             {!isLoadingLeagues && search.trim().length >= 2 && (
               <View className="mt-3">
                 {filtered.length === 0 ? (
