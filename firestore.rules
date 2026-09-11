@@ -93,12 +93,13 @@ service cloud.firestore {
       // venuePhone — anything not named below) and, if they are specifically
       // the CURRENT captain (not just any VC — matches the app's own
       // visibleRequests filter in captains.tsx), assign viceCaptainUserId to
-      // someone with a genuine pending 'captainRole' request. Every other
-      // field — league/season/division association and captainUserId itself
-      // — must stay byte-for-byte unchanged: the app never writes them from
-      // a captain/VC context (only admin, or this one narrow VC-approval
-      // path), so anything else here is tampering, not a supported edit.
-      // Admin remains unrestricted, matching every real admin flow
+      // someone with a genuine pending 'captainRole' request, or (Phase C)
+      // clear an existing VC back to null. Every other field — league/
+      // season/division association and captainUserId itself — must stay
+      // byte-for-byte unchanged: the app never writes them from a captain/VC
+      // context (only admin, or these two narrow captain-only paths), so
+      // anything else here is tampering, not a supported edit. Admin
+      // remains unrestricted, matching every real admin flow
       // (admin-inbox.tsx, admin-team.tsx) that legitimately sets these.
       allow update: if
         isAdminFor(resource.data.leagueId)
@@ -113,6 +114,20 @@ service cloud.firestore {
               || (
                 me().uid == resource.data.captainUserId
                 && get(/databases/$(database)/documents/users/$(request.resource.data.viceCaptainUserId)).data.pendingRequestType == 'captainRole'
+              )
+              // Phase C: the current captain removing an EXISTING VC — the
+              // team must actually have had one (resource.data ... != null,
+              // so this can't fire as a no-op on an already-empty seat) and
+              // the write must specifically clear it to null, nothing else.
+              // Scoped to me().uid == resource.data.captainUserId (not just
+              // isCaptainOrVC() at the top) so a VC can never remove
+              // themselves or another VC through this path — only the
+              // team's actual captain, matching captains.tsx's own
+              // canRemoveThisVC gate.
+              || (
+                me().uid == resource.data.captainUserId
+                && resource.data.viceCaptainUserId != null
+                && request.resource.data.viceCaptainUserId == null
               )
             ));
       allow delete: if isAdminFor(resource.data.leagueId);
@@ -276,6 +291,23 @@ service cloud.firestore {
               || (request.resource.data.role == 'viceCaptain'
                   && me().uid == get(/databases/$(database)/documents/teams/$(request.resource.data.teamId)).data.captainUserId)
             ))
+        // Phase C: the current captain demoting their team's EXISTING active
+        // VC back to player (the missing reverse of the approval branch
+        // above, which only ever covers a still-'pending' user). Scoped to
+        // resource.data.role == 'viceCaptain' (not 'pending') so this can
+        // never be used as a second path into the approval flow above, and
+        // to me().uid == that team's captainUserId — via the same teams
+        // get() the approval branch already uses — so a VC can never demote
+        // themselves or anyone else through this path, only the actual
+        // captain, and only within their own team (teamId pinned unchanged
+        // below). isLeagueAdmin pinned unchanged for the same reason as
+        // every other branch here.
+        || (isCaptainOrVC()
+            && resource.data.role == 'viceCaptain'
+            && request.resource.data.role == 'player'
+            && request.resource.data.teamId == resource.data.teamId
+            && request.resource.data.isLeagueAdmin == resource.data.isLeagueAdmin
+            && me().uid == get(/databases/$(database)/documents/teams/$(resource.data.teamId)).data.captainUserId)
         // Pending user sets pendingRequestType/pendingRequestId (submitting a request)
         || (request.auth.uid == userId
             && resource.data.role == 'pending'

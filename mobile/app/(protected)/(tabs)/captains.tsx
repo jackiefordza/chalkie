@@ -81,6 +81,9 @@ export default function CaptainsScreen() {
 
   const [respondingId, setRespondingId] = useState<string | null>(null);
 
+  // Vice-Captain removal (Phase C)
+  const [isRemovingVC, setIsRemovingVC] = useState(false);
+
   useEffect(() => {
     if (!teamId) return;
 
@@ -243,6 +246,39 @@ export default function CaptainsScreen() {
         onPress: async () => { await writeBatch(db).delete(doc(db, 'players', playerId)).commit(); },
       },
     ]);
+  }
+
+  // Only reachable via a button gated to appUser?.uid === captainUserId (see
+  // the Squad list below) — the existing consent/request model for BECOMING
+  // VC is unchanged; this only completes the missing reverse path. One
+  // atomic batch: the team's viceCaptainUserId reference and the affected
+  // user's role are cleared together, so neither can be left inconsistent
+  // if the write is rejected (see firestore.rules for the two narrowly-
+  // scoped clauses this now requires).
+  async function removeVC(player: Player) {
+    if (!teamId || !player.claimedByUserId) return;
+    setIsRemovingVC(true);
+    try {
+      const batch = writeBatch(db);
+      batch.update(doc(db, 'teams', teamId), { viceCaptainUserId: null });
+      batch.update(doc(db, 'users', player.claimedByUserId), { role: 'player' });
+      await batch.commit();
+    } catch (e: unknown) {
+      Alert.alert('Error', (e as Error).message ?? 'Something went wrong');
+    } finally {
+      setIsRemovingVC(false);
+    }
+  }
+
+  function confirmRemoveVC(player: Player) {
+    Alert.alert(
+      'Remove Vice Captain',
+      `Remove ${player.name} as Vice Captain? They'll go back to being a regular player.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Remove', style: 'destructive', onPress: () => removeVC(player) },
+      ],
+    );
   }
 
   // Covers all three request kinds this team's captain/VC can act on: a plain
@@ -527,6 +563,10 @@ export default function CaptainsScreen() {
             players.map((player) => {
               const isClaimed = !!player.claimedByUserId;
               const role = roleOf(player);
+              // Only the actual current captain — never a VC, even though
+              // this whole screen is shared by both roles — and only for
+              // the team's one active VC.
+              const canRemoveThisVC = role === 'viceCaptain' && appUser?.uid === captainUserId;
               return (
                 <Card key={player.id} tone={isClaimed ? 'sage' : 'default'} className="mb-2.5">
                   <View className="flex-row items-center">
@@ -537,7 +577,7 @@ export default function CaptainsScreen() {
                     >
                       <Avatar initial={player.name.charAt(0)} tone={isClaimed ? 'sage' : 'brand'} size="sm" className="mr-3" />
                       <View className="flex-1">
-                        <Body tone="strong" weight="semibold">{player.name}</Body>
+                        <Body tone="strong" weight="semibold" numberOfLines={1}>{player.name}</Body>
                         {!isClaimed && (
                           <Body size="xs" className="mt-0.5">Not yet claimed</Body>
                         )}
@@ -559,6 +599,18 @@ export default function CaptainsScreen() {
                       </TouchableOpacity>
                     )}
                   </View>
+                  {canRemoveThisVC && (
+                    <Button
+                      variant="danger"
+                      size="sm"
+                      className="mt-3"
+                      disabled={isRemovingVC}
+                      loading={isRemovingVC}
+                      onPress={() => confirmRemoveVC(player)}
+                    >
+                      Remove Vice Captain
+                    </Button>
+                  )}
                 </Card>
               );
             })
