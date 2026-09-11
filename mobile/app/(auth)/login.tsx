@@ -88,7 +88,7 @@ export default function LoginScreen() {
               />
             </View>
 
-            <View className="mb-6">
+            <View className="mb-2">
               <Label>Password</Label>
               <Input
                 value={password}
@@ -98,6 +98,12 @@ export default function LoginScreen() {
                 returnKeyType="done"
                 onSubmitEditing={handleSignIn}
               />
+            </View>
+
+            <View className="items-end mb-6">
+              <Body size="sm" tone="brand" weight="semibold" onPress={() => router.push('/(auth)/forgot-password')} suppressHighlighting>
+                Forgot password?
+              </Body>
             </View>
 
             <Button

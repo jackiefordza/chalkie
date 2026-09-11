@@ -3,6 +3,7 @@ import {
   onAuthStateChanged,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
+  sendPasswordResetEmail,
   signOut,
   updateProfile,
   type User,
@@ -24,6 +25,7 @@ interface AuthState {
   error: string | null;
   signIn: (email: string, password: string) => Promise<void>;
   register: (email: string, password: string, displayName: string) => Promise<void>;
+  sendPasswordReset: (email: string) => Promise<void>;
   updateContactDetails: (phone: string, phoneVisibility: PhoneVisibility) => Promise<void>;
   updateProfileDetails: (name: string, nickname: string | null) => Promise<void>;
   logOut: () => Promise<void>;
@@ -89,6 +91,22 @@ export const useAuthStore = create<AuthState>((set) => ({
         isLoading: false,
       });
     } catch (e: unknown) {
+      set({ error: friendlyAuthError(e) });
+      throw e;
+    }
+  },
+
+  // Deliberately treats "no account for this email" as success — surfacing
+  // that distinction would let this screen be used to check which emails
+  // are registered. Genuine operational errors (bad email format, offline,
+  // rate-limited) still surface normally.
+  sendPasswordReset: async (email: string) => {
+    set({ error: null });
+    try {
+      await sendPasswordResetEmail(auth, email);
+    } catch (e: unknown) {
+      const code = (e as { code?: string }).code ?? '';
+      if (code === 'auth/user-not-found') return;
       set({ error: friendlyAuthError(e) });
       throw e;
     }
