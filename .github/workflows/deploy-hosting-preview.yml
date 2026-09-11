@@ -21,9 +21,9 @@ on:
 env:
   # pilot/mobile-web-hardening (the October pilot hardening + Season 1
   # build-out branch), exact commit — see the comment above for why this is
-  # a fixed SHA, not a branch name. Currently Phase E, Step 2's Home V1
-  # visual prototype, the latest commit on the branch as of this update.
-  PINNED_SHA: '6269f06f3c186c6bcbdb151f7e3917fa9d0493ee'
+  # a fixed SHA, not a branch name. Currently Phase E, Step 3's Home V2
+  # colour pass, the latest commit on the branch as of this update.
+  PINNED_SHA: '55eb3a1a5024fb2f56ed4275432bd4a7339861dc'
 
 permissions:
   contents: read
