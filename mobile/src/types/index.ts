@@ -27,11 +27,21 @@ export interface AppUser {
   createdAt: Date;
 }
 
+// One primary sponsor per league — deliberately not a subcollection/
+// advertising system, just league branding (see SponsorBanner).
+export interface LeagueSponsor {
+  name: string;
+  logoUrl: string | null;
+  websiteUrl: string | null;
+  active: boolean;
+}
+
 export interface League {
   id: string;
   name: string;
   adminUserId: string;
   createdAt: Date;
+  sponsor: LeagueSponsor | null;
 }
 
 export type SeasonStatus = 'upcoming' | 'active' | 'completed';

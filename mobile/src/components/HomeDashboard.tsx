@@ -10,9 +10,9 @@ import { useAuthStore } from '@/stores/authStore';
 import { RAW } from '@/lib/theme';
 import { STATUS_LABEL, STATUS_TONE } from '@/lib/matchStatus';
 import {
-  Screen, Heading, Body, Caption, Badge, Card, StatTile, ListRow, Button, AppIcon, FormBadge,
+  Screen, Heading, Body, Caption, Badge, Card, StatTile, ListRow, Button, AppIcon, FormBadge, SponsorBanner,
 } from '@/components/ui';
-import type { Match, DivisionTable, PlayerSeasonStats } from '@/types';
+import type { Match, DivisionTable, PlayerSeasonStats, LeagueSponsor } from '@/types';
 
 interface OpponentContact { name: string; phone: string }
 
@@ -312,6 +312,7 @@ export function HomeDashboard() {
   const [tableRow, setTableRow] = useState<DivisionTable | null>(null);
   const [myStats, setMyStats] = useState<PlayerSeasonStats | null>(null);
   const [leagueName, setLeagueName] = useState<string | null>(null);
+  const [sponsor, setSponsor] = useState<LeagueSponsor | null>(null);
   const [divisionName, setDivisionName] = useState<string | null>(null);
   const [pendingRequestCount, setPendingRequestCount] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
@@ -382,7 +383,10 @@ export function HomeDashboard() {
   // League/division names — one-time reads; this data essentially never
   // changes, so a listener would just be an idle connection for no benefit.
   useEffect(() => {
-    if (appUser?.leagueId) getDoc(doc(db, 'leagues', appUser.leagueId)).then((s) => setLeagueName(s.exists() ? s.data().name : null));
+    if (appUser?.leagueId) getDoc(doc(db, 'leagues', appUser.leagueId)).then((s) => {
+      setLeagueName(s.exists() ? s.data().name : null);
+      setSponsor(s.exists() ? s.data().sponsor ?? null : null);
+    });
     if (appUser?.divisionId) getDoc(doc(db, 'divisions', appUser.divisionId)).then((s) => setDivisionName(s.exists() ? s.data().name : null));
   }, [appUser?.leagueId, appUser?.divisionId]);
 
@@ -430,6 +434,8 @@ export function HomeDashboard() {
         <ActivityIndicator color={RAW.brand} style={{ marginTop: 40 }} />
       ) : (
         <>
+          <SponsorBanner sponsor={sponsor} className="mb-4" />
+
           {isCaptainOrVC && pendingRequestCount > 0 && (
             <ListRow
               className="mb-4"
