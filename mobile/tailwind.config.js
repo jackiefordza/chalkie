@@ -62,6 +62,33 @@ module.exports = {
         'admin-panel-dark': '#181A20',
         'admin-panel-border': '#DFE2E8',
         'admin-panel-border-dark': '#2A2E38',
+
+        // Phase E, Step 2 — Home V1 visual prototype only. A deliberately
+        // FIXED dark palette (no light/dark-variant pair) — same precedent
+        // as admin-sidebar/admin-canvas above, which are also fixed
+        // regardless of the app's light/dark toggle. Not yet the app-wide
+        // theme; currently used only by HomeDashboard, Header, and TabBar.
+        'home-base': '#08110E',
+        'home-bg-2': '#0D1814',
+        'home-surface': '#14201B',
+        'home-elevated': '#1A2822',
+        'home-border': 'rgba(244,246,243,0.10)',
+        'home-text': '#F4F6F3',
+        'home-text-dim': '#A9B3AE',
+        'home-text-faint': '#737D78',
+        // Semantic accents — lime is primary action/selection/emphasis only;
+        // amber is secondary and used sparingly (see homeToneClasses in
+        // lib/theme.ts for how match-status meaning maps onto these).
+        lime: '#B8F34A',
+        'lime-ink': '#08110E',
+        amber: '#FFD166',
+        'amber-ink': '#08110E',
+        'home-success': '#61D98A',
+        'home-success-ink': '#08110E',
+        'home-warning': '#F2B84B',
+        'home-warning-ink': '#08110E',
+        'home-error': '#FF6B6B',
+        'home-error-ink': '#08110E',
       },
     },
   },

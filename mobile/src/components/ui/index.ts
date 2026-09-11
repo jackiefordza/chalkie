@@ -15,6 +15,7 @@ export { Input, Label } from './Input';
 export { Sheet } from './Sheet';
 export { TabBar } from './TabBar';
 export { HeaderAvatar, HeaderWordmark } from './AppHeader';
+export { Header } from './Header';
 export { AppIcon, type AppIconName } from './AppIcon';
 export { AccountMenu } from './AccountMenu';
 export { SponsorBanner } from './SponsorBanner';

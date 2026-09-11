@@ -1,18 +1,38 @@
 import { useState, useEffect } from 'react';
-import { View, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { View, Text, TouchableOpacity, ActivityIndicator, Image, Linking } from 'react-native';
 import { router } from 'expo-router';
-import { useColorScheme } from 'nativewind';
 import {
   collection, doc, onSnapshot, getDoc, query, where, and, or, orderBy,
 } from 'firebase/firestore';
 import { db } from '@/config/firebase';
 import { useAuthStore } from '@/stores/authStore';
-import { RAW } from '@/lib/theme';
+import { RAW, homeToneClasses } from '@/lib/theme';
+import { FONT_MONO, FONT_DISPLAY } from '@/styles/typography';
 import { STATUS_LABEL, STATUS_TONE, isFixtureException } from '@/lib/matchStatus';
-import {
-  Screen, Heading, Body, Caption, Badge, Card, StatTile, ListRow, Button, AppIcon, FormBadge, SponsorBanner,
-} from '@/components/ui';
+import { Screen, Header, Button, AppIcon } from '@/components/ui';
 import type { Match, DivisionTable, PlayerSeasonStats, LeagueSponsor } from '@/types';
+
+// ─────────────────────────────────────────────────────────────────────────
+// Phase E, Step 2 — Home V1 visual prototype. Every data-fetching effect,
+// every piece of state, and every existing decision (which match counts as
+// "next", the CTA's state machine, contact-visibility rules, the postponed/
+// cancelled exclusion) is preserved EXACTLY as it was — this file's actual
+// rewrite is the JSX/styling below each. The one genuinely new piece of
+// data-fetching is the League Snapshot query, added where it's computed.
+//
+// Deliberately NOT built from the shared Card/Badge/StatTile/ListRow/
+// FormBadge/SponsorBanner primitives: those components' colours are driven
+// by the app's actual light/dark colorScheme, which is an orthogonal signal
+// to "is this the new Home direction" — a reviewer with their phone set to
+// light mode would otherwise see e.g. a pale mint Badge floating on this
+// screen's near-black background. Home's new palette (tailwind.config.js's
+// home-*/lime/amber tokens, see lib/theme.ts's homeToneClasses) is fixed
+// regardless of colorScheme, so this file uses plain View/Text with those
+// classes directly instead. Small, genuinely new pieces (Button's new
+// 'lime' variant, Screen's backgroundClassName override, the shared Header
+// component) were added to the real shared primitives where doing so was
+// safe and additive — see each file's own comment.
+// ─────────────────────────────────────────────────────────────────────────
 
 interface OpponentContact { name: string; phone: string }
 
@@ -44,13 +64,30 @@ export function recentForm(matches: Match[], teamId: string, count = 3): ('W' | 
     });
 }
 
+// Small W/L indicator with the fixed dark palette — the same visual role as
+// the shared FormBadge, not reused for the reason given at the top of this
+// file (FormBadge's colours follow the app's actual colorScheme).
+function FormDot({ result }: { result: 'W' | 'L' }) {
+  const isWin = result === 'W';
+  return (
+    <View className={`w-5 h-5 rounded-full items-center justify-center ${isWin ? 'bg-home-success/15' : 'bg-home-error/15'}`}>
+      <Text className={`text-[10px] font-bold ${isWin ? 'text-home-success' : 'text-home-error'}`}>{result}</Text>
+    </View>
+  );
+}
+
+function EyebrowCaption({ children }: { children: string }) {
+  return <Text className="text-[11px] font-semibold uppercase tracking-wider text-home-text-faint">{children}</Text>;
+}
+
 // ─────────────────────────────────────────────────────────────────────────
-// NEXT MATCH — the dashboard's primary card. "Next" means the earliest match
-// that isn't confirmed yet (scheduled, awaiting confirmation, or disputed),
-// not just the next scheduled date — so a stuck-in-limbo result surfaces
-// here too, exactly where "what needs my attention" logic belongs.
+// NEXT MATCH — the primary hero. "Next" is still deliberately scheduled/
+// awaiting_confirmation/disputed only (a postponed/cancelled match is an
+// admin exception, never surfaced here as "what needs my attention next")
+// — that selection happens in HomeDashboard below, unchanged; this
+// component only renders whatever match it's given.
 // ─────────────────────────────────────────────────────────────────────────
-interface NextMatchCardProps {
+interface NextMatchHeroProps {
   match: Match | null;
   teamId: string;
   opponentName: string;
@@ -59,10 +96,8 @@ interface NextMatchCardProps {
   isCaptainOrVC: boolean;
 }
 
-function NextMatchCard({ match, teamId, opponentName, tableRow, form, isCaptainOrVC }: NextMatchCardProps) {
+function NextMatchHero({ match, teamId, opponentName, tableRow, form, isCaptainOrVC }: NextMatchHeroProps) {
   const { appUser } = useAuthStore();
-  const { colorScheme } = useColorScheme();
-  const isDark = colorScheme === 'dark';
   const [opponentContact, setOpponentContact] = useState<OpponentContact | null>(null);
   const [venuePhone, setVenuePhone] = useState<string | null>(null);
   // Whether OUR team has a saved submission for this match yet — only
@@ -70,9 +105,10 @@ function NextMatchCard({ match, teamId, opponentName, tableRow, form, isCaptainO
   // check for, i.e. once the match is past 'scheduled'. Lets the action
   // label below distinguish "it's your move" from "you're waiting on them"
   // instead of a single generic label for every non-scheduled status —
-  // directly the "is there anything I need to do?" question this card
-  // exists to answer. Single doc read, same permission this screen's own
-  // "Enter Result" flow already relies on (matches/{id}/submissions/{teamId}).
+  // directly the "is there anything I need to do?" question this
+  // component exists to answer. Single doc read, same permission this
+  // screen's own "Enter Result" flow already relies on
+  // (matches/{id}/submissions/{teamId}).
   const [hasSubmitted, setHasSubmitted] = useState<boolean | null>(null);
 
   const opponentId = match ? (match.homeTeamId === teamId ? match.awayTeamId : match.homeTeamId) : null;
@@ -111,78 +147,96 @@ function NextMatchCard({ match, teamId, opponentName, tableRow, form, isCaptainO
 
   if (!match || !opponentId) {
     return (
-      <Card className="mb-4">
-        <Caption>Next Match</Caption>
-        <Body size="sm" className={form.length > 0 ? 'mt-2 mb-3' : 'mt-2'}>No upcoming fixture scheduled</Body>
+      <View className="rounded-lg border border-home-border bg-home-surface px-5 py-5 mb-6">
+        <EyebrowCaption>Next Match</EyebrowCaption>
+        <Text className={`text-[13px] text-home-text-dim ${form.length > 0 ? 'mt-2 mb-3' : 'mt-2'}`}>
+          No upcoming fixture scheduled
+        </Text>
         {form.length > 0 && (
-          <View className="flex-row items-center gap-2 pt-3 mt-1 border-t border-border dark:border-border-dark">
-            <Caption>Your Form</Caption>
-            <View className="flex-row gap-1.5">{form.map((r, i) => <FormBadge key={i} result={r} />)}</View>
+          <View className="flex-row items-center gap-2 pt-3 mt-1 border-t border-home-border">
+            <EyebrowCaption>Your Form</EyebrowCaption>
+            <View className="flex-row gap-1.5">{form.map((r, i) => <FormDot key={i} result={r} />)}</View>
           </View>
         )}
-      </Card>
+      </View>
     );
   }
 
   const tone = STATUS_TONE[match.status];
-  // The Match Centre (results-entry.tsx) now shows a proper read-only view
-  // for any status to anyone on either team, not just captain/VC with
-  // something to submit — so the whole card is always tappable.
-  const tappable = true;
+  const toneClasses = tone ? homeToneClasses(tone) : null;
+  const ctaLabel = match.status === 'scheduled' ? 'Enter Result'
+    : match.status === 'disputed' ? 'Resolve Differences'
+      : match.status === 'awaiting_confirmation' && hasSubmitted === false ? 'Review Their Result'
+        : match.status === 'awaiting_confirmation' && hasSubmitted === true ? 'View Submission'
+          : 'View / Edit Result';
 
   const content = (
-    <Card className="mb-4">
-      <View className="flex-row items-center justify-between mb-3">
-        <Caption>Next Match</Caption>
-        {tableRow && <Badge tone="brand">{ordinal(tableRow.position)} in table</Badge>}
+    <View className="rounded-lg border border-home-border bg-home-surface px-5 py-5 mb-6">
+      <View className="flex-row items-center justify-between mb-4">
+        <EyebrowCaption>Next Match</EyebrowCaption>
+        {toneClasses && (
+          <View className={`rounded px-2 py-1 ${toneClasses.bg}`}>
+            <Text className={`text-[10px] font-bold uppercase tracking-wide ${toneClasses.text}`}>
+              {STATUS_LABEL[match.status]}
+            </Text>
+          </View>
+        )}
       </View>
 
-      <View className="flex-row items-center justify-between mb-1">
-        <Heading size="md" className="flex-1" numberOfLines={1}>
-          {isHome ? `You vs ${opponentName}` : `${opponentName} vs You`}
-        </Heading>
-        <Badge tone={isHome ? 'sage' : 'butter'}>{isHome ? 'Home' : 'Away'}</Badge>
+      <View className="flex-row items-baseline gap-1.5">
+        <Text className="text-[19px] font-bold text-home-text" style={{ fontFamily: FONT_DISPLAY }}>You</Text>
+        <Text className="text-[12px] text-home-text-faint">({isHome ? 'H' : 'A'})</Text>
       </View>
+      <Text className="text-[15px] text-home-text-dim mb-4" numberOfLines={1}>vs {opponentName}</Text>
 
-      <Body size="sm" className="mb-1">
-        {formatDate(match.scheduledDate)}
-        {match.venue ? ` · ${match.venue}` : ''}
-      </Body>
-
-      {tone && <Badge tone={tone} className="self-start mt-1 mb-2">{STATUS_LABEL[match.status]}</Badge>}
-
-      {opponentContact && (
-        <View className="flex-row items-center gap-2 mt-2 mb-2 py-2.5 px-3 rounded-xl bg-surface-2 dark:bg-surface-2-dark">
-          <AppIcon name="phone" size={15} color={RAW.brand} />
-          <Body size="sm" tone="strong" weight="semibold" numberOfLines={1} className="flex-1">{opponentContact.name}</Body>
-          <Body size="sm" tone="brand">{opponentContact.phone}</Body>
-        </View>
-      )}
-      {!isHome && venuePhone && (
-        <View className="flex-row items-center gap-2 py-2.5 px-3 rounded-xl bg-surface-2 dark:bg-surface-2-dark">
-          <AppIcon name="home" size={15} color={RAW.brand} />
-          <Body size="sm" tone="strong" weight="semibold" className="flex-1">Venue Contact</Body>
-          <Body size="sm" tone="brand">{venuePhone}</Body>
-        </View>
-      )}
+      <View className="flex-row items-center justify-between mb-4">
+        <Text className="text-[13px] text-home-text-dim flex-1 mr-2" numberOfLines={1}>
+          {formatDate(match.scheduledDate)}{match.venue ? ` · ${match.venue}` : ''}
+        </Text>
+        {tableRow && (
+          <Text
+            className="text-[13px] font-bold text-lime"
+            style={{ fontFamily: FONT_MONO, fontVariant: ['tabular-nums'] }}
+          >
+            {ordinal(tableRow.position)}
+          </Text>
+        )}
+      </View>
 
       {isCaptainOrVC && (
         <Button
+          variant="lime"
           size="sm"
-          className="mt-3"
           onPress={() => router.push(`/(protected)/results-entry?matchId=${match.id}`)}
         >
-          {match.status === 'scheduled' ? 'Enter Result'
-            : match.status === 'disputed' ? 'Resolve Differences'
-              : match.status === 'awaiting_confirmation' && hasSubmitted === false ? 'Review Their Result'
-                : match.status === 'awaiting_confirmation' && hasSubmitted === true ? 'View Submission'
-                  : 'View / Edit Result'}
+          {ctaLabel}
         </Button>
       )}
-    </Card>
+
+      {(opponentContact || (!isHome && venuePhone)) && (
+        <View className="mt-4 pt-4 border-t border-home-border gap-2.5">
+          {opponentContact && (
+            <View className="flex-row items-center gap-2">
+              <AppIcon name="phone" size={13} color={RAW.homeTextFaint} />
+              <Text className="text-[12px] text-home-text-dim flex-1" numberOfLines={1}>{opponentContact.name}</Text>
+              <Text className="text-[12px] text-home-text-dim">{opponentContact.phone}</Text>
+            </View>
+          )}
+          {!isHome && venuePhone && (
+            <View className="flex-row items-center gap-2">
+              <AppIcon name="home" size={13} color={RAW.homeTextFaint} />
+              <Text className="text-[12px] text-home-text-dim flex-1">Venue Contact</Text>
+              <Text className="text-[12px] text-home-text-dim">{venuePhone}</Text>
+            </View>
+          )}
+        </View>
+      )}
+    </View>
   );
 
-  if (!tappable) return content;
+  // The Match Centre (results-entry.tsx) shows a proper read-only view for
+  // any status to anyone on either team, not just captain/VC with
+  // something to submit — so the whole hero is always tappable.
   return (
     <TouchableOpacity
       activeOpacity={0.7}
@@ -194,51 +248,174 @@ function NextMatchCard({ match, teamId, opponentName, tableRow, form, isCaptainO
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// TEAM SNAPSHOT
+// YOUR TEAM — one dominant number (position), not four equal tiles.
 // ─────────────────────────────────────────────────────────────────────────
-function TeamSnapshotCard({ tableRow, form, teamId }: { tableRow: DivisionTable; form: ('W' | 'L')[]; teamId: string }) {
-  // Tapping this card opens the same Team Profile screen every other team
-  // name links to, scoped to the viewer's own team.
+function YourTeamSection({ tableRow, form, teamId }: { tableRow: DivisionTable; form: ('W' | 'L')[]; teamId: string }) {
+  const legDiffText = tableRow.legDiff > 0 ? `+${tableRow.legDiff}` : `${tableRow.legDiff}`;
   return (
     <TouchableOpacity activeOpacity={0.7} onPress={() => router.push(`/(protected)/team-profile?teamId=${teamId}`)}>
-      <Card className="mb-4">
-        <Caption className="mb-3">Team Snapshot</Caption>
-        <View className="flex-row gap-2.5">
-          <StatTile label="Position" value={ordinal(tableRow.position)} tone="brand" />
-          <StatTile label="Points" value={tableRow.points} tone="butter" />
-          <StatTile label="W-L" value={`${tableRow.won}-${tableRow.lost}`} tone="sage" />
-          <StatTile label="Leg Diff" value={tableRow.legDiff > 0 ? `+${tableRow.legDiff}` : tableRow.legDiff} tone={tableRow.legDiff >= 0 ? 'sage' : 'coral'} />
+      <View className="mb-6">
+        <EyebrowCaption>Your Team</EyebrowCaption>
+        <View className="flex-row items-end gap-4 mt-2">
+          <Text
+            className="text-[36px] font-bold text-lime leading-[38px]"
+            style={{ fontFamily: FONT_MONO, fontVariant: ['tabular-nums'] }}
+          >
+            {ordinal(tableRow.position)}
+          </Text>
+          <Text className="text-[13px] text-home-text-dim pb-1.5 flex-1" numberOfLines={1}>
+            <Text className="font-bold text-home-text" style={{ fontFamily: FONT_MONO, fontVariant: ['tabular-nums'] }}>
+              {tableRow.points}
+            </Text>
+            {' pts  ·  '}
+            <Text style={{ fontFamily: FONT_MONO, fontVariant: ['tabular-nums'] }}>{tableRow.won}-{tableRow.lost}</Text>
+            {' W-L  ·  '}
+            <Text style={{ fontFamily: FONT_MONO, fontVariant: ['tabular-nums'] }}>{legDiffText}</Text>
+            {' legs'}
+          </Text>
         </View>
         {form.length > 0 && (
-          <View className="flex-row items-center gap-2 pt-3 mt-3 border-t border-border dark:border-border-dark">
-            <Caption>Recent Form</Caption>
-            <View className="flex-row gap-1.5">{form.map((r, i) => <FormBadge key={i} result={r} />)}</View>
+          <View className="flex-row items-center gap-1.5 mt-3">
+            {form.map((r, i) => <FormDot key={i} result={r} />)}
           </View>
         )}
-      </Card>
+      </View>
     </TouchableOpacity>
   );
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// PERSONAL SNAPSHOT
+// LEAGUE SNAPSHOT — 3-5 rows around the viewer's own position, not the
+// full table. The one genuinely new query in this file: the existing
+// tableRow read (a single doc, already fetched by HomeDashboard) supplies
+// the position to window the range query around.
 // ─────────────────────────────────────────────────────────────────────────
-function PersonalSnapshotCard({ stats, playerId }: { stats: PlayerSeasonStats | null; playerId: string | null }) {
-  // Tapping this card opens the same Player Profile screen everyone else's
-  // name links to — the viewer's own profile is just that screen given
-  // their own playerId, not a separate implementation.
+function LeagueSnapshotList({ rows, myTeamId, teamNames }: {
+  rows: DivisionTable[]; myTeamId: string; teamNames: Record<string, string>;
+}) {
+  if (rows.length === 0) return null;
+  return (
+    <View className="mb-6">
+      <EyebrowCaption>League Snapshot</EyebrowCaption>
+      <View className="rounded-lg border border-home-border overflow-hidden mt-2">
+        {rows.map((row, i) => {
+          const isMine = row.teamId === myTeamId;
+          return (
+            <TouchableOpacity
+              key={row.id}
+              activeOpacity={0.7}
+              onPress={() => router.push(`/(protected)/team-profile?teamId=${row.teamId}`)}
+              className={[
+                'flex-row items-center px-4 py-2.5',
+                isMine ? 'bg-lime/10' : 'bg-home-surface',
+                i > 0 ? 'border-t border-home-border' : '',
+              ].join(' ')}
+            >
+              <Text
+                className={`w-6 text-[12px] ${isMine ? 'font-bold text-lime' : 'text-home-text-faint'}`}
+                style={{ fontFamily: FONT_MONO, fontVariant: ['tabular-nums'] }}
+              >
+                {row.position}
+              </Text>
+              <Text
+                className={`flex-1 text-[13px] mr-2 ${isMine ? 'font-bold text-lime' : 'text-home-text'}`}
+                numberOfLines={1}
+              >
+                {teamNames[row.teamId] ?? '…'}
+              </Text>
+              <Text
+                className={`text-[13px] ${isMine ? 'font-bold text-lime' : 'text-home-text-dim'}`}
+                style={{ fontFamily: FONT_MONO, fontVariant: ['tabular-nums'] }}
+              >
+                {row.points}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+      <TouchableOpacity
+        activeOpacity={0.7}
+        onPress={() => router.push('/(protected)/(tabs)/standings')}
+        className="mt-2.5"
+      >
+        <Text className="text-[12px] font-semibold text-lime">View Full Table</Text>
+      </TouchableOpacity>
+    </View>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// RECENT RESULTS — rows with dividers, not one card per match.
+// ─────────────────────────────────────────────────────────────────────────
+function RecentResultsList({ matches, teamId, teamNames }: {
+  matches: Match[]; teamId: string; teamNames: Record<string, string>;
+}) {
+  if (matches.length === 0) return null;
+  return (
+    <View className="mb-6">
+      <EyebrowCaption>Recent Results</EyebrowCaption>
+      <View className="rounded-lg border border-home-border overflow-hidden mt-2">
+        {matches.map((m, i) => {
+          const isHome = m.homeTeamId === teamId;
+          const opponentId = isHome ? m.awayTeamId : m.homeTeamId;
+          const won = isHome
+            ? (m.homeGamesWon ?? 0) > (m.awayGamesWon ?? 0)
+            : (m.awayGamesWon ?? 0) > (m.homeGamesWon ?? 0);
+          const legsFor = isHome ? m.homeLegsWon : m.awayLegsWon;
+          const legsAgainst = isHome ? m.awayLegsWon : m.homeLegsWon;
+          return (
+            <TouchableOpacity
+              key={m.id}
+              activeOpacity={0.7}
+              onPress={() => router.push(`/(protected)/results-entry?matchId=${m.id}`)}
+              className={[
+                'flex-row items-center justify-between px-4 py-3 bg-home-surface',
+                i > 0 ? 'border-t border-home-border' : '',
+              ].join(' ')}
+            >
+              <View className="flex-1 mr-3">
+                <Text className="text-[13px] font-semibold text-home-text" numberOfLines={1}>
+                  {isHome ? 'vs' : '@'} {teamNames[opponentId] ?? '…'}
+                </Text>
+                <Text className="text-[11px] text-home-text-faint mt-0.5">{formatDate(m.scheduledDate)}</Text>
+              </View>
+              <View className="items-end">
+                <Text
+                  className={`text-[13px] font-bold ${won ? 'text-home-success' : 'text-home-error'}`}
+                  style={{ fontFamily: FONT_MONO, fontVariant: ['tabular-nums'] }}
+                >
+                  {legsFor}-{legsAgainst}
+                </Text>
+                <Text className={`text-[10px] font-bold uppercase tracking-wide ${won ? 'text-home-success' : 'text-home-error'}`}>
+                  {won ? 'Won' : 'Lost'}
+                </Text>
+              </View>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+    </View>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// YOUR STATS — editorial treatment: one dominant figure (Win %), smaller
+// supporting figures, not a flat equal-weight grid.
+// ─────────────────────────────────────────────────────────────────────────
+function YourStatsSection({ stats, playerId }: { stats: PlayerSeasonStats | null; playerId: string | null }) {
   const openProfile = playerId ? () => router.push(`/(protected)/player-profile?playerId=${playerId}`) : undefined;
 
   if (!stats || stats.played === 0) {
     const content = (
-      <Card className="mb-4">
-        <Caption className="mb-2">Your Stats</Caption>
-        <Body size="sm">No stats yet — these fill in once your matches are confirmed.</Body>
-      </Card>
+      <View className="mb-6">
+        <EyebrowCaption>Your Stats</EyebrowCaption>
+        <Text className="text-[13px] text-home-text-dim mt-2">No stats yet — these fill in once your matches are confirmed.</Text>
+      </View>
     );
     if (!openProfile) return content;
     return <TouchableOpacity activeOpacity={0.7} onPress={openProfile}>{content}</TouchableOpacity>;
   }
+
   const winPct = Math.round((stats.won / stats.played) * 100);
   const highest = stats.highCheckouts
     .map((c) => Number(c.value))
@@ -246,70 +423,83 @@ function PersonalSnapshotCard({ stats, playerId }: { stats: PlayerSeasonStats | 
     .sort((a, b) => b - a)[0];
 
   const content = (
-    <Card className="mb-4">
-      <Caption className="mb-3">Your Stats</Caption>
-      <View className="flex-row gap-2.5">
-        <StatTile label="Played" value={stats.played} tone="brand" />
-        <StatTile label="Won" value={stats.won} tone="sage" />
-        <StatTile label="Win %" value={`${winPct}%`} tone="sage" />
-        <StatTile label="180s" value={stats.oneEighties} tone="butter" />
+    <View className="mb-6">
+      <EyebrowCaption>Your Stats</EyebrowCaption>
+      <View className="flex-row items-end gap-5 mt-2">
+        <Text className="text-[30px] font-bold text-lime leading-[32px]" style={{ fontFamily: FONT_MONO, fontVariant: ['tabular-nums'] }}>
+          {winPct}%
+        </Text>
+        <View className="flex-row gap-4 pb-1">
+          <View>
+            <Text className="text-[15px] font-bold text-home-text" style={{ fontFamily: FONT_MONO, fontVariant: ['tabular-nums'] }}>{stats.played}</Text>
+            <Text className="text-[10px] text-home-text-faint mt-0.5">Played</Text>
+          </View>
+          <View>
+            <Text className="text-[15px] font-bold text-home-text" style={{ fontFamily: FONT_MONO, fontVariant: ['tabular-nums'] }}>{stats.won}</Text>
+            <Text className="text-[10px] text-home-text-faint mt-0.5">Won</Text>
+          </View>
+          <View>
+            <Text className="text-[15px] font-bold text-home-text" style={{ fontFamily: FONT_MONO, fontVariant: ['tabular-nums'] }}>{stats.oneEighties}</Text>
+            <Text className="text-[10px] text-home-text-faint mt-0.5">180s</Text>
+          </View>
+        </View>
       </View>
       {highest !== undefined && (
-        <Body size="sm" className="mt-3">Highest checkout: <Body size="sm" tone="butter" weight="bold">{highest}</Body></Body>
+        <Text className="text-[12px] text-home-text-dim mt-3">
+          Highest checkout <Text className="font-bold text-amber" style={{ fontFamily: FONT_MONO, fontVariant: ['tabular-nums'] }}>{highest}</Text>
+        </Text>
       )}
-    </Card>
+    </View>
   );
   if (!openProfile) return content;
   return <TouchableOpacity activeOpacity={0.7} onPress={openProfile}>{content}</TouchableOpacity>;
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// RECENT RESULT
+// SPONSOR — same data/behaviour as the shared SponsorBanner (returns
+// nothing for a missing/inactive sponsor), re-skinned for the fixed dark
+// palette rather than reusing that component directly (see the file-level
+// comment). Deliberately placed low on the page — league branding, not
+// what the player came to Home to see.
 // ─────────────────────────────────────────────────────────────────────────
-function RecentResultCard({ match, teamId, opponentName }: { match: Match; teamId: string; opponentName: string }) {
-  const isHome = match.homeTeamId === teamId;
-  const won = isHome
-    ? (match.homeGamesWon ?? 0) > (match.awayGamesWon ?? 0)
-    : (match.awayGamesWon ?? 0) > (match.homeGamesWon ?? 0);
-  const legsFor = isHome ? match.homeLegsWon : match.awayLegsWon;
-  const legsAgainst = isHome ? match.awayLegsWon : match.homeLegsWon;
+function HomeSponsorRow({ sponsor }: { sponsor: LeagueSponsor | null | undefined }) {
+  if (!sponsor || !sponsor.active) return null;
 
-  return (
-    <TouchableOpacity
-      activeOpacity={0.7}
-      onPress={() => router.push(`/(protected)/results-entry?matchId=${match.id}`)}
-    >
-      <Card className="mb-4">
-        <Caption className="mb-2">Recent Result</Caption>
-        <View className="flex-row items-center justify-between">
-          <Body tone="strong" weight="semibold" className="flex-1" numberOfLines={1}>
-            {isHome ? 'vs' : '@'} {opponentName}
-          </Body>
-          <Badge tone={won ? 'sage' : 'coral'}>{won ? 'Won' : 'Lost'}</Badge>
-        </View>
-        <View className="flex-row items-center justify-between mt-1">
-          <Body size="sm">{formatDate(match.scheduledDate)}</Body>
-          <Body size="sm" tone={won ? 'sage' : 'coral'} weight="semibold">{legsFor} - {legsAgainst} legs</Body>
-        </View>
-      </Card>
-    </TouchableOpacity>
+  const inner = (
+    <View className="flex-row items-center gap-3 pt-4 mt-2 border-t border-home-border">
+      {sponsor.logoUrl ? (
+        <Image source={{ uri: sponsor.logoUrl }} style={{ width: 26, height: 26, borderRadius: 6 }} resizeMode="contain" />
+      ) : null}
+      <View className="flex-1">
+        <Text className="text-[10px] uppercase tracking-wide text-home-text-faint">Proudly sponsored by</Text>
+        <Text className="text-[12px] font-semibold text-home-text-dim mt-0.5" numberOfLines={1}>{sponsor.name}</Text>
+      </View>
+    </View>
   );
+
+  if (sponsor.websiteUrl) {
+    return (
+      <TouchableOpacity activeOpacity={0.7} onPress={() => Linking.openURL(sponsor.websiteUrl!)}>
+        {inner}
+      </TouchableOpacity>
+    );
+  }
+  return inner;
 }
 
 // ─────────────────────────────────────────────────────────────────────────
 // HOME DASHBOARD — shared by both the player ("home") and captain/VC
-// ("captain") tabs, exactly as the single old HomeFixturesScreen was.
+// ("captain") tabs, exactly as before.
 // ─────────────────────────────────────────────────────────────────────────
 export function HomeDashboard() {
   const { appUser } = useAuthStore();
-  const { colorScheme } = useColorScheme();
-  const isDark = colorScheme === 'dark';
   const teamId = appUser?.teamId ?? null;
   const isCaptainOrVC = appUser?.role === 'captain' || appUser?.role === 'viceCaptain';
 
   const [matches, setMatches] = useState<Match[]>([]);
   const [teamNames, setTeamNames] = useState<Record<string, string>>({});
   const [tableRow, setTableRow] = useState<DivisionTable | null>(null);
+  const [leagueSnapshot, setLeagueSnapshot] = useState<DivisionTable[]>([]);
   const [myStats, setMyStats] = useState<PlayerSeasonStats | null>(null);
   const [leagueName, setLeagueName] = useState<string | null>(null);
   const [sponsor, setSponsor] = useState<LeagueSponsor | null>(null);
@@ -365,6 +555,31 @@ export function HomeDashboard() {
     );
   }, [appUser?.seasonId, appUser?.divisionId, teamId]);
 
+  // League Snapshot (Phase E, Step 2) — 3-5 rows around the viewer's own
+  // position, not the full table. A bounded range query on the SAME field
+  // set (leagueId, seasonId, divisionId, position) standings.tsx's own
+  // query already uses — servable by that same existing composite index,
+  // no new index required. Only starts once tableRow has resolved, since
+  // it supplies the position to window around.
+  useEffect(() => {
+    if (!appUser?.leagueId || !appUser?.seasonId || !appUser?.divisionId || !tableRow) { setLeagueSnapshot([]); return; }
+    const lo = Math.max(1, tableRow.position - 2);
+    const hi = tableRow.position + 2;
+    return onSnapshot(
+      query(
+        collection(db, 'divisionTables'),
+        where('leagueId', '==', appUser.leagueId),
+        where('seasonId', '==', appUser.seasonId),
+        where('divisionId', '==', appUser.divisionId),
+        where('position', '>=', lo),
+        where('position', '<=', hi),
+        orderBy('position', 'asc'),
+      ),
+      (snap) => setLeagueSnapshot(snap.docs.map((d) => ({ id: d.id, ...d.data() } as DivisionTable))),
+      () => setLeagueSnapshot([]),
+    );
+  }, [appUser?.leagueId, appUser?.seasonId, appUser?.divisionId, tableRow?.position]);
+
   // Personal stats — same doc-ID pattern as the Stats tab's "My Stats", and
   // the same missing-doc-throws-instead-of-denies quirk as tableRow above —
   // a player with no confirmed games yet has no playerSeasonStats doc.
@@ -400,75 +615,79 @@ export function HomeDashboard() {
     );
   }, [isCaptainOrVC, teamId]);
 
+  // Division · League — the header's own context line. Team name is
+  // deliberately not repeated here now that "Your Team" is its own section
+  // below (see the Phase E, Step 2 report for this decision).
+  const contextLine = [divisionName, leagueName].filter(Boolean).join(' · ');
+
   if (!teamId) {
     return (
-      <Screen>
-        <Body className="text-center mt-10">Join a team to see your dashboard.</Body>
+      <Screen backgroundClassName="bg-home-base" header={<Header contextLine={contextLine || null} />}>
+        <Text className="text-[13px] text-home-text-dim text-center mt-10">Join a team to see your dashboard.</Text>
       </Screen>
     );
   }
 
   // "Next" is deliberately scheduled/awaiting_confirmation/disputed only —
   // a postponed/cancelled match is an admin exception, not something to
-  // surface as "what needs my attention next" (see NextMatchCard's own
+  // surface as "what needs my attention next" (see NextMatchHero's own
   // header comment); `!== 'confirmed'` alone would still catch them.
   const nextMatch = matches.find((m) => m.status !== 'confirmed' && !isFixtureException(m.status)) ?? null;
   const nextOpponentId = nextMatch ? (nextMatch.homeTeamId === teamId ? nextMatch.awayTeamId : nextMatch.homeTeamId) : null;
   const confirmedMatches = matches.filter((m) => m.status === 'confirmed');
-  const recentMatch = confirmedMatches[confirmedMatches.length - 1] ?? null;
-  const recentOpponentId = recentMatch ? (recentMatch.homeTeamId === teamId ? recentMatch.awayTeamId : recentMatch.homeTeamId) : null;
+  const recentMatches = [...confirmedMatches].reverse().slice(0, 3);
   const form = recentForm(matches, teamId);
 
-  const firstName = appUser?.nickname || appUser?.displayName?.split(' ')[0] || 'there';
-  const contextLine = [teamNames[teamId], divisionName, leagueName].filter(Boolean).join(' · ');
-
   return (
-    <Screen>
-      <View className="mb-5">
-        <Heading size="lg">Welcome back, {firstName}</Heading>
-        {contextLine ? <Body size="sm" className="mt-1">{contextLine}</Body> : null}
-      </View>
+    <Screen backgroundClassName="bg-home-base" header={<Header contextLine={contextLine || null} />}>
+      <View className="w-full max-w-[640px] self-center">
+        {loadError ? (
+          <View className="rounded-lg border border-home-error/30 bg-home-error/10 px-4 py-4">
+            <Text className="text-[13px] font-semibold text-home-error mb-1">Couldn't load your dashboard</Text>
+            <Text className="text-[12px] text-home-error">{loadError}</Text>
+          </View>
+        ) : isLoading ? (
+          <ActivityIndicator color={RAW.lime} style={{ marginTop: 40 }} />
+        ) : (
+          <>
+            {isCaptainOrVC && pendingRequestCount > 0 && (
+              <TouchableOpacity
+                activeOpacity={0.7}
+                onPress={() => router.push('/(protected)/(tabs)/captains')}
+                className="flex-row items-center gap-3 rounded-lg bg-amber/10 border border-amber/25 px-4 py-3 mb-6"
+              >
+                <AppIcon name="users" size={17} color={RAW.amber} />
+                <View className="flex-1">
+                  <Text className="text-[13px] font-semibold text-home-text">
+                    {pendingRequestCount} request{pendingRequestCount === 1 ? '' : 's'} waiting
+                  </Text>
+                  <Text className="text-[11px] text-home-text-faint mt-0.5">Tap to review your team's inbox</Text>
+                </View>
+                <AppIcon name="chevron-right" size={16} color={RAW.homeTextFaint} />
+              </TouchableOpacity>
+            )}
 
-      {loadError ? (
-        <Card tone="coral">
-          <Body tone="coral" weight="semibold" className="mb-1">Couldn't load your dashboard</Body>
-          <Body tone="coral" size="sm">{loadError}</Body>
-        </Card>
-      ) : isLoading ? (
-        <ActivityIndicator color={RAW.brand} style={{ marginTop: 40 }} />
-      ) : (
-        <>
-          <SponsorBanner sponsor={sponsor} className="mb-4" />
-
-          {isCaptainOrVC && pendingRequestCount > 0 && (
-            <ListRow
-              className="mb-4"
-              avatar={<AppIcon name="users" size={20} color={isDark ? RAW.brandInkDark : RAW.brandInk} />}
-              title={`${pendingRequestCount} request${pendingRequestCount === 1 ? '' : 's'} waiting`}
-              subtitle="Tap to review your team's inbox"
-              trailing={<AppIcon name="chevron-right" size={18} color={isDark ? RAW.textFaintDark : RAW.textFaint} />}
-              onPress={() => router.push('/(protected)/(tabs)/captains')}
+            <NextMatchHero
+              match={nextMatch}
+              teamId={teamId}
+              opponentName={nextOpponentId ? (teamNames[nextOpponentId] ?? '…') : ''}
+              tableRow={tableRow}
+              form={form}
+              isCaptainOrVC={isCaptainOrVC}
             />
-          )}
 
-          <NextMatchCard
-            match={nextMatch}
-            teamId={teamId}
-            opponentName={nextOpponentId ? (teamNames[nextOpponentId] ?? '…') : ''}
-            tableRow={tableRow}
-            form={form}
-            isCaptainOrVC={isCaptainOrVC}
-          />
+            {tableRow && <YourTeamSection tableRow={tableRow} form={form} teamId={teamId} />}
 
-          {tableRow && <TeamSnapshotCard tableRow={tableRow} form={form} teamId={teamId} />}
+            <LeagueSnapshotList rows={leagueSnapshot} myTeamId={teamId} teamNames={teamNames} />
 
-          <PersonalSnapshotCard stats={myStats} playerId={appUser?.playerId ?? null} />
+            <RecentResultsList matches={recentMatches} teamId={teamId} teamNames={teamNames} />
 
-          {recentMatch && recentOpponentId && (
-            <RecentResultCard match={recentMatch} teamId={teamId} opponentName={teamNames[recentOpponentId] ?? '…'} />
-          )}
-        </>
-      )}
+            <YourStatsSection stats={myStats} playerId={appUser?.playerId ?? null} />
+
+            <HomeSponsorRow sponsor={sponsor} />
+          </>
+        )}
+      </View>
     </Screen>
   );
 }

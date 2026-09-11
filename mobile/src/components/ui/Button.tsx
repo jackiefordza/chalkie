@@ -2,19 +2,25 @@ import type { ReactNode } from 'react';
 import { TouchableOpacity, ActivityIndicator, Text, type TouchableOpacityProps } from 'react-native';
 import { FONT_DISPLAY } from '@/styles/typography';
 
-export type ButtonVariant = 'primary' | 'secondary' | 'good' | 'danger' | 'ghost';
+export type ButtonVariant = 'primary' | 'secondary' | 'good' | 'danger' | 'ghost' | 'lime';
 
 interface Variant {
   container: string;
   text: string;
+  spinner: string;
 }
 
 const VARIANTS: Record<ButtonVariant, Variant> = {
-  primary: { container: 'bg-brand dark:bg-brand-dark shadow-sm', text: 'text-white' },
-  secondary: { container: 'bg-surface-2 dark:bg-surface-2-dark', text: 'text-text dark:text-text-dark' },
-  good: { container: 'bg-sage-fill dark:bg-sage-fill-dark', text: 'text-sage-ink dark:text-sage-ink-dark' },
-  danger: { container: 'bg-coral-fill dark:bg-coral-fill-dark', text: 'text-coral-ink dark:text-coral-ink-dark' },
-  ghost: { container: 'bg-transparent border border-dashed border-border dark:border-border-dark', text: 'text-text-dim dark:text-text-dim-dark' },
+  primary: { container: 'bg-brand dark:bg-brand-dark shadow-sm', text: 'text-white', spinner: '#FFFFFF' },
+  secondary: { container: 'bg-surface-2 dark:bg-surface-2-dark', text: 'text-text dark:text-text-dark', spinner: '#7A4FD1' },
+  good: { container: 'bg-sage-fill dark:bg-sage-fill-dark', text: 'text-sage-ink dark:text-sage-ink-dark', spinner: '#7A4FD1' },
+  danger: { container: 'bg-coral-fill dark:bg-coral-fill-dark', text: 'text-coral-ink dark:text-coral-ink-dark', spinner: '#7A4FD1' },
+  ghost: { container: 'bg-transparent border border-dashed border-border dark:border-border-dark', text: 'text-text-dim dark:text-text-dim-dark', spinner: '#7A4FD1' },
+  // Phase E, Step 2 — Home V1 fixed dark palette only (see lib/theme.ts).
+  // Deliberately no `dark:` pair — this variant is used exclusively inside
+  // the new Home prototype, which doesn't follow the app-wide light/dark
+  // toggle.
+  lime: { container: 'bg-lime', text: 'text-lime-ink', spinner: '#08110E' },
 };
 
 interface ButtonProps extends Omit<TouchableOpacityProps, 'children'> {
@@ -47,7 +53,7 @@ export function Button({
       {...rest}
     >
       {loading ? (
-        <ActivityIndicator color={variant === 'primary' ? '#FFFFFF' : '#7A4FD1'} />
+        <ActivityIndicator color={v.spinner} />
       ) : (
         <Text
           className={`font-bold ${size === 'sm' ? 'text-sm' : 'text-[15px]'} ${v.text}`}

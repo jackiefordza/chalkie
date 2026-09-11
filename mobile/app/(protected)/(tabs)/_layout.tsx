@@ -19,8 +19,12 @@ export default function TabsLayout() {
         headerLeft: () => <HeaderAvatar />,
       }}
     >
-      <Tabs.Screen name="home" options={{ title: 'Home' }} />
-      <Tabs.Screen name="captain" options={{ title: 'Home' }} />
+      {/* Phase E, Step 2: Home renders its own quiet Header (see
+          components/ui/Header.tsx) instead of the shared native header —
+          the only two screens this differs for. Every other tab is
+          unchanged. */}
+      <Tabs.Screen name="home" options={{ title: 'Home', headerShown: false }} />
+      <Tabs.Screen name="captain" options={{ title: 'Home', headerShown: false }} />
       <Tabs.Screen name="captains" options={{ title: 'Captains' }} />
       <Tabs.Screen name="admin" options={{ title: 'Admin' }} />
       <Tabs.Screen name="fixtures" options={{ title: 'Fixtures' }} />
