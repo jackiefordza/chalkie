@@ -6,6 +6,7 @@ import { collection, getDocs, query, where, addDoc, doc, updateDoc, serverTimest
 import { db } from '@/config/firebase';
 import { useAuthStore } from '@/stores/authStore';
 import { useOnboardingStore } from '@/stores/onboardingStore';
+import { friendlyFirestoreError } from '@/lib/friendlyFirestoreError';
 import { RAW } from '@/lib/theme';
 import { Heading, Body, Caption, Button, Card, Input, AppIcon } from '@/components/ui';
 
@@ -98,7 +99,7 @@ export default function BrowseTeamsScreen() {
       });
       await markPendingRequest(reqRef.id, 'claim');
     } catch (e: unknown) {
-      setError((e as Error).message ?? 'Something went wrong');
+      setError(friendlyFirestoreError(e));
       setClaimingPlayerId(null);
     }
   }
@@ -122,7 +123,7 @@ export default function BrowseTeamsScreen() {
       });
       await markPendingRequest(reqRef.id, 'join');
     } catch (e: unknown) {
-      setError((e as Error).message ?? 'Something went wrong');
+      setError(friendlyFirestoreError(e));
       setIsSubmitting(false);
     }
   }

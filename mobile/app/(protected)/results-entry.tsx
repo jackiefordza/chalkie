@@ -22,6 +22,7 @@ import { loadResultDraft, saveResultDraft, clearResultDraft } from '@/lib/result
 import { isFixtureException } from '@/lib/matchStatus';
 import { isAvailabilityActionable } from '@/lib/availability';
 import { SquadAvailabilityList } from '@/components/Availability';
+import { friendlyFirestoreError } from '@/lib/friendlyFirestoreError';
 import type { Match, MatchGame, MatchSide, AvailabilityStatus } from '@/types';
 
 const DESKTOP_BREAKPOINT = 768;
@@ -277,7 +278,7 @@ export default function ResultsEntryScreen() {
       });
       setMySubmission(updated);
     } catch (e: unknown) {
-      Alert.alert('Error', (e as Error).message ?? 'Something went wrong');
+      Alert.alert('Error', friendlyFirestoreError(e));
     }
   }
 
@@ -428,7 +429,7 @@ export default function ResultsEntryScreen() {
       );
       goBack();
     } catch (e: unknown) {
-      Alert.alert('Error', (e as Error).message ?? 'Something went wrong');
+      Alert.alert('Error', friendlyFirestoreError(e));
     } finally {
       setIsSubmitting(false);
     }
@@ -452,7 +453,7 @@ export default function ResultsEntryScreen() {
       Alert.alert('Result updated', 'Standings and player stats have been recalculated.');
       goBack();
     } catch (e: unknown) {
-      Alert.alert('Error', (e as Error).message ?? 'Something went wrong');
+      Alert.alert('Error', friendlyFirestoreError(e));
     } finally {
       setIsSubmitting(false);
     }
@@ -475,7 +476,7 @@ export default function ResultsEntryScreen() {
       await deleteDoc(doc(db, 'matches', matchId));
       goBack();
     } catch (e: unknown) {
-      Alert.alert('Error', (e as Error).message ?? 'Something went wrong');
+      Alert.alert('Error', friendlyFirestoreError(e));
     }
   }
 

@@ -9,6 +9,7 @@ import {
 import { db } from '@/config/firebase';
 import { useAuthStore } from '@/stores/authStore';
 import { assignChalkiePN } from '@/lib/assignChalkiePN';
+import { friendlyFirestoreError } from '@/lib/friendlyFirestoreError';
 import { RAW } from '@/lib/theme';
 import {
   Screen, Heading, Body, Chip, Button, Card, Badge, Avatar, Input, Label, Sheet, VisibilityPicker, AppIcon, ListRow,
@@ -350,7 +351,7 @@ export default function CaptainsScreen() {
 
       await batch.commit();
     } catch (e: unknown) {
-      Alert.alert('Error', (e as Error).message ?? 'Something went wrong');
+      Alert.alert('Error', friendlyFirestoreError(e));
     } finally {
       setRespondingId(null);
     }
@@ -362,16 +363,20 @@ export default function CaptainsScreen() {
       {
         text: 'Reject', style: 'destructive',
         onPress: async () => {
-          const batch = writeBatch(db);
-          batch.update(doc(db, 'joinRequests', req.id), {
-            status: 'rejected',
-            rejectedAt: serverTimestamp(),
-          });
-          batch.update(doc(db, 'users', req.userId), {
-            pendingRequestType: null,
-            pendingRequestId: null,
-          });
-          await batch.commit();
+          try {
+            const batch = writeBatch(db);
+            batch.update(doc(db, 'joinRequests', req.id), {
+              status: 'rejected',
+              rejectedAt: serverTimestamp(),
+            });
+            batch.update(doc(db, 'users', req.userId), {
+              pendingRequestType: null,
+              pendingRequestId: null,
+            });
+            await batch.commit();
+          } catch (e: unknown) {
+            Alert.alert('Error', friendlyFirestoreError(e));
+          }
         },
       },
     ]);

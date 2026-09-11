@@ -10,6 +10,7 @@ import {
 import { db } from '@/config/firebase';
 import { useAuthStore } from '@/stores/authStore';
 import { assignChalkiePN } from '@/lib/assignChalkiePN';
+import { friendlyFirestoreError } from '@/lib/friendlyFirestoreError';
 import { RAW } from '@/lib/theme';
 import { Screen, Heading, Body, Button, Card, ListRow, AppBar, AppIcon } from '@/components/ui';
 import { AdminShell } from '@/components/admin/AdminShell';
@@ -141,7 +142,7 @@ export default function AdminInboxScreen() {
       await batch.commit();
       if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (e: unknown) {
-      Alert.alert('Error', (e as Error).message ?? 'Something went wrong');
+      Alert.alert('Error', friendlyFirestoreError(e));
     } finally {
       setApprovingId(null);
     }
@@ -156,10 +157,14 @@ export default function AdminInboxScreen() {
         {
           text: 'Reject', style: 'destructive',
           onPress: async () => {
-            const batch = writeBatch(db);
-            batch.update(doc(db, 'joinRequests', req.id), { status: 'rejected', rejectedAt: serverTimestamp() });
-            batch.update(doc(db, 'users', req.userId), { pendingRequestType: null, pendingRequestId: null });
-            await batch.commit();
+            try {
+              const batch = writeBatch(db);
+              batch.update(doc(db, 'joinRequests', req.id), { status: 'rejected', rejectedAt: serverTimestamp() });
+              batch.update(doc(db, 'users', req.userId), { pendingRequestType: null, pendingRequestId: null });
+              await batch.commit();
+            } catch (e: unknown) {
+              Alert.alert('Error', friendlyFirestoreError(e));
+            }
           },
         },
       ],

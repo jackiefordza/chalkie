@@ -11,6 +11,7 @@ import { generateRoundRobinFixtures } from '@/lib/fixtures';
 import { parseFixtureCSV, validateFixtureRows, type FixtureImportResult } from '@/lib/fixtureImport';
 import { importFixtures } from '@/lib/importFixtures';
 import { pickCSVFile } from '@/lib/pickCSVFile';
+import { friendlyFirestoreError } from '@/lib/friendlyFirestoreError';
 import { RAW } from '@/lib/theme';
 import { STATUS_LABEL, STATUS_TONE, isFixtureException } from '@/lib/matchStatus';
 import { Screen, Heading, Body, Caption, Badge, Button, Card, ListRow, Input, Label, Sheet, AppBar } from '@/components/ui';
@@ -330,7 +331,7 @@ function useFixturesController(divisionId: string | undefined, leagueId: string 
       await importFixtures(importResult.ready, { leagueId, seasonId, divisionId });
       closeImportSheet();
     } catch (e: unknown) {
-      Alert.alert('Import failed', (e as Error).message ?? 'Something went wrong');
+      Alert.alert('Import failed', friendlyFirestoreError(e));
     } finally {
       setIsImporting(false);
     }
@@ -414,6 +415,8 @@ function useFixturesController(divisionId: string | undefined, leagueId: string 
         ...(editTarget.status === 'postponed' ? { status: 'scheduled' } : {}),
       });
       setEditTarget(null);
+    } catch (e: unknown) {
+      Alert.alert('Error', friendlyFirestoreError(e));
     } finally {
       setIsSavingEdit(false);
     }
@@ -430,8 +433,12 @@ function useFixturesController(divisionId: string | undefined, leagueId: string 
       Alert.alert('Can’t delete', 'This fixture already has results submitted against it.');
       return;
     }
-    await deleteDoc(doc(db, 'matches', editTarget.id));
-    setEditTarget(null);
+    try {
+      await deleteDoc(doc(db, 'matches', editTarget.id));
+      setEditTarget(null);
+    } catch (e: unknown) {
+      Alert.alert('Error', friendlyFirestoreError(e));
+    }
   }
 
   // Only offered from a scheduled fixture, per the approved plan — a fixture
@@ -439,14 +446,22 @@ function useFixturesController(divisionId: string | undefined, leagueId: string 
   // isn't a valid target for a fresh postpone/cancel decision.
   async function markPostponed() {
     if (!editTarget) return;
-    await updateDoc(doc(db, 'matches', editTarget.id), { status: 'postponed' });
-    setEditTarget(null);
+    try {
+      await updateDoc(doc(db, 'matches', editTarget.id), { status: 'postponed' });
+      setEditTarget(null);
+    } catch (e: unknown) {
+      Alert.alert('Error', friendlyFirestoreError(e));
+    }
   }
 
   async function markCancelled() {
     if (!editTarget) return;
-    await updateDoc(doc(db, 'matches', editTarget.id), { status: 'cancelled' });
-    setEditTarget(null);
+    try {
+      await updateDoc(doc(db, 'matches', editTarget.id), { status: 'cancelled' });
+      setEditTarget(null);
+    } catch (e: unknown) {
+      Alert.alert('Error', friendlyFirestoreError(e));
+    }
   }
 
   function confirmMarkPostponed() {

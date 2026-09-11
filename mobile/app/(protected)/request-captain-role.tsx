@@ -6,6 +6,7 @@ import { collection, getDocs, query, where, addDoc, doc, updateDoc, serverTimest
 import { db } from '@/config/firebase';
 import { useAuthStore } from '@/stores/authStore';
 import { useOnboardingStore } from '@/stores/onboardingStore';
+import { friendlyFirestoreError } from '@/lib/friendlyFirestoreError';
 import { RAW } from '@/lib/theme';
 import { Heading, Body, Caption, Button, Card, Input, Label, VisibilityPicker, AppIcon } from '@/components/ui';
 import type { PhoneVisibility } from '@/types';
@@ -114,7 +115,7 @@ export default function RequestCaptainRoleScreen() {
       useOnboardingStore.getState().clear();
       router.replace('/(protected)/request-pending');
     } catch (e: unknown) {
-      setError((e as Error).message ?? 'Something went wrong');
+      setError(friendlyFirestoreError(e));
       setIsSubmitting(false);
     }
   }
