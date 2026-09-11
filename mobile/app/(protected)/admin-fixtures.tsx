@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { View, TouchableOpacity, ActivityIndicator, Alert, useWindowDimensions } from 'react-native';
+import { View, TouchableOpacity, ActivityIndicator, Alert, Platform, useWindowDimensions } from 'react-native';
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import {
   collection, doc, onSnapshot, query, where, orderBy,
@@ -8,6 +8,9 @@ import {
 import { db } from '@/config/firebase';
 import { useAuthStore } from '@/stores/authStore';
 import { generateRoundRobinFixtures } from '@/lib/fixtures';
+import { parseFixtureCSV, validateFixtureRows, type FixtureImportResult } from '@/lib/fixtureImport';
+import { importFixtures } from '@/lib/importFixtures';
+import { pickCSVFile } from '@/lib/pickCSVFile';
 import { RAW } from '@/lib/theme';
 import { STATUS_LABEL, STATUS_TONE } from '@/lib/matchStatus';
 import { Screen, Heading, Body, Caption, Badge, Button, Card, ListRow, Input, Label, Sheet, AppBar } from '@/components/ui';
@@ -181,6 +184,13 @@ function useFixturesController(divisionId: string | undefined, leagueId: string 
   const [editVenue, setEditVenue] = useState('');
   const [isSavingEdit, setIsSavingEdit] = useState(false);
 
+  // Bulk CSV import (Phase 11)
+  const [importFileName, setImportFileName] = useState<string | null>(null);
+  const [importResult, setImportResult] = useState<FixtureImportResult | null>(null);
+  const [importParseError, setImportParseError] = useState<string | null>(null);
+  const [isPickingFile, setIsPickingFile] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
+
   useEffect(() => {
     if (!divisionId || !leagueId) return;
 
@@ -283,6 +293,49 @@ function useFixturesController(divisionId: string | undefined, leagueId: string 
     }
   }
 
+  // Web-only (see pickCSVFile.ts) — reads the file, parses it, then
+  // validates every row against this division's own teams and its
+  // already-loaded fixtures before anything is shown as "ready". Nothing is
+  // written to Firestore at this stage.
+  async function pickAndValidateCSV() {
+    setImportParseError(null);
+    setImportResult(null);
+    setIsPickingFile(true);
+    try {
+      const file = await pickCSVFile();
+      if (!file) return;
+      setImportFileName(file.name);
+      const { rows, headerError } = parseFixtureCSV(file.text);
+      if (headerError) { setImportParseError(headerError); return; }
+      setImportResult(validateFixtureRows(
+        rows,
+        teams.map((t) => ({ id: t.id, name: t.name })),
+        matches.map((m) => ({ homeTeamId: m.homeTeamId, awayTeamId: m.awayTeamId, scheduledDate: m.scheduledDate })),
+      ));
+    } finally {
+      setIsPickingFile(false);
+    }
+  }
+
+  function closeImportSheet() {
+    setImportFileName(null);
+    setImportResult(null);
+    setImportParseError(null);
+  }
+
+  async function confirmImport() {
+    if (!importResult || importResult.ready.length === 0 || !leagueId || !seasonId || !divisionId) return;
+    setIsImporting(true);
+    try {
+      await importFixtures(importResult.ready, { leagueId, seasonId, divisionId });
+      closeImportSheet();
+    } catch (e: unknown) {
+      Alert.alert('Import failed', (e as Error).message ?? 'Something went wrong');
+    } finally {
+      setIsImporting(false);
+    }
+  }
+
   // BUG-002 fix: bulk delete must be at least as safe as the single-fixture
   // delete path (deleteFixture below, which refuses anything but a
   // 'scheduled' match) — previously this wiped every match in the division
@@ -379,6 +432,8 @@ function useFixturesController(divisionId: string | undefined, leagueId: string 
     startDateText, setStartDateText, intervalDays, setIntervalDays, isGenerating, genError, isRegenerating, setIsRegenerating,
     editTarget, setEditTarget, editDateText, setEditDateText, editVenue, setEditVenue, isSavingEdit,
     teamName, rounds, generateFixtures, deleteAllFixtures, openEdit, saveEdit, deleteFixture, showGenerator,
+    importFileName, importResult, importParseError, isPickingFile, isImporting,
+    pickAndValidateCSV, closeImportSheet, confirmImport,
   };
 }
 
@@ -444,6 +499,15 @@ function FixturesBody({ c, isDesktop, statusFilter }: { c: FixturesController; i
           {c.isRegenerating && (
             <Button variant="ghost" className="mt-3.5" onPress={() => c.setIsRegenerating(false)}>Cancel</Button>
           )}
+
+          {Platform.OS === 'web' && (
+            <>
+              <Body size="sm" className="text-center mt-4 mb-2">— or —</Body>
+              <Button variant="secondary" onPress={c.pickAndValidateCSV} disabled={c.isPickingFile} loading={c.isPickingFile}>
+                Import Fixtures (CSV)
+              </Button>
+            </>
+          )}
         </Card>
       ) : isDesktop ? (
         <DesktopFixtureTable matches={displayMatches} teamName={c.teamName} onEdit={c.openEdit} onDeleteAll={c.deleteAllFixtures} />
@@ -491,6 +555,56 @@ function FixturesBody({ c, isDesktop, statusFilter }: { c: FixturesController; i
         {c.editTarget?.status === 'scheduled' && (
           <Button variant="danger" onPress={c.deleteFixture}>Delete this fixture</Button>
         )}
+      </Sheet>
+
+      <Sheet visible={!!c.importParseError || !!c.importResult} onClose={c.closeImportSheet}>
+        <Heading size="lg" className="mb-1">Import Preview</Heading>
+        {c.importFileName ? <Body size="sm" className="mb-4">{c.importFileName}</Body> : null}
+
+        {c.importParseError ? (
+          <>
+            <Card tone="coral" className="mb-5" padded={false}>
+              <Body tone="coral" className="p-3">{c.importParseError}</Body>
+            </Card>
+            <Button variant="ghost" onPress={c.closeImportSheet}>Close</Button>
+          </>
+        ) : c.importResult ? (
+          <>
+            <Body className="mb-4">
+              {c.importResult.ready.length + c.importResult.errors.length} fixture{c.importResult.ready.length + c.importResult.errors.length === 1 ? '' : 's'} found
+            </Body>
+
+            <View className="flex-row gap-2 mb-4">
+              <Badge tone="sage">✓ {c.importResult.ready.length} ready</Badge>
+              {c.importResult.errors.length > 0 && <Badge tone="coral">⚠ {c.importResult.errors.length} error{c.importResult.errors.length === 1 ? '' : 's'}</Badge>}
+            </View>
+
+            {c.importResult.errors.length > 0 && (
+              <View className="gap-2 mb-5">
+                {c.importResult.errors.map((err) => (
+                  <Card key={err.rowNumber} tone="coral" padded={false}>
+                    <View className="p-3">
+                      <Caption className="mb-0.5 text-coral-ink dark:text-coral-ink-dark">Row {err.rowNumber}</Caption>
+                      <Body size="sm" tone="coral">{err.message}</Body>
+                    </View>
+                  </Card>
+                ))}
+              </View>
+            )}
+
+            <View className="flex-row gap-2.5">
+              <Button variant="ghost" className="flex-1" disabled={c.isImporting} onPress={c.closeImportSheet}>Cancel</Button>
+              <Button
+                className="flex-1"
+                disabled={c.isImporting || c.importResult.ready.length === 0}
+                loading={c.isImporting}
+                onPress={c.confirmImport}
+              >
+                Import {c.importResult.ready.length} Fixture{c.importResult.ready.length === 1 ? '' : 's'}
+              </Button>
+            </View>
+          </>
+        ) : null}
       </Sheet>
     </>
   );
