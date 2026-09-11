@@ -3,13 +3,15 @@ import { View, ScrollView, TouchableOpacity, ActivityIndicator } from 'react-nat
 import { BottomTabBarHeightContext } from '@react-navigation/bottom-tabs';
 import { router } from 'expo-router';
 import { useColorScheme } from 'nativewind';
-import { collection, onSnapshot, query, where, orderBy, and, or } from 'firebase/firestore';
+import { collection, doc, onSnapshot, query, where, orderBy, and, or, setDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '@/config/firebase';
 import { useAuthStore } from '@/stores/authStore';
 import { RAW } from '@/lib/theme';
 import { STATUS_LABEL, STATUS_TONE, isFixtureException } from '@/lib/matchStatus';
+import { availabilityDocId, isAvailabilityActionable } from '@/lib/availability';
+import { AvailabilityPicker } from '@/components/Availability';
 import { Heading, Body, Badge, Card, Chip, Button, AppIcon } from '@/components/ui';
-import type { Match } from '@/types';
+import type { Match, AvailabilityStatus } from '@/types';
 
 function formatDate(date: Date): string {
   return date.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
@@ -88,6 +90,50 @@ export default function FixturesScreen() {
     const tappable = true;
     const tone = STATUS_TONE[match.status];
 
+    // Only offered on a genuinely upcoming, unplayed, non-exception fixture
+    // (isAvailabilityActionable === scheduled only), and only for a viewer
+    // with a linked player record — nothing to set availability as
+    // otherwise (e.g. an admin with no playerId).
+    const canSetAvailability = isAvailabilityActionable(match.status) && !!appUser?.playerId;
+    const [availability, setAvailability] = useState<AvailabilityStatus | null>(null);
+    const [isLoadingAvailability, setIsLoadingAvailability] = useState(true);
+    const [isSavingAvailability, setIsSavingAvailability] = useState(false);
+    const [availabilityError, setAvailabilityError] = useState<string | null>(null);
+
+    useEffect(() => {
+      if (!canSetAvailability || !appUser?.playerId) { setIsLoadingAvailability(false); return; }
+      return onSnapshot(
+        doc(db, 'availability', availabilityDocId(match.id, appUser.playerId)),
+        (snap) => {
+          setAvailability(snap.exists() ? (snap.data().status as AvailabilityStatus) : null);
+          setIsLoadingAvailability(false);
+        },
+        (e) => { setAvailabilityError(e.message); setIsLoadingAvailability(false); },
+      );
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [canSetAvailability, match.id, appUser?.playerId]);
+
+    async function selectAvailability(status: AvailabilityStatus) {
+      if (!appUser?.playerId || !appUser.teamId || !appUser.leagueId) return;
+      setIsSavingAvailability(true);
+      setAvailabilityError(null);
+      try {
+        await setDoc(doc(db, 'availability', availabilityDocId(match.id, appUser.playerId)), {
+          matchId: match.id,
+          teamId: appUser.teamId,
+          leagueId: appUser.leagueId,
+          playerId: appUser.playerId,
+          userId: appUser.uid,
+          status,
+          updatedAt: serverTimestamp(),
+        });
+      } catch (e: unknown) {
+        setAvailabilityError((e as Error).message ?? 'Could not save — try again');
+      } finally {
+        setIsSavingAvailability(false);
+      }
+    }
+
     const content = (
       <Card className="mb-2">
         <View className="flex-row items-center mb-1">
@@ -125,6 +171,21 @@ export default function FixturesScreen() {
           >
             {match.status === 'scheduled' ? 'Enter Result' : match.status === 'disputed' ? 'Resolve Differences' : 'View / Edit Result'}
           </Button>
+        )}
+        {canSetAvailability && (
+          isLoadingAvailability ? (
+            <View className="mt-3 pt-3 border-t border-border dark:border-border-dark">
+              <Body size="xs">Loading your availability…</Body>
+            </View>
+          ) : (
+            <AvailabilityPicker
+              value={availability}
+              onSelect={selectAvailability}
+              disabled={isSavingAvailability}
+              isSaving={isSavingAvailability}
+              error={availabilityError}
+            />
+          )
         )}
       </Card>
     );

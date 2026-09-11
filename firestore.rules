@@ -390,6 +390,58 @@ service cloud.firestore {
       }
     }
 
+    // ── availability ──────────────────────────────────────────────────────
+    // Phase B: a player's own availability for one upcoming fixture — doc ID
+    // `${matchId}_${playerId}`, one doc per player per match (see the
+    // Availability comment in src/types/index.ts). Deliberately not a
+    // lineup — just "can I play", nothing about who's selected.
+    match /availability/{availabilityId} {
+      // Own doc always readable by its owner; a captain/VC may read their
+      // OWN team's squad's availability (matches the app's own team-scoped
+      // query in results-entry.tsx — Firestore requires that query filter
+      // to exist for this branch to validate against a list query); admin
+      // per the existing isAdminFor() model. No broader read exists — a
+      // player cannot browse another team's responses.
+      allow read: if isSignedIn() && (
+        isAdminFor(resource.data.leagueId)
+        || resource.data.userId == request.auth.uid
+        || (isCaptainOrVC() && me().teamId == resource.data.teamId)
+      );
+
+      // A player may only ever create/update THEIR OWN availability — own
+      // userId, own playerId, own teamId, own leagueId, never anyone
+      // else's, never another team's or league's. The doc ID is pinned to
+      // matchId+playerId (mirrors matches/submissions' submissionId ==
+      // submittedByTeamId pattern) so a player can hold at most one doc per
+      // match. Deliberately no get()-based cross-reference to the match's
+      // own homeTeamId/awayTeamId here — the submissions rule above already
+      // documents hitting Firestore's rule-evaluation complexity budget
+      // from chained validation get()s for a much bigger case; own-
+      // identity/team/league pinning alone already satisfies every real
+      // security requirement this collection has.
+      allow create: if isSignedIn()
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.playerId == me().playerId
+        && request.resource.data.teamId == me().teamId
+        && request.resource.data.leagueId == me().leagueId
+        && availabilityId == (request.resource.data.matchId + '_' + request.resource.data.playerId)
+        && request.resource.data.status in ['available', 'unavailable', 'unsure'];
+
+      allow update: if isSignedIn()
+        && resource.data.userId == request.auth.uid
+        && request.resource.data.userId == resource.data.userId
+        && request.resource.data.playerId == resource.data.playerId
+        && request.resource.data.teamId == resource.data.teamId
+        && request.resource.data.leagueId == resource.data.leagueId
+        && request.resource.data.matchId == resource.data.matchId
+        && request.resource.data.status in ['available', 'unavailable', 'unsure'];
+
+      // Admin-only, matching every other collection's cleanup escape hatch
+      // — not exercised by the app today (a player just changes their own
+      // status instead of deleting), kept for consistency/data hygiene.
+      allow delete: if isAdminFor(resource.data.leagueId);
+    }
+
     // ── divisionTables ────────────────────────────────────────────────────
     // Normally only written by Cloud Functions via the Admin SDK (which
     // bypasses rules entirely) as matches confirm. The admin write clauses

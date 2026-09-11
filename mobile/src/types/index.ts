@@ -191,6 +191,24 @@ export interface MatchSubmission {
   createdAt: Date;
 }
 
+export type AvailabilityStatus = 'available' | 'unavailable' | 'unsure';
+
+// A player's own availability for one upcoming fixture — see
+// mobile/src/lib/availability.ts for the label/tone maps and the
+// isAvailabilityActionable() gate. Doc ID = `${matchId}_${playerId}`, one
+// doc per player per match (never per team — each squad member sets their
+// own). Deliberately NOT a lineup: this records who's available to play,
+// not who's selected to.
+export interface Availability {
+  matchId: string;
+  teamId: string;
+  leagueId: string;
+  playerId: string;
+  userId: string;
+  status: AvailabilityStatus;
+  updatedAt: Date;
+}
+
 // Server-computed only (Cloud Function) — see firestore.rules `allow write: if false`.
 export interface DivisionTable {
   id: string; // = `${seasonId}_${divisionId}_${teamId}`

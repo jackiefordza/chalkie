@@ -20,7 +20,9 @@ import {
 } from '@/lib/matchResultDraft';
 import { loadResultDraft, saveResultDraft, clearResultDraft } from '@/lib/resultDraftStorage';
 import { isFixtureException } from '@/lib/matchStatus';
-import type { Match, MatchGame, MatchSide } from '@/types';
+import { isAvailabilityActionable } from '@/lib/availability';
+import { SquadAvailabilityList } from '@/components/Availability';
+import type { Match, MatchGame, MatchSide, AvailabilityStatus } from '@/types';
 
 const DESKTOP_BREAKPOINT = 768;
 
@@ -132,6 +134,37 @@ export default function ResultsEntryScreen() {
 
     return () => { unsubMatch(); unsubPlayers(); };
   }, [matchId, appUser?.leagueId]);
+
+  // Squad availability (Phase B) — captain/VC only, and only meaningful for
+  // a genuinely upcoming fixture (isAvailabilityActionable === scheduled
+  // only; postponed/cancelled/awaiting_confirmation/disputed/confirmed all
+  // excluded). Scoped to THIS team via the query filter, matching the
+  // Firestore rule's own team-scoped read — the squad list itself always
+  // comes from the current roster (players filtered by teamId below), so a
+  // player who has since moved to another team never shows here even if a
+  // stale availability doc for them still exists.
+  const [squadAvailability, setSquadAvailability] = useState<Record<string, AvailabilityStatus>>({});
+  const [isLoadingSquadAvailability, setIsLoadingSquadAvailability] = useState(true);
+  const [squadAvailabilityError, setSquadAvailabilityError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!myTeamId || !isCaptainOrVC || !match || !isAvailabilityActionable(match.status)) {
+      setSquadAvailability({});
+      setIsLoadingSquadAvailability(false);
+      return;
+    }
+    setIsLoadingSquadAvailability(true);
+    return onSnapshot(
+      query(collection(db, 'availability'), where('matchId', '==', matchId), where('teamId', '==', myTeamId)),
+      (snap) => {
+        const byPlayerId: Record<string, AvailabilityStatus> = {};
+        snap.docs.forEach((d) => { byPlayerId[d.data().playerId] = d.data().status; });
+        setSquadAvailability(byPlayerId);
+        setSquadAvailabilityError(null);
+        setIsLoadingSquadAvailability(false);
+      },
+      (e) => { setSquadAvailabilityError(e.message); setIsLoadingSquadAvailability(false); },
+    );
+  }, [myTeamId, isCaptainOrVC, match?.status, matchId]);
 
   // Load our own existing submission (for edit) + the other team's (to
   // review/reconcile) + any locally-saved in-progress draft for this match
@@ -533,6 +566,22 @@ export default function ResultsEntryScreen() {
               </Body>
             </Card>
           ) : null}
+
+          {isCaptainOrVC && (isHome || isAway) && isAvailabilityActionable(match!.status) && (
+            <Card className="mt-4">
+              <Caption className="mb-3">Squad Availability</Caption>
+              {isLoadingSquadAvailability ? (
+                <ActivityIndicator color={RAW.brand} />
+              ) : squadAvailabilityError ? (
+                <Body size="sm" tone="coral">{squadAvailabilityError}</Body>
+              ) : (
+                <SquadAvailabilityList
+                  players={players.filter((p) => p.teamId === myTeamId)}
+                  statusByPlayerId={squadAvailability}
+                />
+              )}
+            </Card>
+          )}
         </ScrollView>
       ) : mode === 'reconcile' ? (
         <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 8 }}>
