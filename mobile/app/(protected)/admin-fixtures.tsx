@@ -499,15 +499,6 @@ function FixturesBody({ c, isDesktop, statusFilter }: { c: FixturesController; i
           {c.isRegenerating && (
             <Button variant="ghost" className="mt-3.5" onPress={() => c.setIsRegenerating(false)}>Cancel</Button>
           )}
-
-          {Platform.OS === 'web' && (
-            <>
-              <Body size="sm" className="text-center mt-4 mb-2">— or —</Body>
-              <Button variant="secondary" onPress={c.pickAndValidateCSV} disabled={c.isPickingFile} loading={c.isPickingFile}>
-                Import Fixtures (CSV)
-              </Button>
-            </>
-          )}
         </Card>
       ) : isDesktop ? (
         <DesktopFixtureTable matches={displayMatches} teamName={c.teamName} onEdit={c.openEdit} onDeleteAll={c.deleteAllFixtures} />
@@ -533,6 +524,24 @@ function FixturesBody({ c, isDesktop, statusFilter }: { c: FixturesController; i
             </View>
           ))}
         </>
+      )}
+
+      {/* Decoupled from showGenerator on purpose (Phase 15 / P1 fix): the
+          importer's own validation already checks every row against the
+          division's full existing match list, so it's already safe to run
+          whether the division is empty, partway through a season, or has
+          results recorded — an admin correcting or adding one fixture must
+          never be forced through "Delete all & regenerate" to reach it. */}
+      {!c.loadError && !c.isLoading && Platform.OS === 'web' && (
+        <Button
+          variant="secondary"
+          className="mt-3"
+          onPress={c.pickAndValidateCSV}
+          disabled={c.isPickingFile}
+          loading={c.isPickingFile}
+        >
+          Import Fixtures (CSV)
+        </Button>
       )}
 
       <Sheet visible={!!c.editTarget} onClose={() => c.setEditTarget(null)}>
