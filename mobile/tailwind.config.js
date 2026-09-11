@@ -63,32 +63,30 @@ module.exports = {
         'admin-panel-border': '#DFE2E8',
         'admin-panel-border-dark': '#2A2E38',
 
-        // Phase E, Step 2 — Home V1 visual prototype only. A deliberately
+        // Phase E, Step 2 — Home V1 visual prototype; Step 3 — colour pass
+        // ("graphite + muted Chalkie green + off-white"). A deliberately
         // FIXED dark palette (no light/dark-variant pair) — same precedent
         // as admin-sidebar/admin-canvas above, which are also fixed
         // regardless of the app's light/dark toggle. Not yet the app-wide
         // theme; currently used only by HomeDashboard, Header, and TabBar.
-        'home-base': '#08110E',
-        'home-bg-2': '#0D1814',
-        'home-surface': '#14201B',
-        'home-elevated': '#1A2822',
-        'home-border': 'rgba(244,246,243,0.10)',
-        'home-text': '#F4F6F3',
-        'home-text-dim': '#A9B3AE',
-        'home-text-faint': '#737D78',
-        // Semantic accents — lime is primary action/selection/emphasis only;
-        // amber is secondary and used sparingly (see homeToneClasses in
-        // lib/theme.ts for how match-status meaning maps onto these).
-        lime: '#B8F34A',
-        'lime-ink': '#08110E',
-        amber: '#FFD166',
-        'amber-ink': '#08110E',
-        'home-success': '#61D98A',
-        'home-success-ink': '#08110E',
-        'home-warning': '#F2B84B',
-        'home-warning-ink': '#08110E',
-        'home-error': '#FF6B6B',
-        'home-error-ink': '#08110E',
+        // The interface is mostly neutral graphite — home-accent is a
+        // restrained accent (numbers, active/selected state), never a
+        // background or decorative surface. There is no general-purpose
+        // "amber" token any more: home-warning exists solely for genuine
+        // warning/status meaning, not as a decorative secondary brand colour.
+        'home-base': '#0D0F0E',
+        'home-surface': '#171A18',
+        'home-elevated': '#202421',
+        'home-border': 'rgba(241,242,238,0.10)',
+        'home-text': '#F1F2EE',
+        'home-text-dim': '#A7ADA8',
+        'home-text-faint': '#737A76',
+        'home-accent': '#AFC65A',
+        'home-accent-strong': '#BBD267',
+        'home-accent-ink': '#0D0F0E',
+        'home-success': '#69C98A',
+        'home-warning': '#D5AE55',
+        'home-error': '#E66B6B',
       },
     },
   },

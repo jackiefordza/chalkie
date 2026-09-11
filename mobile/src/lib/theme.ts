@@ -36,9 +36,9 @@ export function toneClasses(tone: SemanticTone): ToneClasses {
   return TONE_CLASSES[tone];
 }
 
-// Phase E, Step 2 — Home V1 visual prototype only. Maps the SAME semantic
-// tone values matchStatus.ts's STATUS_TONE already uses onto the new fixed
-// dark palette (tailwind.config.js's home-*/lime/amber tokens) — the
+// Phase E, Step 2 — Home V1 visual prototype; Step 3 — colour pass. Maps
+// the SAME semantic tone values matchStatus.ts's STATUS_TONE already uses
+// onto the fixed dark palette (tailwind.config.js's home-* tokens) — the
 // meaning (which status is "warning-ish" vs "error-ish") is untouched,
 // only its rendering under the new colours changes. Subtle tinted
 // background (Tailwind's /opacity modifier) + full-strength text, mirroring
@@ -50,7 +50,7 @@ interface HomeToneClasses {
 }
 
 const HOME_TONE_CLASSES: Record<SemanticTone, HomeToneClasses> = {
-  brand: { bg: 'bg-lime/15', text: 'text-lime' },
+  brand: { bg: 'bg-home-accent/15', text: 'text-home-accent' },
   coral: { bg: 'bg-home-error/15', text: 'text-home-error' },
   sage: { bg: 'bg-home-success/15', text: 'text-home-success' },
   butter: { bg: 'bg-home-warning/15', text: 'text-home-warning' },
@@ -83,22 +83,21 @@ export const RAW = {
   butterInk: '#A97917',
   butterInkDark: '#F0C368',
 
-  // Phase E, Step 2 — Home V1 fixed dark palette, for the handful of props
-  // that can't take a className (AppIcon's color, ActivityIndicator, a
-  // BlurView tint). Mirrors tailwind.config.js's home-*/lime/amber tokens
-  // exactly — keep these two in sync if either changes.
-  homeBase: '#08110E',
-  homeBg2: '#0D1814',
-  homeSurface: '#14201B',
-  homeElevated: '#1A2822',
-  homeText: '#F4F6F3',
-  homeTextDim: '#A9B3AE',
-  homeTextFaint: '#737D78',
-  lime: '#B8F34A',
-  limeInk: '#08110E',
-  amber: '#FFD166',
-  amberInk: '#08110E',
-  homeSuccess: '#61D98A',
-  homeWarning: '#F2B84B',
-  homeError: '#FF6B6B',
+  // Phase E, Step 2 — Home V1 fixed dark palette; Step 3 — colour pass
+  // ("graphite + muted Chalkie green + off-white"), for the handful of
+  // props that can't take a className (AppIcon's color, ActivityIndicator,
+  // a BlurView tint). Mirrors tailwind.config.js's home-* tokens exactly —
+  // keep these two in sync if either changes.
+  homeBase: '#0D0F0E',
+  homeSurface: '#171A18',
+  homeElevated: '#202421',
+  homeText: '#F1F2EE',
+  homeTextDim: '#A7ADA8',
+  homeTextFaint: '#737A76',
+  homeAccent: '#AFC65A',
+  homeAccentStrong: '#BBD267',
+  homeAccentInk: '#0D0F0E',
+  homeSuccess: '#69C98A',
+  homeWarning: '#D5AE55',
+  homeError: '#E66B6B',
 } as const;

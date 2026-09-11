@@ -99,6 +99,9 @@ export function TabBar({ state, navigation }: BottomTabBarProps) {
         reads as "Chalkie's own material" regardless of which tab's content
         is underneath. `overflow-hidden` on this outer rounded container is
         required for the blur to respect the pill's rounded corners.
+        Step 3 — colour pass: this should read as dark translucent graphite
+        glass, not a green component, so only the active icon/label/highlight
+        carry the (restrained) accent colour.
       */}
       <View
         className="rounded-full overflow-hidden border border-home-border"
@@ -126,10 +129,11 @@ export function TabBar({ state, navigation }: BottomTabBarProps) {
                 position: 'absolute',
                 left: 0,
                 borderRadius: 9999,
-                // Lime-tinted glass, not a solid fill — "lime = active/
-                // selected" communicated at low opacity, matching the
-                // brief's "restrained, not neon" direction.
-                backgroundColor: 'rgba(184,243,74,0.22)',
+                // Muted-green-tinted glass, not a solid fill — "accent =
+                // active/selected" communicated at low opacity, matching
+                // Step 3's "restrained, not neon" direction. rgba of
+                // home-accent (#AFC65A), not the stronger CTA accent.
+                backgroundColor: 'rgba(175,198,90,0.16)',
                 width: highlight.width,
                 height: highlight.height,
                 top: highlight.y,
@@ -154,12 +158,12 @@ export function TabBar({ state, navigation }: BottomTabBarProps) {
                 <AppIcon
                   name={meta.icon}
                   size={isFocused ? 21 : 19}
-                  color={isFocused ? RAW.lime : RAW.homeTextFaint}
+                  color={isFocused ? RAW.homeAccent : RAW.homeTextFaint}
                 />
                 <Text
                   className={[
                     'text-[10px] font-semibold mt-0.5',
-                    isFocused ? 'text-lime' : 'text-home-text-faint',
+                    isFocused ? 'text-home-accent' : 'text-home-text-faint',
                   ].join(' ')}
                 >
                   {meta.label}

@@ -25,13 +25,20 @@ import type { Match, DivisionTable, PlayerSeasonStats, LeagueSponsor } from '@/t
 // by the app's actual light/dark colorScheme, which is an orthogonal signal
 // to "is this the new Home direction" — a reviewer with their phone set to
 // light mode would otherwise see e.g. a pale mint Badge floating on this
-// screen's near-black background. Home's new palette (tailwind.config.js's
-// home-*/lime/amber tokens, see lib/theme.ts's homeToneClasses) is fixed
-// regardless of colorScheme, so this file uses plain View/Text with those
-// classes directly instead. Small, genuinely new pieces (Button's new
-// 'lime' variant, Screen's backgroundClassName override, the shared Header
-// component) were added to the real shared primitives where doing so was
-// safe and additive — see each file's own comment.
+// screen's near-black background. Home's fixed palette (tailwind.config.js's
+// home-* tokens, see lib/theme.ts's homeToneClasses) is fixed regardless of
+// colorScheme, so this file uses plain View/Text with those classes directly
+// instead. Small, genuinely new pieces (Button's 'accent' variant, Screen's
+// backgroundClassName override, the shared Header component) were added to
+// the real shared primitives where doing so was safe and additive — see
+// each file's own comment.
+//
+// Step 3 — colour pass ("graphite + muted Chalkie green + off-white"): the
+// interface is mostly neutral graphite/off-white; the accent green is used
+// sparingly for genuine emphasis (primary CTA, active/selected state,
+// important numerical emphasis) rather than as decoration. Amber/warning
+// only ever appears for a real warning/status meaning, never as a general
+// secondary brand colour — see each section below for what changed and why.
 // ─────────────────────────────────────────────────────────────────────────
 
 interface OpponentContact { name: string; phone: string }
@@ -195,7 +202,7 @@ function NextMatchHero({ match, teamId, opponentName, tableRow, form, isCaptainO
         </Text>
         {tableRow && (
           <Text
-            className="text-[13px] font-bold text-lime"
+            className="text-[13px] font-bold text-home-accent"
             style={{ fontFamily: FONT_MONO, fontVariant: ['tabular-nums'] }}
           >
             {ordinal(tableRow.position)}
@@ -205,7 +212,7 @@ function NextMatchHero({ match, teamId, opponentName, tableRow, form, isCaptainO
 
       {isCaptainOrVC && (
         <Button
-          variant="lime"
+          variant="accent"
           size="sm"
           onPress={() => router.push(`/(protected)/results-entry?matchId=${match.id}`)}
         >
@@ -258,7 +265,7 @@ function YourTeamSection({ tableRow, form, teamId }: { tableRow: DivisionTable; 
         <EyebrowCaption>Your Team</EyebrowCaption>
         <View className="flex-row items-end gap-4 mt-2">
           <Text
-            className="text-[36px] font-bold text-lime leading-[38px]"
+            className="text-[36px] font-bold text-home-accent leading-[38px]"
             style={{ fontFamily: FONT_MONO, fontVariant: ['tabular-nums'] }}
           >
             {ordinal(tableRow.position)}
@@ -290,6 +297,15 @@ function YourTeamSection({ tableRow, form, teamId }: { tableRow: DivisionTable; 
 // tableRow read (a single doc, already fetched by HomeDashboard) supplies
 // the position to window the range query around.
 // ─────────────────────────────────────────────────────────────────────────
+// Step 3 — colour pass: V1 turned the whole viewer row green (position,
+// team name and points all coloured + a green-tinted background). The
+// brief is explicit that this reads as "the entire row is green" — so the
+// row is now distinguished by a neutral elevated background (same
+// language as every other "this is different" surface in the app) plus
+// exactly ONE accent touch, the position number, which is already the
+// "important numerical emphasis" this section exists to draw the eye to.
+// Team name and points stay neutral (bold weight carries "this is you",
+// not colour).
 function LeagueSnapshotList({ rows, myTeamId, teamNames }: {
   rows: DivisionTable[]; myTeamId: string; teamNames: Record<string, string>;
 }) {
@@ -307,24 +323,24 @@ function LeagueSnapshotList({ rows, myTeamId, teamNames }: {
               onPress={() => router.push(`/(protected)/team-profile?teamId=${row.teamId}`)}
               className={[
                 'flex-row items-center px-4 py-2.5',
-                isMine ? 'bg-lime/10' : 'bg-home-surface',
+                isMine ? 'bg-home-elevated' : 'bg-home-surface',
                 i > 0 ? 'border-t border-home-border' : '',
               ].join(' ')}
             >
               <Text
-                className={`w-6 text-[12px] ${isMine ? 'font-bold text-lime' : 'text-home-text-faint'}`}
+                className={`w-6 text-[12px] ${isMine ? 'font-bold text-home-accent' : 'text-home-text-faint'}`}
                 style={{ fontFamily: FONT_MONO, fontVariant: ['tabular-nums'] }}
               >
                 {row.position}
               </Text>
               <Text
-                className={`flex-1 text-[13px] mr-2 ${isMine ? 'font-bold text-lime' : 'text-home-text'}`}
+                className={`flex-1 text-[13px] mr-2 text-home-text ${isMine ? 'font-bold' : ''}`}
                 numberOfLines={1}
               >
                 {teamNames[row.teamId] ?? '…'}
               </Text>
               <Text
-                className={`text-[13px] ${isMine ? 'font-bold text-lime' : 'text-home-text-dim'}`}
+                className={`text-[13px] ${isMine ? 'font-bold text-home-text' : 'text-home-text-dim'}`}
                 style={{ fontFamily: FONT_MONO, fontVariant: ['tabular-nums'] }}
               >
                 {row.points}
@@ -338,7 +354,7 @@ function LeagueSnapshotList({ rows, myTeamId, teamNames }: {
         onPress={() => router.push('/(protected)/(tabs)/standings')}
         className="mt-2.5"
       >
-        <Text className="text-[12px] font-semibold text-lime">View Full Table</Text>
+        <Text className="text-[12px] font-semibold text-home-accent">View Full Table</Text>
       </TouchableOpacity>
     </View>
   );
@@ -386,7 +402,11 @@ function RecentResultsList({ matches, teamId, teamNames }: {
                 >
                   {legsFor}-{legsAgainst}
                 </Text>
-                <Text className={`text-[10px] font-bold uppercase tracking-wide ${won ? 'text-home-success' : 'text-home-error'}`}>
+                {/* Step 3: the score above already carries the semantic
+                    colour — repeating it on the label too read as
+                    "colouring the W/L indicator twice". Text alone
+                    ("Won"/"Lost") still communicates the outcome without it. */}
+                <Text className="text-[10px] font-bold uppercase tracking-wide text-home-text-faint">
                   {won ? 'Won' : 'Lost'}
                 </Text>
               </View>
@@ -426,7 +446,7 @@ function YourStatsSection({ stats, playerId }: { stats: PlayerSeasonStats | null
     <View className="mb-6">
       <EyebrowCaption>Your Stats</EyebrowCaption>
       <View className="flex-row items-end gap-5 mt-2">
-        <Text className="text-[30px] font-bold text-lime leading-[32px]" style={{ fontFamily: FONT_MONO, fontVariant: ['tabular-nums'] }}>
+        <Text className="text-[30px] font-bold text-home-accent leading-[32px]" style={{ fontFamily: FONT_MONO, fontVariant: ['tabular-nums'] }}>
           {winPct}%
         </Text>
         <View className="flex-row gap-4 pb-1">
@@ -445,8 +465,11 @@ function YourStatsSection({ stats, playerId }: { stats: PlayerSeasonStats | null
         </View>
       </View>
       {highest !== undefined && (
+        // Step 3: this was amber purely decoratively — no warning/status
+        // meaning attaches to a highest checkout, so it drops to the same
+        // neutral bold treatment as Played/Won/180s above.
         <Text className="text-[12px] text-home-text-dim mt-3">
-          Highest checkout <Text className="font-bold text-amber" style={{ fontFamily: FONT_MONO, fontVariant: ['tabular-nums'] }}>{highest}</Text>
+          Highest checkout <Text className="font-bold text-home-text" style={{ fontFamily: FONT_MONO, fontVariant: ['tabular-nums'] }}>{highest}</Text>
         </Text>
       )}
     </View>
@@ -647,16 +670,21 @@ export function HomeDashboard() {
             <Text className="text-[12px] text-home-error">{loadError}</Text>
           </View>
         ) : isLoading ? (
-          <ActivityIndicator color={RAW.lime} style={{ marginTop: 40 }} />
+          <ActivityIndicator color={RAW.homeAccent} style={{ marginTop: 40 }} />
         ) : (
           <>
             {isCaptainOrVC && pendingRequestCount > 0 && (
+              // Step 3: this is routine housekeeping (join/claim/VC
+              // requests waiting), not a warning — amber was previously
+              // used here purely decoratively. Neutral elevated surface,
+              // hierarchy carried by bold text, matching the rest of the
+              // "mostly neutral graphite" system.
               <TouchableOpacity
                 activeOpacity={0.7}
                 onPress={() => router.push('/(protected)/(tabs)/captains')}
-                className="flex-row items-center gap-3 rounded-lg bg-amber/10 border border-amber/25 px-4 py-3 mb-6"
+                className="flex-row items-center gap-3 rounded-lg bg-home-elevated border border-home-border px-4 py-3 mb-6"
               >
-                <AppIcon name="users" size={17} color={RAW.amber} />
+                <AppIcon name="users" size={17} color={RAW.homeTextDim} />
                 <View className="flex-1">
                   <Text className="text-[13px] font-semibold text-home-text">
                     {pendingRequestCount} request{pendingRequestCount === 1 ? '' : 's'} waiting
