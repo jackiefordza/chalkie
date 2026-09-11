@@ -58,6 +58,14 @@ export default function AdminTeamScreen() {
   const [venuePhoneDraft, setVenuePhoneDraft] = useState('');
   const [isSavingAddress, setIsSavingAddress] = useState(false);
 
+  const [editingName, setEditingName] = useState(false);
+  const [nameDraft, setNameDraft] = useState('');
+  const [isSavingName, setIsSavingName] = useState(false);
+
+  const [renameTarget, setRenameTarget] = useState<Player | null>(null);
+  const [renameDraft, setRenameDraft] = useState('');
+  const [isRenamingPlayer, setIsRenamingPlayer] = useState(false);
+
   const [showAddPlayer, setShowAddPlayer] = useState(false);
   const [newPlayerName, setNewPlayerName] = useState('');
   const [isAddingPlayer, setIsAddingPlayer] = useState(false);
@@ -139,6 +147,32 @@ export default function AdminTeamScreen() {
       setEditingAddress(false);
     } finally {
       setIsSavingAddress(false);
+    }
+  }
+
+  async function saveTeamName() {
+    if (!teamId || !nameDraft.trim()) return;
+    setIsSavingName(true);
+    try {
+      await updateDoc(doc(db, 'teams', teamId), { name: nameDraft.trim() });
+      setEditingName(false);
+    } catch (e: unknown) {
+      Alert.alert('Error', (e as Error).message ?? 'Something went wrong');
+    } finally {
+      setIsSavingName(false);
+    }
+  }
+
+  async function savePlayerRename() {
+    if (!renameTarget || !renameDraft.trim()) return;
+    setIsRenamingPlayer(true);
+    try {
+      await updateDoc(doc(db, 'players', renameTarget.id), { name: renameDraft.trim() });
+      setRenameTarget(null);
+    } catch (e: unknown) {
+      Alert.alert('Error', (e as Error).message ?? 'Something went wrong');
+    } finally {
+      setIsRenamingPlayer(false);
     }
   }
 
@@ -299,6 +333,34 @@ export default function AdminTeamScreen() {
     }
   }
 
+  const nameCard = (
+    <Card className="mb-4">
+      <View className="flex-row items-center mb-2.5">
+        <Heading size="sm" className="flex-1">Team Name</Heading>
+        {!editingName && (
+          <Button
+            variant="secondary"
+            size="sm"
+            onPress={() => { setNameDraft(teamName); setEditingName(true); }}
+          >
+            Edit
+          </Button>
+        )}
+      </View>
+      {editingName ? (
+        <>
+          <Input value={nameDraft} onChangeText={setNameDraft} autoCapitalize="words" autoFocus className="mb-2.5" />
+          <View className="flex-row gap-2">
+            <Button variant="ghost" className="flex-1" onPress={() => setEditingName(false)}>Cancel</Button>
+            <Button className="flex-1" disabled={isSavingName || !nameDraft.trim()} loading={isSavingName} onPress={saveTeamName}>Save</Button>
+          </View>
+        </>
+      ) : (
+        <Body tone="strong" weight="semibold">{teamName || '—'}</Body>
+      )}
+    </Card>
+  );
+
   const captainCard = (
     <Card className="mb-4">
       <View className={vcName ? 'mb-3' : ''}>
@@ -370,6 +432,7 @@ export default function AdminTeamScreen() {
 
   const body = (
     <>
+      {nameCard}
       {captainCard}
       {venueCard}
 
@@ -398,6 +461,9 @@ export default function AdminTeamScreen() {
                           <Body size="xs" tone="brand" weight="semibold">Change Role</Body>
                         </TouchableOpacity>
                       )}
+                      <TouchableOpacity onPress={() => { setRenameDraft(player.name); setRenameTarget(player); }}>
+                        <Body size="xs" tone="brand" weight="semibold">Rename</Body>
+                      </TouchableOpacity>
                       <TouchableOpacity onPress={() => setMoveTarget(player)}>
                         <Body size="xs" tone="brand" weight="semibold">Move</Body>
                       </TouchableOpacity>
@@ -452,6 +518,18 @@ export default function AdminTeamScreen() {
             </Button>
           </>
         )}
+      </Sheet>
+
+      <Sheet visible={!!renameTarget} onClose={() => setRenameTarget(null)}>
+        <Heading size="lg" className="mb-4">Rename Player</Heading>
+        <Label>Name</Label>
+        <Input value={renameDraft} onChangeText={setRenameDraft} autoCapitalize="words" autoFocus className="mb-6" />
+        <View className="flex-row gap-2.5">
+          <Button variant="ghost" className="flex-1" onPress={() => setRenameTarget(null)}>Cancel</Button>
+          <Button className="flex-1" disabled={isRenamingPlayer || !renameDraft.trim()} loading={isRenamingPlayer} onPress={savePlayerRename}>
+            Save
+          </Button>
+        </View>
       </Sheet>
 
       <Sheet visible={showAddPlayer} onClose={() => setShowAddPlayer(false)}>
