@@ -23,7 +23,8 @@
     },
     "web": {
       "bundler": "metro",
-      "favicon": "./assets/favicon.png"
+      "favicon": "./assets/pwa-icon.png",
+      "description": "Darts league management for players, captains, and league admins."
     },
     "plugins": [
       "expo-router",

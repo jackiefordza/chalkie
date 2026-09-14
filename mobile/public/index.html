@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="%LANG_ISO_CODE%">
+  <head>
+    <meta charset="utf-8" />
+    <meta httpEquiv="X-UA-Compatible" content="IE=edge" />
+    <!--
+      Phase E, Step 6 — PWA / iOS Home Screen experience.
+      This is a project-level override of Expo's own default web template
+      (Expo's export pipeline looks for public/index.html before falling
+      back to its built-in one — see @expo/cli's webTemplate.js). It is
+      byte-for-byte the same as the previous auto-generated template
+      (confirmed against a captured `expo export -p web` output) with only
+      PWA/iOS metadata added below; nothing about the RN-web bootstrapping
+      (the reset styles, #root, the noscript fallback) has changed.
+      The lang attribute below and the title tag further down each carry
+      one of Expo's own build-time placeholder tokens, substituted via a
+      first-occurrence string replace — so neither token may be repeated
+      anywhere earlier in this file, including in comments like this one.
+    -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no, viewport-fit=cover" />
+    <title>%WEB_TITLE%</title>
+
+    <!-- Web app manifest — installability on Chrome/Android and other
+         manifest-aware browsers. iOS Safari does not use this for its own
+         standalone launch behaviour (that's controlled entirely by the
+         apple-mobile-web-app-* tags below), but a correct manifest is part
+         of being a well-formed installable PWA everywhere else. -->
+    <link rel="manifest" href="/manifest.json" />
+
+    <!-- Theme colour, light/dark aware — tints the browser's own chrome
+         (Safari/Chrome address bar) to match Chalkie's current background
+         rather than a single fixed colour that would clash in one scheme.
+         (The manifest's static theme_color above serves the same purpose
+         for Android's task-switcher/toolbar, which can't do per-scheme.) -->
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#F3F4F1" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#181B19" />
+
+    <!-- iOS standalone Home Screen launch. This — not the web manifest —
+         is what actually makes "Add to Home Screen" open Chalkie without
+         Safari's browser chrome. -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Chalkie" />
+    <!--
+      black-translucent: the status bar is transparent and Chalkie's own
+      Header (which already renders at `insets.top` via useSafeAreaInsets)
+      shows through behind it, so the app fills the screen edge-to-edge
+      instead of a disconnected solid-colour strip at the top. This reads
+      well against the dark theme (light status-bar content on a dark
+      Header) but is a known, unavoidable trade-off in light mode — iOS
+      only offers three static values here (default / black /
+      black-translucent) and none of them can follow the in-app light/dark
+      preference the way `theme-color` can. See the Step 6 report for why
+      this was still the better default than a permanently mismatched
+      opaque bar in one of the two themes.
+    -->
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+
+    <!-- The `react-native-web` recommended style reset: https://necolas.github.io/react-native-web/docs/setup/#root-element -->
+    <style id="expo-reset">
+      /* These styles make the body full-height */
+      html,
+      body {
+        height: 100%;
+      }
+      /* These styles disable body scrolling if you are using <ScrollView> */
+      body {
+        overflow: hidden;
+      }
+      /* These styles make the root element full-height */
+      #root {
+        display: flex;
+        height: 100%;
+        flex: 1;
+      }
+    </style>
+  </head>
+
+  <body>
+    <!-- Use static rendering with Expo Router to support running without JavaScript. -->
+    <noscript>
+      You need to enable JavaScript to run this app.
+    </noscript>
+    <!-- The root element for your Expo app. -->
+    <div id="root"></div>
+  </body>
+</html>
