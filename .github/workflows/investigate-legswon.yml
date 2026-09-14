@@ -1,0 +1,92 @@
+name: Investigate legsWon (manual, read-only)
+
+# Manual-only, same reasoning as backfill-legs-won.yml/showcase-seed.yml: no
+# push/pull_request/schedule trigger exists here, so this can never fire on
+# its own.
+#
+# Stats Rules audit (Season 1) follow-up: the legsWon backfill's dry run
+# found 225 real (non-showcase) playerSeasonStats documents already
+# carrying a legsWon value, even though no code in this repo has ever
+# written that field — this workflow runs scripts/backfill-legs-won's
+# separate investigate.ts entry point to find out why, against the real
+# chalkie-app project. investigate.ts (and everything it imports) is
+# structurally incapable of writing to Firestore — it never imports
+# guardedUpdateLegsWon or any other write-capable helper — so unlike
+# backfill-legs-won.yml there is no apply mode here at all, not even as an
+# option.
+#
+# Reuses the showcase-seed-production Environment for the same reason
+# backfill-legs-won.yml does: this still uses the same sensitive
+# Firestore-capable credential, even though this particular script never
+# calls a write method with it.
+#
+# scripts/backfill-legs-won itself lives only on pilot/mobile-web-hardening,
+# not on main — same situation deploy-hosting-preview.yml and
+# backfill-legs-won.yml solve, and the same fix: the checkout step below is
+# pinned to a fixed commit SHA on that branch. Update PINNED_SHA
+# deliberately whenever a newer commit on that branch needs running.
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type INVESTIGATE-LEGSWON to run this read-only investigation against the real chalkie-app project.'
+        required: true
+
+env:
+  # pilot/mobile-web-hardening, exact commit — the commit that added
+  # investigate.ts itself.
+  PINNED_SHA: '49202ec6e92f19175c1e1ea0ee34f7a831ecd99a'
+
+permissions:
+  contents: read
+
+jobs:
+  investigate:
+    if: inputs.confirm == 'INVESTIGATE-LEGSWON'
+    runs-on: ubuntu-latest
+    environment: showcase-seed-production
+    defaults:
+      run:
+        working-directory: scripts/backfill-legs-won
+    steps:
+      - name: Checkout pinned commit (never main)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.PINNED_SHA }}
+
+      - name: Verify checked-out commit matches the pinned SHA
+        run: |
+          actual="$(git rev-parse HEAD)"
+          if [ "$actual" != "$PINNED_SHA" ]; then
+            echo "::error::Checked-out commit ($actual) does not match PINNED_SHA ($PINNED_SHA) — refusing to run."
+            exit 1
+          fi
+          echo "Confirmed checkout is pinned commit $actual"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      # Same write-to-temp-file pattern backfill-legs-won.yml/showcase-seed.yml
+      # already use for this same secret. Never printed, never passed as a
+      # command argument.
+      - name: Write Firebase service-account credential
+        env:
+          SHOWCASE_SEED_SERVICE_ACCOUNT: ${{ secrets.SHOWCASE_SEED_SERVICE_ACCOUNT }}
+        run: printf '%s' "$SHOWCASE_SEED_SERVICE_ACCOUNT" > "$RUNNER_TEMP/sa.json"
+
+      - name: Run investigation (read-only)
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/sa.json
+        run: node dist/investigate.js --confirm-investigate | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove credential file
+        if: always()
+        run: rm -f "$RUNNER_TEMP/sa.json"
