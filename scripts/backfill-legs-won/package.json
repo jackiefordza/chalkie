@@ -1,0 +1,21 @@
+{
+  "name": "backfill-legs-won",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Standalone Admin SDK script — the one-time Stats Rules audit (Season 1) backfill. Reads every currently-confirmed match in the chalkie-app Firebase project (read-only), computes each player's legsWon the same way the live Cloud Function aggregation does, and (only with --apply) writes JUST that one field to playerSeasonStats. Never touches matches, fixtures, or any other field. See README.md before running anything.",
+  "engines": {
+    "node": "20"
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "tsc -p tsconfig.test.json && node --test \"dist-test/*.test.js\""
+  },
+  "dependencies": {
+    "firebase-admin": "^13.10.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2",
+    "@types/node": "^22.0.0"
+  }
+}
