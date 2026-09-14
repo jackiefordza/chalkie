@@ -21,10 +21,10 @@ on:
 env:
   # pilot/mobile-web-hardening (the October pilot hardening + Season 1
   # build-out branch), exact commit — see the comment above for why this is
-  # a fixed SHA, not a branch name. Currently Phase E, Step 6's PWA / iOS
-  # Home Screen install experience, the latest commit on the branch as of
-  # this update.
-  PINNED_SHA: '86ad73d0c28978f9967c3480b7c2d3bb234e859e'
+  # a fixed SHA, not a branch name. Currently the mobile UX bug-fix commit
+  # (header avatar + floating-nav bottom clearance), the latest commit on
+  # the branch as of this update.
+  PINNED_SHA: '1ba70f4dfc8bccaf88cfb5bacf577828865a9aa5'
 
 permissions:
   contents: read
