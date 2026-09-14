@@ -11,5 +11,5 @@
     "skipLibCheck": true
   },
   "compileOnSave": true,
-  "include": ["backfill.ts", "src"]
+  "include": ["backfill.ts", "investigate.ts", "src"]
 }

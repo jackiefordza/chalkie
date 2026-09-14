@@ -127,6 +127,25 @@ gives every match participant an explicit entry (even at `legsWon: 0`) —
 not just leg-winners — so a re-run can correct a value back down, not just
 up.
 
+## Investigating, not backfilling
+
+`investigate.ts` is a second, separate entry point for when the dry run
+shows existing `legsWon` values you didn't expect (this happened on first
+use — see the implementation report). It is **structurally incapable of
+writing anything** — it only imports read-only helpers, never
+`guardedUpdateLegsWon` — so there is no `--apply` equivalent here, ever.
+
+```bash
+node dist/investigate.js --confirm-investigate
+```
+
+For every player-season the confirmed matches touch, it reports the full
+`playerSeasonStats` document (`leagueId`/`seasonId`/`divisionId`/`played`/
+`won`/`legsWon`) plus that document's Firestore-native `createTime`/
+`updateTime`, an exact-match check against a fresh computation, grouped
+create/update-time ranges per league/season/division, and any suspicious
+values (negative, non-integer, or exceeding `played * 3`).
+
 ## Not implemented here
 
 This script does not modify `firestore.rules`, `functions/`, `matches`, any
