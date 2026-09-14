@@ -3,6 +3,7 @@ import { View, Text, TouchableOpacity, Animated, Platform, type LayoutChangeEven
 import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BlurView } from 'expo-blur';
+import { useColorScheme } from 'nativewind';
 import * as Haptics from 'expo-haptics';
 import { useAuthStore } from '@/stores/authStore';
 import { RAW } from '@/lib/theme';
@@ -35,6 +36,8 @@ interface TabLayout { x: number; y: number; width: number; height: number }
 
 export function TabBar({ state, navigation }: BottomTabBarProps) {
   const { appUser } = useAuthStore();
+  const { colorScheme } = useColorScheme();
+  const isDark = colorScheme === 'dark';
   const insets = useSafeAreaInsets();
   const names = visibleRouteNames(appUser?.role, appUser?.isLeagueAdmin || appUser?.isGlobalAdmin);
 
@@ -92,19 +95,17 @@ export function TabBar({ state, navigation }: BottomTabBarProps) {
       {/*
         Phase E, Step 2 — glass restyle. Same technique already proven by
         AccountMenu (BlurView + a translucent tint layer), applied to the
-        one surface the Phase E brief explicitly calls out for it. This is
-        deliberately a FIXED dark glass look, not tied to the app's
-        light/dark toggle — Home (which this bar floats over first) is
-        itself fixed-dark for this prototype, and a consistently-dark nav
-        reads as "Chalkie's own material" regardless of which tab's content
-        is underneath. `overflow-hidden` on this outer rounded container is
-        required for the blur to respect the pill's rounded corners.
-        Step 3 — colour pass: this should read as dark translucent graphite
-        glass, not a green component, so only the active icon/label/highlight
-        carry the (restrained) accent colour.
+        one surface the Phase E brief explicitly calls out for it.
+        `overflow-hidden` on this outer rounded container is required for
+        the blur to respect the pill's rounded corners. Step 5: this now
+        follows the app's actual light/dark toggle (like AccountMenu
+        already does), rather than being fixed dark — dark translucent
+        graphite glass in dark mode, a light frosted glass in light mode.
+        Only the active icon/label/highlight carry the (restrained) accent
+        colour.
       */}
       <View
-        className="rounded-full overflow-hidden border border-home-border"
+        className="rounded-full overflow-hidden border border-border dark:border-border-dark"
         style={{
           shadowColor: '#000000',
           shadowOffset: { width: 0, height: 8 },
@@ -113,12 +114,12 @@ export function TabBar({ state, navigation }: BottomTabBarProps) {
           elevation: 12,
         }}
       >
-        <BlurView intensity={48} tint="dark" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }} />
+        <BlurView intensity={48} tint={isDark ? 'dark' : 'light'} style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }} />
         {/* expo-blur's actual blur has known gaps on web — this tint alone
-            still reads as a translucent dark "glass" pill there even when
-            the blur itself doesn't render, rather than the bar disappearing
-            or looking broken. */}
-        <View className="absolute inset-0 bg-home-elevated/55" pointerEvents="none" />
+            still reads as a translucent "glass" pill there even when the
+            blur itself doesn't render, rather than the bar disappearing or
+            looking broken. */}
+        <View className="absolute inset-0 bg-surface-2/55 dark:bg-surface-2-dark/55" pointerEvents="none" />
         <View className="flex-row gap-1 p-1.5">
           {highlight && (
             // NativeWind's className interop doesn't cover Animated.View, so this is styled
@@ -131,9 +132,10 @@ export function TabBar({ state, navigation }: BottomTabBarProps) {
                 borderRadius: 9999,
                 // Muted-green-tinted glass, not a solid fill — "accent =
                 // active/selected" communicated at low opacity, matching
-                // Step 3's "restrained, not neon" direction. rgba of
-                // home-accent (#B1C75E), not the stronger CTA accent.
-                backgroundColor: 'rgba(177,199,94,0.16)',
+                // the "restrained, not neon" direction. rgba of the
+                // general accent token (brand/brand-dark), not the
+                // stronger CTA accent.
+                backgroundColor: isDark ? 'rgba(177,199,94,0.16)' : 'rgba(113,136,58,0.14)',
                 width: highlight.width,
                 height: highlight.height,
                 top: highlight.y,
@@ -158,12 +160,12 @@ export function TabBar({ state, navigation }: BottomTabBarProps) {
                 <AppIcon
                   name={meta.icon}
                   size={isFocused ? 21 : 19}
-                  color={isFocused ? RAW.homeAccent : RAW.homeTextFaint}
+                  color={isFocused ? (isDark ? RAW.brandDark : RAW.brand) : (isDark ? RAW.textFaintDark : RAW.textFaint)}
                 />
                 <Text
                   className={[
                     'text-[10px] font-semibold mt-0.5',
-                    isFocused ? 'text-home-accent' : 'text-home-text-faint',
+                    isFocused ? 'text-brand dark:text-brand-dark' : 'text-text-faint dark:text-text-faint-dark',
                   ].join(' ')}
                 >
                   {meta.label}

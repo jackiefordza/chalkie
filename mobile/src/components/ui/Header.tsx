@@ -23,13 +23,13 @@ export function Header({ contextLine }: HeaderProps) {
     <View style={{ paddingTop: insets.top + 12, paddingBottom: 12, paddingHorizontal: 20 }} className="flex-row items-center justify-between">
       <View className="flex-1 mr-3">
         <Text
-          className="text-[15px] text-home-text tracking-wide"
+          className="text-[15px] text-text dark:text-text-dark tracking-wide"
           style={{ fontFamily: FONT_DISPLAY_EXTRABOLD }}
         >
           CHALKIE
         </Text>
         {contextLine ? (
-          <Text className="text-[12px] text-home-text-dim mt-0.5" numberOfLines={1}>
+          <Text className="text-[12px] text-text-dim dark:text-text-dim-dark mt-0.5" numberOfLines={1}>
             {contextLine}
           </Text>
         ) : null}

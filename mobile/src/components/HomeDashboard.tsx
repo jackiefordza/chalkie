@@ -1,44 +1,32 @@
 import { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, ActivityIndicator, Image, Linking } from 'react-native';
 import { router } from 'expo-router';
+import { useColorScheme } from 'nativewind';
 import {
   collection, doc, onSnapshot, getDoc, query, where, and, or, orderBy,
 } from 'firebase/firestore';
 import { db } from '@/config/firebase';
 import { useAuthStore } from '@/stores/authStore';
-import { RAW, homeToneClasses } from '@/lib/theme';
+import { RAW, toneClasses } from '@/lib/theme';
 import { FONT_MONO, FONT_DISPLAY } from '@/styles/typography';
 import { STATUS_LABEL, STATUS_TONE, isFixtureException } from '@/lib/matchStatus';
-import { Screen, Header, Button, AppIcon } from '@/components/ui';
+import { Screen, Header, Button, Card, Body, AppIcon } from '@/components/ui';
 import type { Match, DivisionTable, PlayerSeasonStats, LeagueSponsor } from '@/types';
 
 // ─────────────────────────────────────────────────────────────────────────
 // Phase E, Step 2 — Home V1 visual prototype. Every data-fetching effect,
 // every piece of state, and every existing decision (which match counts as
 // "next", the CTA's state machine, contact-visibility rules, the postponed/
-// cancelled exclusion) is preserved EXACTLY as it was — this file's actual
-// rewrite is the JSX/styling below each. The one genuinely new piece of
-// data-fetching is the League Snapshot query, added where it's computed.
+// cancelled exclusion) is preserved EXACTLY as it was through every
+// subsequent step — only the JSX/styling below each has changed.
 //
-// Deliberately NOT built from the shared Card/Badge/StatTile/ListRow/
-// FormBadge/SponsorBanner primitives: those components' colours are driven
-// by the app's actual light/dark colorScheme, which is an orthogonal signal
-// to "is this the new Home direction" — a reviewer with their phone set to
-// light mode would otherwise see e.g. a pale mint Badge floating on this
-// screen's near-black background. Home's fixed palette (tailwind.config.js's
-// home-* tokens, see lib/theme.ts's homeToneClasses) is fixed regardless of
-// colorScheme, so this file uses plain View/Text with those classes directly
-// instead. Small, genuinely new pieces (Button's 'accent' variant, Screen's
-// backgroundClassName override, the shared Header component) were added to
-// the real shared primitives where doing so was safe and additive — see
-// each file's own comment.
-//
-// Step 3 — colour pass ("graphite + muted Chalkie green + off-white"): the
-// interface is mostly neutral graphite/off-white; the accent green is used
-// sparingly for genuine emphasis (primary CTA, active/selected state,
-// important numerical emphasis) rather than as decoration. Amber/warning
-// only ever appears for a real warning/status meaning, never as a general
-// secondary brand colour — see each section below for what changed and why.
+// Step 5 — design system + light mode: Home's Steps 2-4 palette
+// (tailwind.config.js's "home-*" tokens, fixed dark regardless of the
+// app's actual light/dark toggle) has been retired now that it IS the
+// app's real palette (see tailwind.config.js). This file now uses the
+// same bg/surface/text/brand/dark: tokens as every other screen, which is
+// what gives it a genuine light mode for the first time — nothing about
+// its structure, hierarchy, or interaction behaviour changed to get there.
 // ─────────────────────────────────────────────────────────────────────────
 
 interface OpponentContact { name: string; phone: string }
@@ -71,20 +59,20 @@ export function recentForm(matches: Match[], teamId: string, count = 3): ('W' | 
     });
 }
 
-// Small W/L indicator with the fixed dark palette — the same visual role as
-// the shared FormBadge, not reused for the reason given at the top of this
-// file (FormBadge's colours follow the app's actual colorScheme).
+// A slightly more compact W/L dot than the shared FormBadge (Home packs
+// several in a row next to a label) — same tone tokens, so it now renders
+// identically in both light and dark, just smaller.
 function FormDot({ result }: { result: 'W' | 'L' }) {
   const isWin = result === 'W';
   return (
-    <View className={`w-5 h-5 rounded-full items-center justify-center ${isWin ? 'bg-home-success/15' : 'bg-home-error/15'}`}>
-      <Text className={`text-[10px] font-bold ${isWin ? 'text-home-success' : 'text-home-error'}`}>{result}</Text>
+    <View className={`w-5 h-5 rounded-full items-center justify-center ${isWin ? 'bg-sage-fill dark:bg-sage-fill-dark' : 'bg-coral-fill dark:bg-coral-fill-dark'}`}>
+      <Text className={`text-[10px] font-bold ${isWin ? 'text-sage-ink dark:text-sage-ink-dark' : 'text-coral-ink dark:text-coral-ink-dark'}`}>{result}</Text>
     </View>
   );
 }
 
 function EyebrowCaption({ children }: { children: string }) {
-  return <Text className="text-[11px] font-semibold uppercase tracking-wider text-home-text-faint">{children}</Text>;
+  return <Text className="text-[11px] font-semibold uppercase tracking-wider text-text-faint dark:text-text-faint-dark">{children}</Text>;
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -105,6 +93,8 @@ interface NextMatchHeroProps {
 
 function NextMatchHero({ match, teamId, opponentName, tableRow, form, isCaptainOrVC }: NextMatchHeroProps) {
   const { appUser } = useAuthStore();
+  const { colorScheme } = useColorScheme();
+  const isDark = colorScheme === 'dark';
   const [opponentContact, setOpponentContact] = useState<OpponentContact | null>(null);
   const [venuePhone, setVenuePhone] = useState<string | null>(null);
   // Whether OUR team has a saved submission for this match yet — only
@@ -154,13 +144,13 @@ function NextMatchHero({ match, teamId, opponentName, tableRow, form, isCaptainO
 
   if (!match || !opponentId) {
     return (
-      <View className="rounded-lg border border-home-border bg-home-surface px-5 py-5 mb-6">
+      <View className="rounded-lg border border-border dark:border-border-dark bg-surface dark:bg-surface-dark px-5 py-5 mb-6">
         <EyebrowCaption>Next Match</EyebrowCaption>
-        <Text className={`text-[13px] text-home-text-dim ${form.length > 0 ? 'mt-2 mb-3' : 'mt-2'}`}>
+        <Text className={`text-[13px] text-text-dim dark:text-text-dim-dark ${form.length > 0 ? 'mt-2 mb-3' : 'mt-2'}`}>
           No upcoming fixture scheduled
         </Text>
         {form.length > 0 && (
-          <View className="flex-row items-center gap-2 pt-3 mt-1 border-t border-home-border">
+          <View className="flex-row items-center gap-2 pt-3 mt-1 border-t border-border dark:border-border-dark">
             <EyebrowCaption>Your Form</EyebrowCaption>
             <View className="flex-row gap-1.5">{form.map((r, i) => <FormDot key={i} result={r} />)}</View>
           </View>
@@ -170,7 +160,7 @@ function NextMatchHero({ match, teamId, opponentName, tableRow, form, isCaptainO
   }
 
   const tone = STATUS_TONE[match.status];
-  const toneClasses = tone ? homeToneClasses(tone) : null;
+  const tc = tone ? toneClasses(tone) : null;
   const ctaLabel = match.status === 'scheduled' ? 'Enter Result'
     : match.status === 'disputed' ? 'Resolve Differences'
       : match.status === 'awaiting_confirmation' && hasSubmitted === false ? 'Review Their Result'
@@ -178,12 +168,12 @@ function NextMatchHero({ match, teamId, opponentName, tableRow, form, isCaptainO
           : 'View / Edit Result';
 
   const content = (
-    <View className="rounded-lg border border-home-border bg-home-surface px-5 py-5 mb-6">
+    <View className="rounded-lg border border-border dark:border-border-dark bg-surface dark:bg-surface-dark px-5 py-5 mb-6">
       <View className="flex-row items-center justify-between mb-4">
         <EyebrowCaption>Next Match</EyebrowCaption>
-        {toneClasses && (
-          <View className={`rounded px-2 py-1 ${toneClasses.bg}`}>
-            <Text className={`text-[10px] font-bold uppercase tracking-wide ${toneClasses.text}`}>
+        {tc && (
+          <View className={`rounded px-2 py-1 ${tc.fill}`}>
+            <Text className={`text-[10px] font-bold uppercase tracking-wide ${tc.ink}`}>
               {STATUS_LABEL[match.status]}
             </Text>
           </View>
@@ -191,18 +181,18 @@ function NextMatchHero({ match, teamId, opponentName, tableRow, form, isCaptainO
       </View>
 
       <View className="flex-row items-baseline gap-1.5">
-        <Text className="text-[19px] font-bold text-home-text" style={{ fontFamily: FONT_DISPLAY }}>You</Text>
-        <Text className="text-[12px] text-home-text-faint">({isHome ? 'H' : 'A'})</Text>
+        <Text className="text-[19px] font-bold text-text dark:text-text-dark" style={{ fontFamily: FONT_DISPLAY }}>You</Text>
+        <Text className="text-[12px] text-text-faint dark:text-text-faint-dark">({isHome ? 'H' : 'A'})</Text>
       </View>
-      <Text className="text-[15px] text-home-text-dim mb-4" numberOfLines={1}>vs {opponentName}</Text>
+      <Text className="text-[15px] text-text-dim dark:text-text-dim-dark mb-4" numberOfLines={1}>vs {opponentName}</Text>
 
       <View className="flex-row items-center justify-between mb-4">
-        <Text className="text-[13px] text-home-text-dim flex-1 mr-2" numberOfLines={1}>
+        <Text className="text-[13px] text-text-dim dark:text-text-dim-dark flex-1 mr-2" numberOfLines={1}>
           {formatDate(match.scheduledDate)}{match.venue ? ` · ${match.venue}` : ''}
         </Text>
         {tableRow && (
           <Text
-            className="text-[13px] font-bold text-home-accent"
+            className="text-[13px] font-bold text-brand dark:text-brand-dark"
             style={{ fontFamily: FONT_MONO, fontVariant: ['tabular-nums'] }}
           >
             {ordinal(tableRow.position)}
@@ -212,7 +202,6 @@ function NextMatchHero({ match, teamId, opponentName, tableRow, form, isCaptainO
 
       {isCaptainOrVC && (
         <Button
-          variant="accent"
           size="sm"
           onPress={() => router.push(`/(protected)/results-entry?matchId=${match.id}`)}
         >
@@ -221,19 +210,19 @@ function NextMatchHero({ match, teamId, opponentName, tableRow, form, isCaptainO
       )}
 
       {(opponentContact || (!isHome && venuePhone)) && (
-        <View className="mt-4 pt-4 border-t border-home-border gap-2.5">
+        <View className="mt-4 pt-4 border-t border-border dark:border-border-dark gap-2.5">
           {opponentContact && (
             <View className="flex-row items-center gap-2">
-              <AppIcon name="phone" size={13} color={RAW.homeTextFaint} />
-              <Text className="text-[12px] text-home-text-dim flex-1" numberOfLines={1}>{opponentContact.name}</Text>
-              <Text className="text-[12px] text-home-text-dim">{opponentContact.phone}</Text>
+              <AppIcon name="phone" size={13} color={isDark ? RAW.textFaintDark : RAW.textFaint} />
+              <Text className="text-[12px] text-text-dim dark:text-text-dim-dark flex-1" numberOfLines={1}>{opponentContact.name}</Text>
+              <Text className="text-[12px] text-text-dim dark:text-text-dim-dark">{opponentContact.phone}</Text>
             </View>
           )}
           {!isHome && venuePhone && (
             <View className="flex-row items-center gap-2">
-              <AppIcon name="home" size={13} color={RAW.homeTextFaint} />
-              <Text className="text-[12px] text-home-text-dim flex-1">Venue Contact</Text>
-              <Text className="text-[12px] text-home-text-dim">{venuePhone}</Text>
+              <AppIcon name="home" size={13} color={isDark ? RAW.textFaintDark : RAW.textFaint} />
+              <Text className="text-[12px] text-text-dim dark:text-text-dim-dark flex-1">Venue Contact</Text>
+              <Text className="text-[12px] text-text-dim dark:text-text-dim-dark">{venuePhone}</Text>
             </View>
           )}
         </View>
@@ -265,13 +254,13 @@ function YourTeamSection({ tableRow, form, teamId }: { tableRow: DivisionTable; 
         <EyebrowCaption>Your Team</EyebrowCaption>
         <View className="flex-row items-end gap-4 mt-2">
           <Text
-            className="text-[36px] font-bold text-home-accent leading-[38px]"
+            className="text-[36px] font-bold text-brand dark:text-brand-dark leading-[38px]"
             style={{ fontFamily: FONT_MONO, fontVariant: ['tabular-nums'] }}
           >
             {ordinal(tableRow.position)}
           </Text>
-          <Text className="text-[13px] text-home-text-dim pb-1.5 flex-1" numberOfLines={1}>
-            <Text className="font-bold text-home-text" style={{ fontFamily: FONT_MONO, fontVariant: ['tabular-nums'] }}>
+          <Text className="text-[13px] text-text-dim dark:text-text-dim-dark pb-1.5 flex-1" numberOfLines={1}>
+            <Text className="font-bold text-text dark:text-text-dark" style={{ fontFamily: FONT_MONO, fontVariant: ['tabular-nums'] }}>
               {tableRow.points}
             </Text>
             {' pts  ·  '}
@@ -297,15 +286,9 @@ function YourTeamSection({ tableRow, form, teamId }: { tableRow: DivisionTable; 
 // tableRow read (a single doc, already fetched by HomeDashboard) supplies
 // the position to window the range query around.
 // ─────────────────────────────────────────────────────────────────────────
-// Step 3 — colour pass: V1 turned the whole viewer row green (position,
-// team name and points all coloured + a green-tinted background). The
-// brief is explicit that this reads as "the entire row is green" — so the
-// row is now distinguished by a neutral elevated background (same
+// The user's row is distinguished by a neutral elevated background (same
 // language as every other "this is different" surface in the app) plus
-// exactly ONE accent touch, the position number, which is already the
-// "important numerical emphasis" this section exists to draw the eye to.
-// Team name and points stay neutral (bold weight carries "this is you",
-// not colour).
+// exactly ONE accent touch, the position number — not the whole row.
 function LeagueSnapshotList({ rows, myTeamId, teamNames }: {
   rows: DivisionTable[]; myTeamId: string; teamNames: Record<string, string>;
 }) {
@@ -313,7 +296,7 @@ function LeagueSnapshotList({ rows, myTeamId, teamNames }: {
   return (
     <View className="mb-6">
       <EyebrowCaption>League Snapshot</EyebrowCaption>
-      <View className="rounded-lg border border-home-border overflow-hidden mt-2">
+      <View className="rounded-lg border border-border dark:border-border-dark overflow-hidden mt-2">
         {rows.map((row, i) => {
           const isMine = row.teamId === myTeamId;
           return (
@@ -323,24 +306,24 @@ function LeagueSnapshotList({ rows, myTeamId, teamNames }: {
               onPress={() => router.push(`/(protected)/team-profile?teamId=${row.teamId}`)}
               className={[
                 'flex-row items-center px-4 py-2.5',
-                isMine ? 'bg-home-elevated' : 'bg-home-surface',
-                i > 0 ? 'border-t border-home-border' : '',
+                isMine ? 'bg-surface-2 dark:bg-surface-2-dark' : 'bg-surface dark:bg-surface-dark',
+                i > 0 ? 'border-t border-border dark:border-border-dark' : '',
               ].join(' ')}
             >
               <Text
-                className={`w-6 text-[12px] ${isMine ? 'font-bold text-home-accent' : 'text-home-text-faint'}`}
+                className={`w-6 text-[12px] ${isMine ? 'font-bold text-brand dark:text-brand-dark' : 'text-text-faint dark:text-text-faint-dark'}`}
                 style={{ fontFamily: FONT_MONO, fontVariant: ['tabular-nums'] }}
               >
                 {row.position}
               </Text>
               <Text
-                className={`flex-1 text-[13px] mr-2 text-home-text ${isMine ? 'font-bold' : ''}`}
+                className={`flex-1 text-[13px] mr-2 text-text dark:text-text-dark ${isMine ? 'font-bold' : ''}`}
                 numberOfLines={1}
               >
                 {teamNames[row.teamId] ?? '…'}
               </Text>
               <Text
-                className={`text-[13px] ${isMine ? 'font-bold text-home-text' : 'text-home-text-dim'}`}
+                className={`text-[13px] ${isMine ? 'font-bold text-text dark:text-text-dark' : 'text-text-dim dark:text-text-dim-dark'}`}
                 style={{ fontFamily: FONT_MONO, fontVariant: ['tabular-nums'] }}
               >
                 {row.points}
@@ -354,7 +337,7 @@ function LeagueSnapshotList({ rows, myTeamId, teamNames }: {
         onPress={() => router.push('/(protected)/(tabs)/standings')}
         className="mt-2.5"
       >
-        <Text className="text-[12px] font-semibold text-home-accent">View Full Table</Text>
+        <Text className="text-[12px] font-semibold text-brand dark:text-brand-dark">View Full Table</Text>
       </TouchableOpacity>
     </View>
   );
@@ -370,7 +353,7 @@ function RecentResultsList({ matches, teamId, teamNames }: {
   return (
     <View className="mb-6">
       <EyebrowCaption>Recent Results</EyebrowCaption>
-      <View className="rounded-lg border border-home-border overflow-hidden mt-2">
+      <View className="rounded-lg border border-border dark:border-border-dark overflow-hidden mt-2">
         {matches.map((m, i) => {
           const isHome = m.homeTeamId === teamId;
           const opponentId = isHome ? m.awayTeamId : m.homeTeamId;
@@ -385,28 +368,28 @@ function RecentResultsList({ matches, teamId, teamNames }: {
               activeOpacity={0.7}
               onPress={() => router.push(`/(protected)/results-entry?matchId=${m.id}`)}
               className={[
-                'flex-row items-center justify-between px-4 py-3 bg-home-surface',
-                i > 0 ? 'border-t border-home-border' : '',
+                'flex-row items-center justify-between px-4 py-3 bg-surface dark:bg-surface-dark',
+                i > 0 ? 'border-t border-border dark:border-border-dark' : '',
               ].join(' ')}
             >
               <View className="flex-1 mr-3">
-                <Text className="text-[13px] font-semibold text-home-text" numberOfLines={1}>
+                <Text className="text-[13px] font-semibold text-text dark:text-text-dark" numberOfLines={1}>
                   {isHome ? 'vs' : '@'} {teamNames[opponentId] ?? '…'}
                 </Text>
-                <Text className="text-[11px] text-home-text-faint mt-0.5">{formatDate(m.scheduledDate)}</Text>
+                <Text className="text-[11px] text-text-faint dark:text-text-faint-dark mt-0.5">{formatDate(m.scheduledDate)}</Text>
               </View>
               <View className="items-end">
                 <Text
-                  className={`text-[13px] font-bold ${won ? 'text-home-success' : 'text-home-error'}`}
+                  className={`text-[13px] font-bold ${won ? 'text-sage-ink dark:text-sage-ink-dark' : 'text-coral-ink dark:text-coral-ink-dark'}`}
                   style={{ fontFamily: FONT_MONO, fontVariant: ['tabular-nums'] }}
                 >
                   {legsFor}-{legsAgainst}
                 </Text>
-                {/* Step 3: the score above already carries the semantic
-                    colour — repeating it on the label too read as
-                    "colouring the W/L indicator twice". Text alone
-                    ("Won"/"Lost") still communicates the outcome without it. */}
-                <Text className="text-[10px] font-bold uppercase tracking-wide text-home-text-faint">
+                {/* The score above already carries the semantic colour —
+                    repeating it on the label too reads as "colouring the
+                    W/L indicator twice". Text alone ("Won"/"Lost") still
+                    communicates the outcome without it. */}
+                <Text className="text-[10px] font-bold uppercase tracking-wide text-text-faint dark:text-text-faint-dark">
                   {won ? 'Won' : 'Lost'}
                 </Text>
               </View>
@@ -429,7 +412,7 @@ function YourStatsSection({ stats, playerId }: { stats: PlayerSeasonStats | null
     const content = (
       <View className="mb-6">
         <EyebrowCaption>Your Stats</EyebrowCaption>
-        <Text className="text-[13px] text-home-text-dim mt-2">No stats yet — these fill in once your matches are confirmed.</Text>
+        <Text className="text-[13px] text-text-dim dark:text-text-dim-dark mt-2">No stats yet — these fill in once your matches are confirmed.</Text>
       </View>
     );
     if (!openProfile) return content;
@@ -446,30 +429,29 @@ function YourStatsSection({ stats, playerId }: { stats: PlayerSeasonStats | null
     <View className="mb-6">
       <EyebrowCaption>Your Stats</EyebrowCaption>
       <View className="flex-row items-end gap-5 mt-2">
-        <Text className="text-[30px] font-bold text-home-accent leading-[32px]" style={{ fontFamily: FONT_MONO, fontVariant: ['tabular-nums'] }}>
+        <Text className="text-[30px] font-bold text-brand dark:text-brand-dark leading-[32px]" style={{ fontFamily: FONT_MONO, fontVariant: ['tabular-nums'] }}>
           {winPct}%
         </Text>
         <View className="flex-row gap-4 pb-1">
           <View>
-            <Text className="text-[15px] font-bold text-home-text" style={{ fontFamily: FONT_MONO, fontVariant: ['tabular-nums'] }}>{stats.played}</Text>
-            <Text className="text-[10px] text-home-text-faint mt-0.5">Played</Text>
+            <Text className="text-[15px] font-bold text-text dark:text-text-dark" style={{ fontFamily: FONT_MONO, fontVariant: ['tabular-nums'] }}>{stats.played}</Text>
+            <Text className="text-[10px] text-text-faint dark:text-text-faint-dark mt-0.5">Played</Text>
           </View>
           <View>
-            <Text className="text-[15px] font-bold text-home-text" style={{ fontFamily: FONT_MONO, fontVariant: ['tabular-nums'] }}>{stats.won}</Text>
-            <Text className="text-[10px] text-home-text-faint mt-0.5">Won</Text>
+            <Text className="text-[15px] font-bold text-text dark:text-text-dark" style={{ fontFamily: FONT_MONO, fontVariant: ['tabular-nums'] }}>{stats.won}</Text>
+            <Text className="text-[10px] text-text-faint dark:text-text-faint-dark mt-0.5">Won</Text>
           </View>
           <View>
-            <Text className="text-[15px] font-bold text-home-text" style={{ fontFamily: FONT_MONO, fontVariant: ['tabular-nums'] }}>{stats.oneEighties}</Text>
-            <Text className="text-[10px] text-home-text-faint mt-0.5">180s</Text>
+            <Text className="text-[15px] font-bold text-text dark:text-text-dark" style={{ fontFamily: FONT_MONO, fontVariant: ['tabular-nums'] }}>{stats.oneEighties}</Text>
+            <Text className="text-[10px] text-text-faint dark:text-text-faint-dark mt-0.5">180s</Text>
           </View>
         </View>
       </View>
       {highest !== undefined && (
-        // Step 3: this was amber purely decoratively — no warning/status
-        // meaning attaches to a highest checkout, so it drops to the same
-        // neutral bold treatment as Played/Won/180s above.
-        <Text className="text-[12px] text-home-text-dim mt-3">
-          Highest checkout <Text className="font-bold text-home-text" style={{ fontFamily: FONT_MONO, fontVariant: ['tabular-nums'] }}>{highest}</Text>
+        // No warning/status meaning attaches to a highest checkout, so it's
+        // the same neutral bold treatment as Played/Won/180s above, not amber.
+        <Text className="text-[12px] text-text-dim dark:text-text-dim-dark mt-3">
+          Highest checkout <Text className="font-bold text-text dark:text-text-dark" style={{ fontFamily: FONT_MONO, fontVariant: ['tabular-nums'] }}>{highest}</Text>
         </Text>
       )}
     </View>
@@ -480,22 +462,23 @@ function YourStatsSection({ stats, playerId }: { stats: PlayerSeasonStats | null
 
 // ─────────────────────────────────────────────────────────────────────────
 // SPONSOR — same data/behaviour as the shared SponsorBanner (returns
-// nothing for a missing/inactive sponsor), re-skinned for the fixed dark
-// palette rather than reusing that component directly (see the file-level
-// comment). Deliberately placed low on the page — league branding, not
-// what the player came to Home to see.
+// nothing for a missing/inactive sponsor). Deliberately placed low on the
+// page — league branding, not what the player came to Home to see. Kept as
+// a plain divider row (SponsorBanner wraps its content in a Card, which
+// would read here as "one more card" right at the bottom of an otherwise
+// card-free page) rather than switched to the shared component.
 // ─────────────────────────────────────────────────────────────────────────
 function HomeSponsorRow({ sponsor }: { sponsor: LeagueSponsor | null | undefined }) {
   if (!sponsor || !sponsor.active) return null;
 
   const inner = (
-    <View className="flex-row items-center gap-3 pt-4 mt-2 border-t border-home-border">
+    <View className="flex-row items-center gap-3 pt-4 mt-2 border-t border-border dark:border-border-dark">
       {sponsor.logoUrl ? (
         <Image source={{ uri: sponsor.logoUrl }} style={{ width: 26, height: 26, borderRadius: 6 }} resizeMode="contain" />
       ) : null}
       <View className="flex-1">
-        <Text className="text-[10px] uppercase tracking-wide text-home-text-faint">Proudly sponsored by</Text>
-        <Text className="text-[12px] font-semibold text-home-text-dim mt-0.5" numberOfLines={1}>{sponsor.name}</Text>
+        <Text className="text-[10px] uppercase tracking-wide text-text-faint dark:text-text-faint-dark">Proudly sponsored by</Text>
+        <Text className="text-[12px] font-semibold text-text-dim dark:text-text-dim-dark mt-0.5" numberOfLines={1}>{sponsor.name}</Text>
       </View>
     </View>
   );
@@ -516,6 +499,8 @@ function HomeSponsorRow({ sponsor }: { sponsor: LeagueSponsor | null | undefined
 // ─────────────────────────────────────────────────────────────────────────
 export function HomeDashboard() {
   const { appUser } = useAuthStore();
+  const { colorScheme } = useColorScheme();
+  const isDark = colorScheme === 'dark';
   const teamId = appUser?.teamId ?? null;
   const isCaptainOrVC = appUser?.role === 'captain' || appUser?.role === 'viceCaptain';
 
@@ -645,8 +630,8 @@ export function HomeDashboard() {
 
   if (!teamId) {
     return (
-      <Screen backgroundClassName="bg-home-base" header={<Header contextLine={contextLine || null} />}>
-        <Text className="text-[13px] text-home-text-dim text-center mt-10">Join a team to see your dashboard.</Text>
+      <Screen header={<Header contextLine={contextLine || null} />}>
+        <Text className="text-[13px] text-text-dim dark:text-text-dim-dark text-center mt-10">Join a team to see your dashboard.</Text>
       </Screen>
     );
   }
@@ -662,36 +647,34 @@ export function HomeDashboard() {
   const form = recentForm(matches, teamId);
 
   return (
-    <Screen backgroundClassName="bg-home-base" header={<Header contextLine={contextLine || null} />}>
+    <Screen header={<Header contextLine={contextLine || null} />}>
       <View className="w-full max-w-[640px] self-center">
         {loadError ? (
-          <View className="rounded-lg border border-home-error/30 bg-home-error/10 px-4 py-4">
-            <Text className="text-[13px] font-semibold text-home-error mb-1">Couldn't load your dashboard</Text>
-            <Text className="text-[12px] text-home-error">{loadError}</Text>
-          </View>
+          <Card tone="coral">
+            <Body tone="coral" weight="semibold" className="mb-1">Couldn't load your dashboard</Body>
+            <Body tone="coral" size="sm">{loadError}</Body>
+          </Card>
         ) : isLoading ? (
-          <ActivityIndicator color={RAW.homeAccent} style={{ marginTop: 40 }} />
+          <ActivityIndicator color={RAW.brand} style={{ marginTop: 40 }} />
         ) : (
           <>
             {isCaptainOrVC && pendingRequestCount > 0 && (
-              // Step 3: this is routine housekeeping (join/claim/VC
-              // requests waiting), not a warning — amber was previously
-              // used here purely decoratively. Neutral elevated surface,
-              // hierarchy carried by bold text, matching the rest of the
-              // "mostly neutral graphite" system.
+              // Routine housekeeping (join/claim/VC requests waiting), not
+              // a warning — neutral elevated surface, hierarchy carried by
+              // bold text, not colour.
               <TouchableOpacity
                 activeOpacity={0.7}
                 onPress={() => router.push('/(protected)/(tabs)/captains')}
-                className="flex-row items-center gap-3 rounded-lg bg-home-elevated border border-home-border px-4 py-3 mb-6"
+                className="flex-row items-center gap-3 rounded-lg bg-surface-2 dark:bg-surface-2-dark border border-border dark:border-border-dark px-4 py-3 mb-6"
               >
-                <AppIcon name="users" size={17} color={RAW.homeTextDim} />
+                <AppIcon name="users" size={17} color={isDark ? RAW.textDimDark : RAW.textDim} />
                 <View className="flex-1">
-                  <Text className="text-[13px] font-semibold text-home-text">
+                  <Text className="text-[13px] font-semibold text-text dark:text-text-dark">
                     {pendingRequestCount} request{pendingRequestCount === 1 ? '' : 's'} waiting
                   </Text>
-                  <Text className="text-[11px] text-home-text-faint mt-0.5">Tap to review your team's inbox</Text>
+                  <Text className="text-[11px] text-text-faint dark:text-text-faint-dark mt-0.5">Tap to review your team's inbox</Text>
                 </View>
-                <AppIcon name="chevron-right" size={16} color={RAW.homeTextFaint} />
+                <AppIcon name="chevron-right" size={16} color={isDark ? RAW.textFaintDark : RAW.textFaint} />
               </TouchableOpacity>
             )}
 

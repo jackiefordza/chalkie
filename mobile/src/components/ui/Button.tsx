@@ -1,8 +1,10 @@
 import type { ReactNode } from 'react';
 import { TouchableOpacity, ActivityIndicator, Text, type TouchableOpacityProps } from 'react-native';
+import { useColorScheme } from 'nativewind';
 import { FONT_DISPLAY } from '@/styles/typography';
+import { RAW } from '@/lib/theme';
 
-export type ButtonVariant = 'primary' | 'secondary' | 'good' | 'danger' | 'ghost' | 'accent';
+export type ButtonVariant = 'primary' | 'secondary' | 'good' | 'danger' | 'ghost';
 
 interface Variant {
   container: string;
@@ -10,19 +12,26 @@ interface Variant {
   spinner: string;
 }
 
+// Phase E, Step 5: 'primary' now uses the "strong accent / CTA" token
+// (brand-strong), not the general accent — the one thing on a screen that
+// reads as "the action" gets a slightly more saturated green than plain
+// numeric/selected-state emphasis elsewhere. This absorbs what used to be
+// Home's own Home-only 'accent' variant (retired — Home's CTA now just uses
+// 'primary' like every other button in the app, since the whole app shares
+// one token system now).
+// secondary/good/danger/ghost all previously shared one hardcoded spinner
+// colour ('#7A4FD1', the old purple brand hex) regardless of their own
+// tone — that literal is now stale (nothing in the new palette is purple),
+// so it's replaced with the new brand accent, keeping the same "one shared
+// spinner colour across these four muted-fill variants" shape rather than
+// giving each variant its own tone-matched spinner (a bigger change than
+// this pass calls for).
 const VARIANTS: Record<ButtonVariant, Variant> = {
-  primary: { container: 'bg-brand dark:bg-brand-dark shadow-sm', text: 'text-white', spinner: '#FFFFFF' },
-  secondary: { container: 'bg-surface-2 dark:bg-surface-2-dark', text: 'text-text dark:text-text-dark', spinner: '#7A4FD1' },
-  good: { container: 'bg-sage-fill dark:bg-sage-fill-dark', text: 'text-sage-ink dark:text-sage-ink-dark', spinner: '#7A4FD1' },
-  danger: { container: 'bg-coral-fill dark:bg-coral-fill-dark', text: 'text-coral-ink dark:text-coral-ink-dark', spinner: '#7A4FD1' },
-  ghost: { container: 'bg-transparent border border-dashed border-border dark:border-border-dark', text: 'text-text-dim dark:text-text-dim-dark', spinner: '#7A4FD1' },
-  // Phase E, Step 2 — Home V1 fixed dark palette only (see lib/theme.ts);
-  // Step 3 gave this the "strong accent / CTA" token, not the base accent —
-  // a primary action stands out a little more than a plain numeric
-  // emphasis. Deliberately no `dark:` pair — this variant is used
-  // exclusively inside the new Home prototype, which doesn't follow the
-  // app-wide light/dark toggle.
-  accent: { container: 'bg-home-accent-strong', text: 'text-home-accent-ink', spinner: '#181B19' },
+  primary: { container: 'bg-brand-strong dark:bg-brand-strong-dark shadow-sm', text: 'text-brand-cta-ink dark:text-brand-cta-ink-dark', spinner: RAW.brandCtaInk },
+  secondary: { container: 'bg-surface-2 dark:bg-surface-2-dark', text: 'text-text dark:text-text-dark', spinner: RAW.brand },
+  good: { container: 'bg-sage-fill dark:bg-sage-fill-dark', text: 'text-sage-ink dark:text-sage-ink-dark', spinner: RAW.brand },
+  danger: { container: 'bg-coral-fill dark:bg-coral-fill-dark', text: 'text-coral-ink dark:text-coral-ink-dark', spinner: RAW.brand },
+  ghost: { container: 'bg-transparent border border-dashed border-border dark:border-border-dark', text: 'text-text-dim dark:text-text-dim-dark', spinner: RAW.brand },
 };
 
 interface ButtonProps extends Omit<TouchableOpacityProps, 'children'> {
@@ -46,6 +55,13 @@ export function Button({
   const v = VARIANTS[variant];
   const padding = size === 'sm' ? 'py-2.5 px-4' : 'py-3.5 px-5';
   const isDisabled = disabled || loading;
+  // 'primary's fill flips lightness between schemes (a medium-dark green in
+  // light mode, a bright one in dark mode) enough that the spinner needs to
+  // flip contrast with it — every other variant's fill stays pale/muted in
+  // both schemes, so their spinner colour (unchanged since before this
+  // phase) doesn't need to.
+  const { colorScheme } = useColorScheme();
+  const spinnerColor = variant === 'primary' && colorScheme === 'dark' ? RAW.brandCtaInkDark : v.spinner;
 
   return (
     <TouchableOpacity
@@ -55,7 +71,7 @@ export function Button({
       {...rest}
     >
       {loading ? (
-        <ActivityIndicator color={v.spinner} />
+        <ActivityIndicator color={spinnerColor} />
       ) : (
         <Text
           className={`font-bold ${size === 'sm' ? 'text-sm' : 'text-[15px]'} ${v.text}`}
