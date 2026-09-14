@@ -36,70 +36,43 @@ export function toneClasses(tone: SemanticTone): ToneClasses {
   return TONE_CLASSES[tone];
 }
 
-// Phase E, Step 2 — Home V1 visual prototype; Step 3 — colour pass. Maps
-// the SAME semantic tone values matchStatus.ts's STATUS_TONE already uses
-// onto the fixed dark palette (tailwind.config.js's home-* tokens) — the
-// meaning (which status is "warning-ish" vs "error-ish") is untouched,
-// only its rendering under the new colours changes. Subtle tinted
-// background (Tailwind's /opacity modifier) + full-strength text, mirroring
-// the existing toneClasses() fill+ink pattern, deliberately restrained
-// rather than a solid saturated fill (see Phase E brief: avoid glow/neon).
-interface HomeToneClasses {
-  bg: string;
-  text: string;
-}
-
-const HOME_TONE_CLASSES: Record<SemanticTone, HomeToneClasses> = {
-  brand: { bg: 'bg-home-accent/15', text: 'text-home-accent' },
-  coral: { bg: 'bg-home-error/15', text: 'text-home-error' },
-  sage: { bg: 'bg-home-success/15', text: 'text-home-success' },
-  butter: { bg: 'bg-home-warning/15', text: 'text-home-warning' },
-};
-
-export function homeToneClasses(tone: SemanticTone): HomeToneClasses {
-  return HOME_TONE_CLASSES[tone];
-}
-
 // Raw hex, mirroring tailwind.config.js — for the handful of places that can't
 // take a className (React Navigation's headerStyle/headerTintColor, an
-// ActivityIndicator's `color` prop, TextInput's placeholderTextColor).
+// ActivityIndicator's `color` prop, AppIcon's `color` prop, a BlurView tint).
+//
+// Phase E, Step 5: this is now the single source of truth for the whole
+// app's light/dark palette (soft graphite + off-white + muted Chalkie green,
+// approved across Steps 2-4 on Home and rolled out app-wide here) — the
+// Home-only fixed "home-*" family from Steps 2-4 has been retired; Home now
+// reads these same scheme-aware values like every other screen, which is
+// what gives it a genuine light mode.
 export const RAW = {
+  bg: '#F3F4F1',
+  bgDark: '#181B19',
   surface: '#FFFFFF',
-  surfaceDark: '#1D2027',
-  text: '#22242B',
-  textDark: '#F2EFE7',
-  textFaint: '#96998F',
-  textFaintDark: '#6F7684',
-  brand: '#7A4FD1',
-  brandDark: '#8B6FD9',
-  brandInk: '#5B32A8',
-  brandInkDark: '#D7C6FA',
-  brandFill: '#EDE3FB',
-  brandFillDark: 'rgba(139,111,217,0.2)',
-  coralInk: '#C6483C',
-  coralInkDark: '#FF9C8D',
-  sageInk: '#1F8054',
-  sageInkDark: '#8FE0B0',
-  butterInk: '#A97917',
-  butterInkDark: '#F0C368',
-
-  // Phase E, Step 2 — Home V1 fixed dark palette; Step 3 — colour pass
-  // ("graphite + muted Chalkie green + off-white"); Step 4 — tonal
-  // refinement (lighter background/surface/elevated for real-device
-  // legibility, same structure). For the handful of props that can't take
-  // a className (AppIcon's color, ActivityIndicator, a BlurView tint).
-  // Mirrors tailwind.config.js's home-* tokens exactly — keep these two in
-  // sync if either changes.
-  homeBase: '#181B19',
-  homeSurface: '#242925',
-  homeElevated: '#2C322E',
-  homeText: '#F2F3EF',
-  homeTextDim: '#B4BAB6',
-  homeTextFaint: '#858D88',
-  homeAccent: '#B1C75E',
-  homeAccentStrong: '#B8CC67',
-  homeAccentInk: '#181B19',
-  homeSuccess: '#69C98A',
-  homeWarning: '#D5AE55',
-  homeError: '#E66B6B',
+  surfaceDark: '#242925',
+  surface2: '#E9ECE8',
+  surface2Dark: '#2C322E',
+  text: '#18201B',
+  textDark: '#F2F3EF',
+  textDim: '#5D6761',
+  textDimDark: '#B4BAB6',
+  textFaint: '#7C857F',
+  textFaintDark: '#858D88',
+  brand: '#71883A',
+  brandDark: '#B1C75E',
+  brandStrong: '#7D9640',
+  brandStrongDark: '#B8CC67',
+  brandInk: '#5C7030',
+  brandInkDark: '#B1C75E',
+  brandFill: 'rgba(113,136,58,0.12)',
+  brandFillDark: 'rgba(177,199,94,0.16)',
+  brandCtaInk: '#FFFFFF',
+  brandCtaInkDark: '#181B19',
+  coralInk: '#C94F4F',
+  coralInkDark: '#E66B6B',
+  sageInk: '#31875A',
+  sageInkDark: '#69C98A',
+  butterInk: '#9A741F',
+  butterInkDark: '#D5AE55',
 } as const;
