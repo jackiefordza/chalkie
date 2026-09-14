@@ -138,6 +138,18 @@ export type MatchStatus = 'scheduled' | 'awaiting_confirmation' | 'disputed' | '
 export type GameType = 'singles' | 'pairs';
 export type MatchSide = 'home' | 'away';
 
+// Stats Rules audit (Season 1): Season 180s/High Checkouts and the Player
+// Leaderboard only count League + TKO matches, never Friendlies — see
+// computePlayerAccum in functions/src/index.ts, the only place this is
+// enforced. Every match-creation path (admin-fixtures.tsx's round-robin
+// generator, importFixtures.ts's CSV import) only ever creates League
+// fixtures today, so both stamp 'league' — there's no UI yet for creating a
+// TKO or Friendly match. Matches written before this field existed have no
+// value for it at all; every reader treats a missing value as 'league'
+// (see the backfill script and functions/src/index.ts) rather than
+// requiring a migration write.
+export type CompetitionType = 'league' | 'tko' | 'friendly';
+
 export interface Match {
   id: string;
   leagueId: string;
@@ -149,6 +161,7 @@ export interface Match {
   scheduledDate: Date;
   venue: string | null;
   status: MatchStatus;
+  competitionType: CompetitionType;
   // Set once confirmed (by the onSubmissionWrite/dispute-resolution Cloud Function path)
   homeGamesWon: number | null;
   awayGamesWon: number | null;
@@ -234,7 +247,13 @@ export interface PlayerHighCheckout {
 
 // Server-computed only (Cloud Function). played/won/lost count individual
 // games (singles + pairs), not matches — a player can play more than one
-// game per match.
+// game per match. legsWon (Stats Rules audit, Season 1) is at the LEG level,
+// not the game level — a leg won by a pairs game credits BOTH partnered
+// players. Every game always plays all 3 legs (Match's own invariant, see
+// MatchGame.legs), so legs *played* is always `played * 3` and isn't stored
+// separately — see mobile/src/lib/leaderboard.ts. All of played/won/lost/
+// oneEighties/highCheckouts/legsWon only ever accumulate from confirmed
+// League + TKO matches — Friendlies contribute nothing (computePlayerAccum).
 export interface PlayerSeasonStats {
   id: string; // = `${seasonId}_${playerId}`
   leagueId: string;
@@ -245,6 +264,7 @@ export interface PlayerSeasonStats {
   played: number;
   won: number;
   lost: number;
+  legsWon: number;
   oneEighties: number;
   highCheckouts: PlayerHighCheckout[];
 }

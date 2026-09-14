@@ -4,21 +4,30 @@ import { onDocumentWritten, onDocumentUpdated, onDocumentDeleted } from 'firebas
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 
 initializeApp();
-const db = getFirestore();
+// Exported for testing only — applyMatchResultDelta.emulator.test.ts reads
+// back what it wrote against the local Firestore emulator. No other module
+// imports this.
+export const db = getFirestore();
 
-type MatchSide = 'home' | 'away';
-type GameType = 'singles' | 'pairs';
+export type MatchSide = 'home' | 'away';
+export type GameType = 'singles' | 'pairs';
+// Stats Rules audit (Season 1) — see computePlayerAccum below. A match
+// written before this field existed has no value for it at all; every
+// reader here treats a missing value as 'league' rather than requiring a
+// migration write (see scripts/backfill-legs-won for the one-time backfill
+// of the new legsWon field on already-confirmed matches).
+export type CompetitionType = 'league' | 'tko' | 'friendly';
 
-interface HighCheckout {
+export interface HighCheckout {
   playerId: string;
   value: string;
 }
-interface MatchLeg {
+export interface MatchLeg {
   winner: MatchSide;
   oneEighties: string[];
   highCheckout: HighCheckout | null;
 }
-interface MatchGame {
+export interface MatchGame {
   order: number;
   type: GameType;
   homePlayerIds: string[];
@@ -246,6 +255,7 @@ interface PlayerAccum {
   played: number;
   won: number;
   lost: number;
+  legsWon: number;
   oneEighties: number;
   highCheckouts: HighCheckoutEntry[];
 }
@@ -253,12 +263,25 @@ interface PlayerAccum {
 // Pure — no Firestore calls. Reused for a match's first confirmation, a later
 // admin correction of an already-confirmed match, and a full reversal on
 // delete (by passing an empty games array as the "other side" of the diff).
-function computePlayerAccum(
+//
+// Stats Rules audit (Season 1): Season 180s, Season High Checkouts and the
+// Player Leaderboard (legsWon) only ever count League + TKO matches — a
+// Friendly contributes nothing at all, at every one of played/won/lost/
+// legsWon/oneEighties/highCheckouts. League and TKO accumulate identically
+// (deliberately no branch between them below). Exported for unit testing.
+export function computePlayerAccum(
   games: MatchGame[], homeTeamId: string, awayTeamId: string, matchId: string, scheduledDate: Date,
+  competitionType: CompetitionType,
 ): Map<string, PlayerAccum> {
   const accum = new Map<string, PlayerAccum>();
+  if (competitionType === 'friendly') return accum;
+
   const getAccum = (playerId: string, teamId: string): PlayerAccum => {
-    if (!accum.has(playerId)) accum.set(playerId, { teamId, played: 0, won: 0, lost: 0, oneEighties: 0, highCheckouts: [] });
+    if (!accum.has(playerId)) {
+      accum.set(playerId, {
+        teamId, played: 0, won: 0, lost: 0, legsWon: 0, oneEighties: 0, highCheckouts: [],
+      });
+    }
     return accum.get(playerId)!;
   };
 
@@ -275,6 +298,15 @@ function computePlayerAccum(
       if (gameHomeWon) a.lost += 1; else a.won += 1;
     }
     for (const leg of game.legs) {
+      // A leg's winner is recorded at the home/away SIDE, not per-player —
+      // every player on the winning side of THIS leg is credited, so a
+      // pairs-game leg win credits both partnered players (each player's
+      // own legsWon still only counts legs from games they actually played).
+      const winningPlayerIds = leg.winner === 'home' ? game.homePlayerIds : game.awayPlayerIds;
+      const winningTeamId = leg.winner === 'home' ? homeTeamId : awayTeamId;
+      for (const playerId of winningPlayerIds) {
+        getAccum(playerId, winningTeamId).legsWon += 1;
+      }
       for (const playerId of leg.oneEighties) {
         const teamId = game.homePlayerIds.includes(playerId) ? homeTeamId : awayTeamId;
         getAccum(playerId, teamId).oneEighties += 1;
@@ -305,7 +337,7 @@ async function recomputeDivisionPositions(seasonId: string, divisionId: string):
   await positionBatch.commit();
 }
 
-interface ResultDeltaParams {
+export interface ResultDeltaParams {
   matchId: string;
   leagueId: string;
   seasonId: string;
@@ -313,6 +345,9 @@ interface ResultDeltaParams {
   homeTeamId: string;
   awayTeamId: string;
   scheduledDate: Date;
+  // A match's competitionType never changes across confirm/correct/delete —
+  // this is one invariant value for the whole delta, not an old/new pair.
+  competitionType: CompetitionType;
   oldGames: MatchGame[]; // [] for a first confirmation (no prior result to reverse)
   newGames: MatchGame[]; // [] for a full reversal (match deleted)
   playedDelta: number; // +1 first confirmation, 0 correction of an existing result, -1 delete
@@ -323,7 +358,7 @@ interface ResultDeltaParams {
 // whether this is the very first confirmation (old = zero contribution),
 // an admin correcting an already-confirmed result (old = the previous
 // games), or a full delete (new = zero contribution).
-async function applyMatchResultDelta(p: ResultDeltaParams): Promise<void> {
+export async function applyMatchResultDelta(p: ResultDeltaParams): Promise<void> {
   const oldTotals = computeTotals(p.oldGames);
   const newTotals = computeTotals(p.newGames);
   // null (not false) when there are no games at all — a false here would
@@ -370,8 +405,13 @@ async function applyMatchResultDelta(p: ResultDeltaParams): Promise<void> {
   await recomputeDivisionPositions(p.seasonId, p.divisionId);
 
   // ── playerSeasonStats — diff old vs new per player ──
-  const oldAccum = computePlayerAccum(p.oldGames, p.homeTeamId, p.awayTeamId, p.matchId, p.scheduledDate);
-  const newAccum = computePlayerAccum(p.newGames, p.homeTeamId, p.awayTeamId, p.matchId, p.scheduledDate);
+  // competitionType is passed through unchanged for both sides of the diff
+  // (see ResultDeltaParams) — for a Friendly match, computePlayerAccum
+  // returns an empty map for both oldAccum and newAccum, so every delta
+  // below is 0 and nothing is written, at every one of confirm/correct/
+  // delete.
+  const oldAccum = computePlayerAccum(p.oldGames, p.homeTeamId, p.awayTeamId, p.matchId, p.scheduledDate, p.competitionType);
+  const newAccum = computePlayerAccum(p.newGames, p.homeTeamId, p.awayTeamId, p.matchId, p.scheduledDate, p.competitionType);
   const playerIds = new Set([...oldAccum.keys(), ...newAccum.keys()]);
 
   const statsBatch = db.batch();
@@ -383,6 +423,7 @@ async function applyMatchResultDelta(p: ResultDeltaParams): Promise<void> {
     const deltaPlayed = (n?.played ?? 0) - (o?.played ?? 0);
     const deltaWon = (n?.won ?? 0) - (o?.won ?? 0);
     const deltaLost = (n?.lost ?? 0) - (o?.lost ?? 0);
+    const deltaLegsWon = (n?.legsWon ?? 0) - (o?.legsWon ?? 0);
     const delta180 = (n?.oneEighties ?? 0) - (o?.oneEighties ?? 0);
     const checkoutsChanged = JSON.stringify(o?.highCheckouts ?? []) !== JSON.stringify(n?.highCheckouts ?? []);
 
@@ -390,7 +431,7 @@ async function applyMatchResultDelta(p: ResultDeltaParams): Promise<void> {
       checkoutPlayerIds.push(playerId);
       continue;
     }
-    if (deltaPlayed === 0 && deltaWon === 0 && deltaLost === 0 && delta180 === 0) continue;
+    if (deltaPlayed === 0 && deltaWon === 0 && deltaLost === 0 && deltaLegsWon === 0 && delta180 === 0) continue;
 
     const teamId = (n ?? o)!.teamId;
     statsBatch.set(db.doc(`playerSeasonStats/${p.seasonId}_${playerId}`), {
@@ -398,6 +439,7 @@ async function applyMatchResultDelta(p: ResultDeltaParams): Promise<void> {
       played: FieldValue.increment(deltaPlayed),
       won: FieldValue.increment(deltaWon),
       lost: FieldValue.increment(deltaLost),
+      legsWon: FieldValue.increment(deltaLegsWon),
       oneEighties: FieldValue.increment(delta180),
     }, { merge: true });
   }
@@ -411,6 +453,7 @@ async function applyMatchResultDelta(p: ResultDeltaParams): Promise<void> {
     const deltaPlayed = (n?.played ?? 0) - (o?.played ?? 0);
     const deltaWon = (n?.won ?? 0) - (o?.won ?? 0);
     const deltaLost = (n?.lost ?? 0) - (o?.lost ?? 0);
+    const deltaLegsWon = (n?.legsWon ?? 0) - (o?.legsWon ?? 0);
     const delta180 = (n?.oneEighties ?? 0) - (o?.oneEighties ?? 0);
     const teamId = (n ?? o)!.teamId;
 
@@ -425,6 +468,7 @@ async function applyMatchResultDelta(p: ResultDeltaParams): Promise<void> {
       played: FieldValue.increment(deltaPlayed),
       won: FieldValue.increment(deltaWon),
       lost: FieldValue.increment(deltaLost),
+      legsWon: FieldValue.increment(deltaLegsWon),
       oneEighties: FieldValue.increment(delta180),
       highCheckouts: rebuilt,
     }, { merge: true });
@@ -441,9 +485,10 @@ export const onMatchConfirmed = onDocumentUpdated('matches/{matchId}', async (ev
   if (after.status !== 'confirmed') return;
 
   const matchId = event.params.matchId;
-  const { leagueId, seasonId, divisionId, homeTeamId, awayTeamId, scheduledDate } = after as {
+  const { leagueId, seasonId, divisionId, homeTeamId, awayTeamId, scheduledDate, competitionType } = after as {
     leagueId: string; seasonId: string; divisionId: string;
     homeTeamId: string; awayTeamId: string; scheduledDate: FirebaseFirestore.Timestamp;
+    competitionType?: CompetitionType; // absent on matches created before this field existed
   };
 
   // Defense in depth: onSubmissionWrite only ever confirms using games it has
@@ -469,6 +514,7 @@ export const onMatchConfirmed = onDocumentUpdated('matches/{matchId}', async (ev
     await applyMatchResultDelta({
       matchId, leagueId, seasonId, divisionId, homeTeamId, awayTeamId,
       scheduledDate: scheduledDate.toDate(),
+      competitionType: competitionType ?? 'league',
       oldGames: beforeGames,
       newGames: afterGames,
       playedDelta: before.status !== 'confirmed' ? 1 : 0,
@@ -486,9 +532,10 @@ export const onMatchDeleted = onDocumentDeleted('matches/{matchId}', async (even
   if (!before || before.status !== 'confirmed') return;
 
   const matchId = event.params.matchId;
-  const { leagueId, seasonId, divisionId, homeTeamId, awayTeamId, scheduledDate } = before as {
+  const { leagueId, seasonId, divisionId, homeTeamId, awayTeamId, scheduledDate, competitionType } = before as {
     leagueId: string; seasonId: string; divisionId: string;
     homeTeamId: string; awayTeamId: string; scheduledDate: FirebaseFirestore.Timestamp;
+    competitionType?: CompetitionType; // absent on matches created before this field existed
   };
   const games = (before.games ?? []) as MatchGame[];
 
@@ -504,6 +551,7 @@ export const onMatchDeleted = onDocumentDeleted('matches/{matchId}', async (even
     await applyMatchResultDelta({
       matchId, leagueId, seasonId, divisionId, homeTeamId, awayTeamId,
       scheduledDate: scheduledDate.toDate(),
+      competitionType: competitionType ?? 'league',
       oldGames: games,
       newGames: [],
       playedDelta: -1,

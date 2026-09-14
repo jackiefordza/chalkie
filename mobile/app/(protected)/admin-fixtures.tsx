@@ -278,6 +278,11 @@ function useFixturesController(divisionId: string | undefined, leagueId: string 
           scheduledDate: fixture.scheduledDate,
           venue: teams.find((t) => t.id === fixture.homeTeamId)?.address ?? null,
           status: 'scheduled',
+          // Stats Rules audit (Season 1): this generator only ever produces
+          // League round-robin fixtures — there's no TKO/Friendly creation
+          // path yet — so 'league' is the only correct value here, not a
+          // placeholder default. See computePlayerAccum in functions/src/index.ts.
+          competitionType: 'league',
           homeGamesWon: null,
           awayGamesWon: null,
           homeLegsWon: null,

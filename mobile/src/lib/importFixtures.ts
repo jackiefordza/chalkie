@@ -36,6 +36,10 @@ export async function importFixtures(
       scheduledDate: row.scheduledDate,
       venue: row.venue,
       status: 'scheduled',
+      // Stats Rules audit (Season 1) — see the matching comment in
+      // admin-fixtures.tsx's generateFixtures(): this is the only other
+      // match-creation path, and it only ever imports League fixtures too.
+      competitionType: 'league',
       homeGamesWon: null,
       awayGamesWon: null,
       homeLegsWon: null,

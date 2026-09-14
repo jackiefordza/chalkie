@@ -12,7 +12,8 @@
     "serve": "npm run build && firebase emulators:start --only functions,firestore",
     "shell": "npm run build && firebase functions:shell",
     "deploy": "firebase deploy --only functions",
-    "logs": "firebase functions:log"
+    "logs": "firebase functions:log",
+    "test": "tsc -p tsconfig.test.json && npx --yes firebase-tools@15.28.2 emulators:exec --only firestore --project demo-chalkie-functions-test \"node --test 'dist-test/*.test.js'\""
   },
   "dependencies": {
     "firebase-admin": "^13.10.0",
