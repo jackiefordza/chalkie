@@ -63,6 +63,31 @@
       html,
       body {
         height: 100%;
+        /* iOS standalone PWA fix: `height: 100%` doesn't reliably resolve
+           to the full safe-area-extended viewport that viewport-fit=cover
+           establishes — 100dvh is WebKit's purpose-built unit for that.
+           100% stays as the fallback for engines without dvh support. */
+        height: 100dvh;
+      }
+      /* iOS standalone PWA fix: html/body had no background-colour of
+         their own, so any shortfall in the height above (or any other
+         gap between the app's own painted content and the true screen
+         edges) exposed the browser's default white canvas — most visible
+         behind the status bar (combined with iOS's own black-translucent
+         overlay) and above the home indicator. Same two approved colours
+         already used for the theme-color meta tags above, via the same
+         prefers-color-scheme technique — not a new/different token.
+         Static because html/body sit outside the in-app theme toggle's
+         reach and can only follow the OS-level scheme preference. */
+      html,
+      body {
+        background-color: #F3F4F1;
+      }
+      @media (prefers-color-scheme: dark) {
+        html,
+        body {
+          background-color: #181B19;
+        }
       }
       /* These styles disable body scrolling if you are using <ScrollView> */
       body {
