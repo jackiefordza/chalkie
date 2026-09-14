@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { View, Text, TouchableOpacity, Animated, Platform, type LayoutChangeEvent } from 'react-native';
-import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
+import { BottomTabBarHeightCallbackContext, type BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BlurView } from 'expo-blur';
 import { useColorScheme } from 'nativewind';
@@ -40,6 +40,15 @@ export function TabBar({ state, navigation }: BottomTabBarProps) {
   const isDark = colorScheme === 'dark';
   const insets = useSafeAreaInsets();
   const names = visibleRouteNames(appUser?.role, appUser?.isLeagueAdmin || appUser?.isGlobalAdmin);
+
+  // React Navigation only knows this bar's real height if it's told —
+  // otherwise BottomTabBarHeightContext (which Screen.tsx uses to reserve
+  // bottom clearance for scrollable content) silently falls back to a
+  // generic built-in-tab-bar estimate (49pt + the safe-area inset) that
+  // has nothing to do with this floating pill's actual footprint. The
+  // built-in BottomTabBar reports its own height the same way — via
+  // onLayout on its outermost View, below.
+  const reportTabBarHeight = useContext(BottomTabBarHeightCallbackContext);
 
   const focusedIndex = names.findIndex((name) => state.routes.find((r) => r.name === name)?.key === state.routes[state.index]?.key);
 
@@ -82,6 +91,7 @@ export function TabBar({ state, navigation }: BottomTabBarProps) {
   return (
     <View
       pointerEvents="box-none"
+      onLayout={(e) => reportTabBarHeight?.(e.nativeEvent.layout.height)}
       style={{
         position: 'absolute',
         bottom: 0,

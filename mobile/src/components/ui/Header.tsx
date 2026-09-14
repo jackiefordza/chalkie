@@ -21,7 +21,14 @@ export function Header({ contextLine }: HeaderProps) {
 
   return (
     <View style={{ paddingTop: insets.top + 12, paddingBottom: 12, paddingHorizontal: 20 }} className="flex-row items-center justify-between">
-      <View className="flex-1 mr-3">
+      {/* Avatar on the left, matching every other screen's native header
+          (headerLeft in (tabs)/_layout.tsx) — Home previously put it on
+          the right, the one place in the app where it wasn't. Same
+          HeaderAvatar component/role-badge behaviour either way, for
+          player, captain and VC alike (home.tsx and captain.tsx render
+          the exact same Header). */}
+      <HeaderAvatar />
+      <View className="flex-1 ml-3">
         <Text
           className="text-[15px] text-text dark:text-text-dark tracking-wide"
           style={{ fontFamily: FONT_DISPLAY_EXTRABOLD }}
@@ -34,7 +41,6 @@ export function Header({ contextLine }: HeaderProps) {
           </Text>
         ) : null}
       </View>
-      <HeaderAvatar />
     </View>
   );
 }
