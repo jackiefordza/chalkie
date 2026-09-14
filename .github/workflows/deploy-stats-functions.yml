@@ -32,9 +32,11 @@ on:
 
 env:
   # pilot/mobile-web-hardening, exact commit — see the comment above for why
-  # this is a fixed SHA, not a branch name. The commit at the time of this
-  # dispatch (HEAD when this workflow file was added).
-  PINNED_SHA: '6bb8da2b0e4ac90dfbf17a28bb432e1604b9c439'
+  # this is a fixed SHA, not a branch name. Updated to fb893ef (fixes
+  # functions/package.json's test script: unquoted glob so `sh -c` expands
+  # it before node sees it, instead of relying on node's own --test glob
+  # handling, which wasn't resolving on this runner's pinned Node 20).
+  PINNED_SHA: 'fb893ef7f0383f47d8ce44092ca88e15f90c1713'
 
 permissions:
   contents: read
