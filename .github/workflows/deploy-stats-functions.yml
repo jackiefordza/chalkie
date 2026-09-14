@@ -64,6 +64,19 @@ jobs:
         with:
           node-version: '20'
 
+      # functions' test suite spins up a real Firestore emulator
+      # (firebase-tools emulators:exec) for the applyMatchResultDelta
+      # integration test — firebase-tools now requires JDK 21+ for that,
+      # which is newer than this runner image's default `java` on PATH.
+      # Without this, "Run function tests" fails with "firebase-tools no
+      # longer supports Java version before 21" before any deploy step
+      # ever runs.
+      - name: Set up Java (required by the Firestore emulator)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
       - name: Install function dependencies
         working-directory: functions
         run: npm ci
