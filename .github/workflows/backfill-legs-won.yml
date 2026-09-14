@@ -19,6 +19,14 @@ name: Backfill legsWon (manual)
 # rather than an unreviewed new one — this workflow can also write real
 # playerSeasonStats data project-wide (not just the showcase dataset), so it
 # deserves at least the same required-reviewer gate, not a lesser one.
+#
+# scripts/backfill-legs-won itself lives only on pilot/mobile-web-hardening,
+# not on main — same situation deploy-hosting-preview.yml solves, and the
+# same fix: the checkout step below is pinned to a fixed commit SHA on that
+# branch, not to whichever ref this run was dispatched against, so this
+# always runs that exact pinned commit's copy of the script regardless of
+# what's on main. Update PINNED_SHA deliberately whenever a newer commit on
+# that branch needs running — it never follows the branch automatically.
 on:
   workflow_dispatch:
     inputs:
@@ -33,6 +41,12 @@ on:
       confirm_apply:
         description: 'Only read when "apply" is checked: type APPLY-LEGSWON-BACKFILL to actually write.'
         required: false
+
+env:
+  # pilot/mobile-web-hardening, exact commit — see the comment above for why
+  # this is a fixed SHA, not a branch name. Currently the commit that added
+  # scripts/backfill-legs-won itself.
+  PINNED_SHA: '3e222c0935d0b1d6e78b5c737e8870ff28496c49'
 
 permissions:
   contents: read
@@ -51,8 +65,19 @@ jobs:
       run:
         working-directory: scripts/backfill-legs-won
     steps:
-      - name: Checkout
+      - name: Checkout pinned commit (never main)
         uses: actions/checkout@v4
+        with:
+          ref: ${{ env.PINNED_SHA }}
+
+      - name: Verify checked-out commit matches the pinned SHA
+        run: |
+          actual="$(git rev-parse HEAD)"
+          if [ "$actual" != "$PINNED_SHA" ]; then
+            echo "::error::Checked-out commit ($actual) does not match PINNED_SHA ($PINNED_SHA) — refusing to run."
+            exit 1
+          fi
+          echo "Confirmed checkout is pinned commit $actual"
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
