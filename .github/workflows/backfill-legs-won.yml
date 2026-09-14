@@ -1,0 +1,91 @@
+name: Backfill legsWon (manual)
+
+# Manual-only, on purpose — same reasoning as showcase-seed.yml: no push/
+# pull_request/schedule trigger exists here, so this can never fire on its
+# own.
+#
+# Stats Rules audit (Season 1): computes, and — only when `apply` is
+# checked — writes, the new legsWon field on playerSeasonStats from matches
+# that are already confirmed in the real chalkie-app project, including the
+# showcase season. This workflow is a thin runner around
+# scripts/backfill-legs-won — see that script's own README.md for exactly
+# what it reads/writes (matches, read-only; playerSeasonStats.legsWon, and
+# ONLY that one field, is the only thing ever written) and its own
+# independent safety checks (project-ID verification, a write guard scoped
+# to that single field, a dry-run-by-default posture). This workflow adds
+# nothing beyond credential handling and the two confirmation gates below.
+#
+# Reuses the showcase-seed-production Environment (see showcase-seed.yml)
+# rather than an unreviewed new one — this workflow can also write real
+# playerSeasonStats data project-wide (not just the showcase dataset), so it
+# deserves at least the same required-reviewer gate, not a lesser one.
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type BACKFILL-LEGS-WON to run (dry run by default) against the real chalkie-app project.'
+        required: true
+      apply:
+        description: 'Write the computed legsWon values. Leave unchecked for a read-only dry run — always do that first.'
+        type: boolean
+        required: false
+        default: false
+      confirm_apply:
+        description: 'Only read when "apply" is checked: type APPLY-LEGSWON-BACKFILL to actually write.'
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  backfill:
+    # Skips the ENTIRE job — not even checkout runs — unless confirm matches
+    # exactly, and (only when apply is requested) confirm_apply ALSO matches
+    # exactly. A dry run only ever needs `confirm`; apply needs both.
+    if: |
+      inputs.confirm == 'BACKFILL-LEGS-WON' &&
+      (inputs.apply != true || inputs.confirm_apply == 'APPLY-LEGSWON-BACKFILL')
+    runs-on: ubuntu-latest
+    environment: showcase-seed-production
+    defaults:
+      run:
+        working-directory: scripts/backfill-legs-won
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      # Same write-to-temp-file pattern showcase-seed.yml already uses for
+      # this same secret. Never printed, never passed as a command argument.
+      - name: Write Firebase service-account credential
+        env:
+          SHOWCASE_SEED_SERVICE_ACCOUNT: ${{ secrets.SHOWCASE_SEED_SERVICE_ACCOUNT }}
+        run: printf '%s' "$SHOWCASE_SEED_SERVICE_ACCOUNT" > "$RUNNER_TEMP/sa.json"
+
+      # --confirm-backfill always passed (the job-level gate above already
+      # required it); --apply only added when the input is checked. There is
+      # no other way this command can run — see scripts/backfill-legs-won's
+      # own argument allowlist, which refuses anything else regardless.
+      - name: Run backfill
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/sa.json
+        run: |
+          if [ "${{ inputs.apply }}" = "true" ]; then
+            node dist/backfill.js --confirm-backfill --apply | tee -a "$GITHUB_STEP_SUMMARY"
+          else
+            node dist/backfill.js --confirm-backfill | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Remove credential file
+        if: always()
+        run: rm -f "$RUNNER_TEMP/sa.json"
