@@ -134,8 +134,12 @@ export default function FixturesScreen() {
       }
     }
 
+    // A restrained bordered block (Home's row language), not a rounded/
+    // shadowed Card — a fixture list is many of these in a row, and "every
+    // fixture is a large rounded card" is exactly what the design system
+    // asks to avoid here.
     const content = (
-      <Card className="mb-2">
+      <View className="rounded-lg border border-border dark:border-border-dark bg-surface dark:bg-surface-dark p-5 mb-2">
         <View className="flex-row items-center mb-1">
           <Body tone="strong" weight="semibold" className="flex-1">
             {isHome ? 'vs' : '@'} {teamNames[opponentId] ?? '…'}
@@ -187,7 +191,7 @@ export default function FixturesScreen() {
             />
           )
         )}
-      </Card>
+      </View>
     );
 
     if (!tappable) return content;

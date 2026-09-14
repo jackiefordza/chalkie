@@ -252,7 +252,10 @@ export default function StandingsScreen() {
                 <Stat size="sm" className="w-9 text-right">
                   {row.legDiff > 0 ? `+${row.legDiff}` : row.legDiff}
                 </Stat>
-                <Stat size="sm" tone="brand" className="w-9 text-right">{row.points}</Stat>
+                {/* Only the viewer's own row gets the accent — colouring
+                    every row's points value was colouring the entire
+                    column, which the design system explicitly rules out. */}
+                <Stat size="sm" tone={isMine ? 'brand' : undefined} className="w-9 text-right">{row.points}</Stat>
               </TouchableOpacity>
             );
           })}

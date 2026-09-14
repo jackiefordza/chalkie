@@ -7,7 +7,7 @@ import { collection, doc, onSnapshot, query, where, type DocumentData } from 'fi
 import { db } from '@/config/firebase';
 import { useAuthStore } from '@/stores/authStore';
 import { RAW } from '@/lib/theme';
-import { Heading, Body, Chip, Card, StatTile, AppIcon } from '@/components/ui';
+import { Heading, Body, Caption, Stat, Chip, Card, AppIcon } from '@/components/ui';
 import type { PlayerSeasonStats } from '@/types';
 
 interface PlayerInfo { id: string; name: string }
@@ -125,25 +125,45 @@ export default function StatsScreen() {
             </View>
           ) : (
             <>
-              <View className="flex-row gap-2.5 mb-4">
-                <StatTile label="Played" value={myStats.played} tone="brand" />
-                <StatTile label="Won" value={myStats.won} tone="sage" />
-                <StatTile label="Win %" value={winPct !== null ? `${winPct}%` : '—'} tone="sage" />
-                <StatTile label="180s" value={myStats.oneEighties} tone="butter" />
+              {/* Editorial hierarchy (one dominant figure, smaller
+                  supporting ones) — same pattern as Home's Your Stats,
+                  not four equal-weight KPI tiles. */}
+              <View className="flex-row items-end gap-5 mb-5">
+                <Stat size="lg" tone="brand">{winPct !== null ? `${winPct}%` : '—'}</Stat>
+                <View className="flex-row gap-4 pb-1">
+                  <View>
+                    <Stat size="sm">{myStats.played}</Stat>
+                    <Caption className="mt-0.5">Played</Caption>
+                  </View>
+                  <View>
+                    <Stat size="sm">{myStats.won}</Stat>
+                    <Caption className="mt-0.5">Won</Caption>
+                  </View>
+                  <View>
+                    <Stat size="sm">{myStats.oneEighties}</Stat>
+                    <Caption className="mt-0.5">180s</Caption>
+                  </View>
+                </View>
               </View>
 
               <Heading size="sm" className="mb-2.5">High Checkouts</Heading>
               {myStats.highCheckouts.length === 0 ? (
                 <Body size="sm">None recorded yet</Body>
               ) : (
-                [...myStats.highCheckouts].sort((a, b) => b.date.getTime() - a.date.getTime()).map((c, i) => (
-                  <Card key={i} className="flex-row mb-1.5" padded={false}>
-                    <View className="flex-row flex-1 items-center p-3">
-                      <Body tone="butter" weight="bold" className="flex-1">{c.value}</Body>
+                <View className="rounded-lg border border-border dark:border-border-dark overflow-hidden">
+                  {[...myStats.highCheckouts].sort((a, b) => b.date.getTime() - a.date.getTime()).map((c, i) => (
+                    <View
+                      key={i}
+                      className={[
+                        'flex-row items-center justify-between px-4 py-3 bg-surface dark:bg-surface-dark',
+                        i > 0 ? 'border-t border-border dark:border-border-dark' : '',
+                      ].join(' ')}
+                    >
+                      <Body tone="strong" weight="bold">{c.value}</Body>
                       <Body size="sm">{formatDate(c.date)}</Body>
                     </View>
-                  </Card>
-                ))
+                  ))}
+                </View>
               )}
             </>
           )
@@ -184,7 +204,7 @@ export default function StatsScreen() {
             )}
 
             <View className="flex-row items-center gap-1.5 mt-5 mb-2.5">
-              <AppIcon name="zap" size={16} color={isDark ? RAW.butterInkDark : RAW.butterInk} />
+              <AppIcon name="zap" size={16} color={isDark ? RAW.textFaintDark : RAW.textFaint} />
               <Heading size="sm">Notable High Checkouts</Heading>
             </View>
             {notableCheckouts.length === 0 ? (
@@ -192,7 +212,7 @@ export default function StatsScreen() {
             ) : (
               notableCheckouts.map((c, i) => (
                 <View key={i} className="flex-row py-2 items-center">
-                  <Body tone="butter" weight="bold" className="w-14">{c.value}</Body>
+                  <Body tone="strong" weight="bold" className="w-14">{c.value}</Body>
                   <Body tone="strong" className="flex-1" onPress={() => router.push(`/(protected)/player-profile?playerId=${c.playerId}`)}>{playerName(c.playerId)}</Body>
                   <Body size="sm">{formatDate(c.date)}</Body>
                 </View>

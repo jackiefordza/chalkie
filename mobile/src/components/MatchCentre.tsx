@@ -104,13 +104,13 @@ export function MatchSummary({ match, playerName }: { match: Match; playerName: 
           <Caption className="mt-1">Legs</Caption>
         </View>
         <View className="flex-1 rounded-2xl bg-surface-2 dark:bg-surface-2-dark p-3 items-center">
-          <Stat size="md" tone="butter">{oneEightyCount}</Stat>
+          <Stat size="md">{oneEightyCount}</Stat>
           <Caption className="mt-1">180s</Caption>
         </View>
       </View>
       {highest && (
         <Body size="sm" className="mt-3">
-          Highest checkout: <Body size="sm" tone="butter" weight="bold">{highest.value}</Body> ({playerName(highest.playerId)})
+          Highest checkout: <Body size="sm" tone="strong" weight="bold">{highest.value}</Body> ({playerName(highest.playerId)})
         </Body>
       )}
     </Card>
@@ -179,8 +179,8 @@ export function GameRow({ game, gameIndex, playerName, tone, label }: GameRowPro
 
       {hasDetail && (
         <View className="flex-row flex-wrap gap-1.5 mt-2.5">
-          {oneEightyCount > 0 && <Badge tone="butter">{oneEightyCount} × 180</Badge>}
-          {checkouts.map((c, i) => <Badge key={i} tone="butter">{playerName(c.playerId)} {c.value}</Badge>)}
+          {oneEightyCount > 0 && <Badge>{oneEightyCount} × 180</Badge>}
+          {checkouts.map((c, i) => <Badge key={i}>{playerName(c.playerId)} {c.value}</Badge>)}
         </View>
       )}
 
@@ -196,10 +196,10 @@ export function GameRow({ game, gameIndex, playerName, tone, label }: GameRowPro
               <Body size="sm">Leg {i + 1}</Body>
               <View className="flex-row items-center gap-2 flex-1 justify-end">
                 {leg.oneEighties.length > 0 && (
-                  <Body size="xs" tone="butter">180: {leg.oneEighties.map(playerName).join(', ')}</Body>
+                  <Body size="xs">180: {leg.oneEighties.map(playerName).join(', ')}</Body>
                 )}
                 {leg.highCheckout && (
-                  <Body size="xs" tone="butter">{playerName(leg.highCheckout.playerId)} {leg.highCheckout.value}</Body>
+                  <Body size="xs">{playerName(leg.highCheckout.playerId)} {leg.highCheckout.value}</Body>
                 )}
                 <Body size="sm" tone={leg.winner === 'home' ? 'sage' : 'coral'} weight="semibold">
                   {leg.winner === 'home' ? 'Home' : 'Away'}
