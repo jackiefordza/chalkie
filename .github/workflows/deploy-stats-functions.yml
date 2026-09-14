@@ -1,0 +1,104 @@
+name: Deploy Stats Functions (manual, functions-only)
+
+# Manual-only, same reasoning as backfill-legs-won.yml/investigate-legswon.yml:
+# no push/pull_request/schedule trigger exists here, so this can never fire
+# on its own.
+#
+# Stats Rules audit (Season 1) follow-up: deploys ONLY the Cloud Functions
+# codebase (competitionType handling, legsWon aggregation, corrected pairs-
+# game leg attribution, applyMatchResultDelta legsWon consistency) from
+# pilot/mobile-web-hardening to the real chalkie-app project.
+#
+# Deliberately NOT a reuse of deploy-firebase.yml, which bundles
+# `functions,firestore:rules,firestore:indexes` into one deploy — this
+# workflow's whole purpose is a functions-only deploy, so its `--only`
+# flag names just `functions`, nothing else, and there is no hosting
+# target at all. firestore.rules/firestore.indexes.json/mobile web output
+# are never touched by this workflow, regardless of what's changed in the
+# working tree.
+#
+# scripts-adjacent situation to backfill-legs-won.yml: the approved stats
+# implementation lives only on pilot/mobile-web-hardening, not main, so the
+# checkout step below is pinned to a fixed commit SHA on that branch, not
+# to whichever ref this run was dispatched against. Update PINNED_SHA
+# deliberately whenever a newer commit on that branch needs deploying — it
+# never follows the branch automatically.
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type DEPLOY-STATS-FUNCTIONS to deploy Cloud Functions ONLY (no hosting, no rules, no indexes) to the real chalkie-app project.'
+        required: true
+
+env:
+  # pilot/mobile-web-hardening, exact commit — see the comment above for why
+  # this is a fixed SHA, not a branch name. The commit at the time of this
+  # dispatch (HEAD when this workflow file was added).
+  PINNED_SHA: '6bb8da2b0e4ac90dfbf17a28bb432e1604b9c439'
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    if: inputs.confirm == 'DEPLOY-STATS-FUNCTIONS'
+    runs-on: ubuntu-latest
+    environment: showcase-seed-production
+    steps:
+      - name: Checkout pinned commit (never main)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.PINNED_SHA }}
+
+      - name: Verify checked-out commit matches the pinned SHA
+        run: |
+          actual="$(git rev-parse HEAD)"
+          if [ "$actual" != "$PINNED_SHA" ]; then
+            echo "::error::Checked-out commit ($actual) does not match PINNED_SHA ($PINNED_SHA) — refusing to run."
+            exit 1
+          fi
+          echo "Confirmed checkout is pinned commit $actual"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install function dependencies
+        working-directory: functions
+        run: npm ci
+
+      - name: Typecheck functions
+        working-directory: functions
+        run: npx tsc --noEmit
+
+      - name: Run function tests
+        working-directory: functions
+        run: npm test
+
+      - name: Build functions
+        working-directory: functions
+        run: npm run build
+
+      # Same write-to-temp-file pattern deploy-firebase.yml already uses for
+      # this same secret. Never printed, never passed as a command argument.
+      - name: Write Firebase service-account credential
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > "$RUNNER_TEMP/service-account.json"
+
+      # --only functions, and nothing else — no hosting, no
+      # firestore:rules, no firestore:indexes. This is the one line that
+      # actually enforces the "Functions deployment only" requirement.
+      - name: Deploy Functions ONLY to Firebase
+        working-directory: functions
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/service-account.json
+        run: npx firebase-tools deploy --only functions --project chalkie-app --non-interactive --force
+
+      - name: Print deployed commit
+        run: echo "Deployed commit SHA: $PINNED_SHA" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove credential file
+        if: always()
+        run: rm -f "$RUNNER_TEMP/service-account.json"
