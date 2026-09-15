@@ -1,0 +1,125 @@
+name: Apply League-only Stats Backfill (manual)
+
+# Manual-only, same reasoning as backfill-legs-won.yml: no push/pull_request/
+# schedule trigger exists here, so this can never fire on its own.
+#
+# Stats Rules audit (Season 1) correction, approved: computes, and — only
+# when `apply` is checked — writes, the four new League-only leaderboard
+# fields (leagueLegsWon/leagueLegsPlayed/leagueGamesWon/leagueGamesPlayed)
+# on playerSeasonStats from confirmed League matches in the real
+# chalkie-app project, including the showcase season. This workflow is a
+# thin runner around scripts/backfill-league-stats — see that script's own
+# README.md for exactly what it reads/writes (matches, read-only; exactly
+# those four fields on playerSeasonStats, via update() only) and its own
+# independent safety checks (project-ID verification, a write guard scoped
+# to those four fields, a dry-run-by-default posture even within this
+# workflow). This workflow adds nothing beyond credential handling and the
+# two confirmation gates below — the same shape as backfill-legs-won.yml.
+#
+# Unlike dryrun-league-stats-backfill.yml (which has no apply path at all),
+# this workflow CAN write — so, same as backfill-legs-won.yml, a dry run
+# (apply left unchecked) needs only `confirm`; actually applying needs BOTH
+# `confirm` AND `confirm_apply` to match exactly, on top of `apply` being
+# checked. The plan (computed fresh from live data at execution time) is
+# always printed before any write, dry run or apply alike — see
+# scripts/backfill-league-stats/backfill.ts.
+#
+# Reuses the showcase-seed-production Environment for the same reason
+# backfill-legs-won.yml does: this can write real playerSeasonStats data
+# project-wide (not just the showcase dataset), so it deserves at least the
+# same required-reviewer gate, not a lesser one.
+#
+# scripts/backfill-league-stats lives only on pilot/mobile-web-hardening,
+# not on main — same situation as every other workflow here that runs
+# pilot-only code: the checkout step below is pinned to a fixed commit SHA
+# on that branch. Update PINNED_SHA deliberately whenever a newer commit on
+# that branch needs running — it never follows the branch automatically.
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type APPLY-LEAGUE-STATS-BACKFILL to run (dry run by default) against the real chalkie-app project.'
+        required: true
+      apply:
+        description: 'Write the computed League-only values. Leave unchecked for a read-only dry run — always do that first.'
+        type: boolean
+        required: false
+        default: false
+      confirm_apply:
+        description: 'Only read when "apply" is checked: type APPLY-LEAGUE-STATS-BACKFILL-CONFIRMED to actually write.'
+        required: false
+
+env:
+  # pilot/mobile-web-hardening, exact commit — see the comment above. The
+  # commit that added scripts/backfill-league-stats itself (same commit
+  # dryrun-league-stats-backfill.yml already pins to; that dry-run report
+  # already ran clean against this exact code).
+  PINNED_SHA: '81a52933b25a854cf04e2f7734d70755edcd8131'
+
+permissions:
+  contents: read
+
+jobs:
+  backfill:
+    # Skips the ENTIRE job — not even checkout runs — unless confirm matches
+    # exactly, and (only when apply is requested) confirm_apply ALSO matches
+    # exactly. A dry run only ever needs `confirm`; apply needs both.
+    if: |
+      inputs.confirm == 'APPLY-LEAGUE-STATS-BACKFILL' &&
+      (inputs.apply != true || inputs.confirm_apply == 'APPLY-LEAGUE-STATS-BACKFILL-CONFIRMED')
+    runs-on: ubuntu-latest
+    environment: showcase-seed-production
+    defaults:
+      run:
+        working-directory: scripts/backfill-league-stats
+    steps:
+      - name: Checkout pinned commit (never main)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.PINNED_SHA }}
+
+      - name: Verify checked-out commit matches the pinned SHA
+        run: |
+          actual="$(git rev-parse HEAD)"
+          if [ "$actual" != "$PINNED_SHA" ]; then
+            echo "::error::Checked-out commit ($actual) does not match PINNED_SHA ($PINNED_SHA) — refusing to run."
+            exit 1
+          fi
+          echo "Confirmed checkout is pinned commit $actual"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      # Same write-to-temp-file pattern backfill-legs-won.yml/showcase-seed.yml
+      # already use for this same secret. Never printed, never passed as a
+      # command argument.
+      - name: Write Firebase service-account credential
+        env:
+          SHOWCASE_SEED_SERVICE_ACCOUNT: ${{ secrets.SHOWCASE_SEED_SERVICE_ACCOUNT }}
+        run: printf '%s' "$SHOWCASE_SEED_SERVICE_ACCOUNT" > "$RUNNER_TEMP/sa.json"
+
+      # --confirm-backfill always passed (the job-level gate above already
+      # required it); --apply only added when the input is checked. There is
+      # no other way this command can run — see scripts/backfill-league-stats's
+      # own argument allowlist, which refuses anything else regardless.
+      - name: Run backfill
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/sa.json
+        run: |
+          if [ "${{ inputs.apply }}" = "true" ]; then
+            node dist/backfill.js --confirm-backfill --apply | tee -a "$GITHUB_STEP_SUMMARY"
+          else
+            node dist/backfill.js --confirm-backfill | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Remove credential file
+        if: always()
+        run: rm -f "$RUNNER_TEMP/sa.json"
