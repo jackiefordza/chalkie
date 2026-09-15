@@ -585,11 +585,15 @@ export default function ResultsEntryScreen() {
                               key={id}
                               className={[
                                 'flex-row min-h-[44px] rounded-full items-center pl-1',
-                                totalCount > 0 ? 'bg-butter-fill dark:bg-butter-fill-dark' : 'bg-surface-2 dark:bg-surface-2-dark',
+                                totalCount > 0 ? 'bg-brand-fill dark:bg-brand-fill-dark' : 'bg-surface-2 dark:bg-surface-2-dark',
                               ].join(' ')}
                             >
+                              {/* A recorded 180 is a selected/toggled-on state,
+                                  not a warning — the approved accent (brand),
+                                  not amber, communicates that, consistent with
+                                  every other "selected" state in the app. */}
                               <TouchableOpacity activeOpacity={0.7} onPress={() => addOneEighty(gameIndex, id)} className="px-2.5 py-2.5">
-                                <Body size="sm" tone={totalCount > 0 ? 'butter' : 'dim'} weight="semibold">
+                                <Body size="sm" tone={totalCount > 0 ? 'brand' : 'dim'} weight="semibold">
                                   {playerName(id)}{totalCount > 0 ? ` × ${totalCount}` : ''}
                                 </Body>
                               </TouchableOpacity>
@@ -599,7 +603,7 @@ export default function ResultsEntryScreen() {
                                   hitSlop={8}
                                   className="px-3 py-2.5 border-l border-border dark:border-border-dark"
                                 >
-                                  <Body tone="butter" weight="bold">−</Body>
+                                  <Body tone="brand" weight="bold">−</Body>
                                 </TouchableOpacity>
                               )}
                             </View>
@@ -615,10 +619,12 @@ export default function ResultsEntryScreen() {
                       happened in). Capped at one per leg, same as before. */}
                   <Caption className="mb-1.5">High checkouts</Caption>
                   <View className="flex-row flex-wrap gap-2">
+                    {/* Selected/recorded state — Chip's default tone
+                        (brand) already gives the same "selected = accent"
+                        treatment as the 180 pills above, not amber. */}
                     {game.highCheckouts.map((hc, i) => (
                       <Chip
                         key={i}
-                        tone="butter"
                         selected
                         onPress={() => openEditCheckout(gameIndex, i)}
                         label={`Leg ${hc.legIndex + 1}: ${playerName(hc.playerId)} — ${hc.value}`}

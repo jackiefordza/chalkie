@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { View, Text, TouchableOpacity, Animated, Platform, type LayoutChangeEvent } from 'react-native';
-import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
+import { BottomTabBarHeightCallbackContext, type BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { BlurView } from 'expo-blur';
 import { useColorScheme } from 'nativewind';
 import * as Haptics from 'expo-haptics';
 import { useAuthStore } from '@/stores/authStore';
@@ -35,10 +36,19 @@ interface TabLayout { x: number; y: number; width: number; height: number }
 
 export function TabBar({ state, navigation }: BottomTabBarProps) {
   const { appUser } = useAuthStore();
-  const insets = useSafeAreaInsets();
   const { colorScheme } = useColorScheme();
   const isDark = colorScheme === 'dark';
+  const insets = useSafeAreaInsets();
   const names = visibleRouteNames(appUser?.role, appUser?.isLeagueAdmin || appUser?.isGlobalAdmin);
+
+  // React Navigation only knows this bar's real height if it's told —
+  // otherwise BottomTabBarHeightContext (which Screen.tsx uses to reserve
+  // bottom clearance for scrollable content) silently falls back to a
+  // generic built-in-tab-bar estimate (49pt + the safe-area inset) that
+  // has nothing to do with this floating pill's actual footprint. The
+  // built-in BottomTabBar reports its own height the same way — via
+  // onLayout on its outermost View, below.
+  const reportTabBarHeight = useContext(BottomTabBarHeightCallbackContext);
 
   const focusedIndex = names.findIndex((name) => state.routes.find((r) => r.name === name)?.key === state.routes[state.index]?.key);
 
@@ -81,6 +91,7 @@ export function TabBar({ state, navigation }: BottomTabBarProps) {
   return (
     <View
       pointerEvents="box-none"
+      onLayout={(e) => reportTabBarHeight?.(e.nativeEvent.layout.height)}
       style={{
         position: 'absolute',
         bottom: 0,
@@ -91,63 +102,88 @@ export function TabBar({ state, navigation }: BottomTabBarProps) {
         paddingTop: 8,
       }}
     >
+      {/*
+        Phase E, Step 2 — glass restyle. Same technique already proven by
+        AccountMenu (BlurView + a translucent tint layer), applied to the
+        one surface the Phase E brief explicitly calls out for it.
+        `overflow-hidden` on this outer rounded container is required for
+        the blur to respect the pill's rounded corners. Step 5: this now
+        follows the app's actual light/dark toggle (like AccountMenu
+        already does), rather than being fixed dark — dark translucent
+        graphite glass in dark mode, a light frosted glass in light mode.
+        Only the active icon/label/highlight carry the (restrained) accent
+        colour.
+      */}
       <View
-        className="flex-row gap-1 rounded-full bg-surface dark:bg-surface-dark p-1.5"
+        className="rounded-full overflow-hidden border border-border dark:border-border-dark"
         style={{
-          shadowColor: '#3C321E',
-          shadowOffset: { width: 0, height: 10 },
-          shadowOpacity: 0.18,
-          shadowRadius: 24,
+          shadowColor: '#000000',
+          shadowOffset: { width: 0, height: 8 },
+          shadowOpacity: 0.35,
+          shadowRadius: 20,
           elevation: 12,
         }}
       >
-        {highlight && (
-          // NativeWind's className interop doesn't cover Animated.View, so this is styled
-          // with plain RN style props (RAW theme constants) instead of Tailwind classes.
-          <Animated.View
-            pointerEvents="none"
-            style={{
-              position: 'absolute',
-              left: 0,
-              borderRadius: 9999,
-              backgroundColor: isDark ? RAW.brandFillDark : RAW.brandFill,
-              width: highlight.width,
-              height: highlight.height,
-              top: highlight.y,
-              transform: [{ translateX }],
-            }}
-          />
-        )}
-        {names.map((name, index) => {
-          const route = state.routes.find((r) => r.name === name);
-          if (!route) return null;
-          const meta = TAB_META[name];
-          const isFocused = state.routes[state.index]?.key === route.key;
+        <BlurView intensity={48} tint={isDark ? 'dark' : 'light'} style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }} />
+        {/* expo-blur's actual blur has known gaps on web — this tint alone
+            still reads as a translucent "glass" pill there even when the
+            blur itself doesn't render, rather than the bar disappearing or
+            looking broken. */}
+        <View className="absolute inset-0 bg-surface-2/55 dark:bg-surface-2-dark/55" pointerEvents="none" />
+        <View className="flex-row gap-1 p-1.5">
+          {highlight && (
+            // NativeWind's className interop doesn't cover Animated.View, so this is styled
+            // with plain RN style props (RAW theme constants) instead of Tailwind classes.
+            <Animated.View
+              pointerEvents="none"
+              style={{
+                position: 'absolute',
+                left: 0,
+                borderRadius: 9999,
+                // Muted-green-tinted glass, not a solid fill — "accent =
+                // active/selected" communicated at low opacity, matching
+                // the "restrained, not neon" direction. rgba of the
+                // general accent token (brand/brand-dark), not the
+                // stronger CTA accent.
+                backgroundColor: isDark ? 'rgba(177,199,94,0.16)' : 'rgba(113,136,58,0.14)',
+                width: highlight.width,
+                height: highlight.height,
+                top: highlight.y,
+                transform: [{ translateX }],
+              }}
+            />
+          )}
+          {names.map((name, index) => {
+            const route = state.routes.find((r) => r.name === name);
+            if (!route) return null;
+            const meta = TAB_META[name];
+            const isFocused = state.routes[state.index]?.key === route.key;
 
-          return (
-            <TouchableOpacity
-              key={route.key}
-              activeOpacity={0.7}
-              onPress={() => handlePress(route.name)}
-              onLayout={(e) => handleTabLayout(index, e)}
-              className="flex-1 items-center py-2 rounded-full"
-            >
-              <AppIcon
-                name={meta.icon}
-                size={isFocused ? 21 : 19}
-                color={isFocused ? (isDark ? RAW.brandInkDark : RAW.brandInk) : (isDark ? RAW.textFaintDark : RAW.textFaint)}
-              />
-              <Text
-                className={[
-                  'text-[10px] font-semibold mt-0.5',
-                  isFocused ? 'text-brand-ink dark:text-brand-ink-dark' : 'text-text-faint dark:text-text-faint-dark',
-                ].join(' ')}
+            return (
+              <TouchableOpacity
+                key={route.key}
+                activeOpacity={0.7}
+                onPress={() => handlePress(route.name)}
+                onLayout={(e) => handleTabLayout(index, e)}
+                className="flex-1 items-center py-2 rounded-full"
               >
-                {meta.label}
-              </Text>
-            </TouchableOpacity>
-          );
-        })}
+                <AppIcon
+                  name={meta.icon}
+                  size={isFocused ? 21 : 19}
+                  color={isFocused ? (isDark ? RAW.brandDark : RAW.brand) : (isDark ? RAW.textFaintDark : RAW.textFaint)}
+                />
+                <Text
+                  className={[
+                    'text-[10px] font-semibold mt-0.5',
+                    isFocused ? 'text-brand dark:text-brand-dark' : 'text-text-faint dark:text-text-faint-dark',
+                  ].join(' ')}
+                >
+                  {meta.label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
       </View>
     </View>
   );
