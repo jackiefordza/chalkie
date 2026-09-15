@@ -258,28 +258,45 @@ interface PlayerAccum {
   legsWon: number;
   oneEighties: number;
   highCheckouts: HighCheckoutEntry[];
+  // Corrected Stats Rules model: the Players Leaderboard is STRICTLY League
+  // only (see the CompetitionType comment above and leagueLegsWon's own
+  // comment on PlayerSeasonStats) — these four are a separate, additive
+  // counter set gated on competitionType === 'league' alone, never TKO.
+  // played/won/lost/legsWon/oneEighties/highCheckouts above keep their
+  // original League + TKO (excl. Friendly) meaning unchanged.
+  leagueLegsWon: number;
+  leagueLegsPlayed: number;
+  leagueGamesWon: number;
+  leagueGamesPlayed: number;
 }
 
 // Pure — no Firestore calls. Reused for a match's first confirmation, a later
 // admin correction of an already-confirmed match, and a full reversal on
 // delete (by passing an empty games array as the "other side" of the diff).
 //
-// Stats Rules audit (Season 1): Season 180s, Season High Checkouts and the
-// Player Leaderboard (legsWon) only ever count League + TKO matches — a
-// Friendly contributes nothing at all, at every one of played/won/lost/
-// legsWon/oneEighties/highCheckouts. League and TKO accumulate identically
-// (deliberately no branch between them below). Exported for unit testing.
+// Stats Rules audit (Season 1, corrected): two distinct scopes.
+//   - Season 180s, Season High Checkouts, and played/won/lost/legsWon (NOT
+//     used by the leaderboard — see below) count League + TKO; a Friendly
+//     contributes nothing at all. League and TKO accumulate identically for
+//     these (deliberately no branch between them below).
+//   - The Player Leaderboard is STRICTLY League only: leagueLegsWon/
+//     leagueLegsPlayed/leagueGamesWon/leagueGamesPlayed are gated on
+//     competitionType === 'league' alone — a TKO match updates 180s/high
+//     checkouts but must leave these four completely unchanged, same as
+//     Friendly. Exported for unit testing.
 export function computePlayerAccum(
   games: MatchGame[], homeTeamId: string, awayTeamId: string, matchId: string, scheduledDate: Date,
   competitionType: CompetitionType,
 ): Map<string, PlayerAccum> {
   const accum = new Map<string, PlayerAccum>();
   if (competitionType === 'friendly') return accum;
+  const isLeague = competitionType === 'league';
 
   const getAccum = (playerId: string, teamId: string): PlayerAccum => {
     if (!accum.has(playerId)) {
       accum.set(playerId, {
         teamId, played: 0, won: 0, lost: 0, legsWon: 0, oneEighties: 0, highCheckouts: [],
+        leagueLegsWon: 0, leagueLegsPlayed: 0, leagueGamesWon: 0, leagueGamesPlayed: 0,
       });
     }
     return accum.get(playerId)!;
@@ -287,15 +304,29 @@ export function computePlayerAccum(
 
   for (const game of games) {
     const gameHomeWon = game.legs.filter((l) => l.winner === 'home').length > game.legs.filter((l) => l.winner === 'away').length;
+    // Legs played is taken from the actual recorded leg count for this game,
+    // not assumed to always be 3 — future data with incomplete games must
+    // not silently overcount.
+    const gameLegsPlayed = game.legs.length;
     for (const playerId of game.homePlayerIds) {
       const a = getAccum(playerId, homeTeamId);
       a.played += 1;
       if (gameHomeWon) a.won += 1; else a.lost += 1;
+      if (isLeague) {
+        a.leagueGamesPlayed += 1;
+        if (gameHomeWon) a.leagueGamesWon += 1;
+        a.leagueLegsPlayed += gameLegsPlayed;
+      }
     }
     for (const playerId of game.awayPlayerIds) {
       const a = getAccum(playerId, awayTeamId);
       a.played += 1;
       if (gameHomeWon) a.lost += 1; else a.won += 1;
+      if (isLeague) {
+        a.leagueGamesPlayed += 1;
+        if (!gameHomeWon) a.leagueGamesWon += 1;
+        a.leagueLegsPlayed += gameLegsPlayed;
+      }
     }
     for (const leg of game.legs) {
       // A leg's winner is recorded at the home/away SIDE, not per-player —
@@ -305,7 +336,9 @@ export function computePlayerAccum(
       const winningPlayerIds = leg.winner === 'home' ? game.homePlayerIds : game.awayPlayerIds;
       const winningTeamId = leg.winner === 'home' ? homeTeamId : awayTeamId;
       for (const playerId of winningPlayerIds) {
-        getAccum(playerId, winningTeamId).legsWon += 1;
+        const a = getAccum(playerId, winningTeamId);
+        a.legsWon += 1;
+        if (isLeague) a.leagueLegsWon += 1;
       }
       for (const playerId of leg.oneEighties) {
         const teamId = game.homePlayerIds.includes(playerId) ? homeTeamId : awayTeamId;
@@ -425,13 +458,20 @@ export async function applyMatchResultDelta(p: ResultDeltaParams): Promise<void>
     const deltaLost = (n?.lost ?? 0) - (o?.lost ?? 0);
     const deltaLegsWon = (n?.legsWon ?? 0) - (o?.legsWon ?? 0);
     const delta180 = (n?.oneEighties ?? 0) - (o?.oneEighties ?? 0);
+    const deltaLeagueLegsWon = (n?.leagueLegsWon ?? 0) - (o?.leagueLegsWon ?? 0);
+    const deltaLeagueLegsPlayed = (n?.leagueLegsPlayed ?? 0) - (o?.leagueLegsPlayed ?? 0);
+    const deltaLeagueGamesWon = (n?.leagueGamesWon ?? 0) - (o?.leagueGamesWon ?? 0);
+    const deltaLeagueGamesPlayed = (n?.leagueGamesPlayed ?? 0) - (o?.leagueGamesPlayed ?? 0);
     const checkoutsChanged = JSON.stringify(o?.highCheckouts ?? []) !== JSON.stringify(n?.highCheckouts ?? []);
 
     if (checkoutsChanged) {
       checkoutPlayerIds.push(playerId);
       continue;
     }
-    if (deltaPlayed === 0 && deltaWon === 0 && deltaLost === 0 && deltaLegsWon === 0 && delta180 === 0) continue;
+    if (
+      deltaPlayed === 0 && deltaWon === 0 && deltaLost === 0 && deltaLegsWon === 0 && delta180 === 0
+      && deltaLeagueLegsWon === 0 && deltaLeagueLegsPlayed === 0 && deltaLeagueGamesWon === 0 && deltaLeagueGamesPlayed === 0
+    ) continue;
 
     const teamId = (n ?? o)!.teamId;
     statsBatch.set(db.doc(`playerSeasonStats/${p.seasonId}_${playerId}`), {
@@ -441,6 +481,10 @@ export async function applyMatchResultDelta(p: ResultDeltaParams): Promise<void>
       lost: FieldValue.increment(deltaLost),
       legsWon: FieldValue.increment(deltaLegsWon),
       oneEighties: FieldValue.increment(delta180),
+      leagueLegsWon: FieldValue.increment(deltaLeagueLegsWon),
+      leagueLegsPlayed: FieldValue.increment(deltaLeagueLegsPlayed),
+      leagueGamesWon: FieldValue.increment(deltaLeagueGamesWon),
+      leagueGamesPlayed: FieldValue.increment(deltaLeagueGamesPlayed),
     }, { merge: true });
   }
   await statsBatch.commit();
@@ -455,6 +499,10 @@ export async function applyMatchResultDelta(p: ResultDeltaParams): Promise<void>
     const deltaLost = (n?.lost ?? 0) - (o?.lost ?? 0);
     const deltaLegsWon = (n?.legsWon ?? 0) - (o?.legsWon ?? 0);
     const delta180 = (n?.oneEighties ?? 0) - (o?.oneEighties ?? 0);
+    const deltaLeagueLegsWon = (n?.leagueLegsWon ?? 0) - (o?.leagueLegsWon ?? 0);
+    const deltaLeagueLegsPlayed = (n?.leagueLegsPlayed ?? 0) - (o?.leagueLegsPlayed ?? 0);
+    const deltaLeagueGamesWon = (n?.leagueGamesWon ?? 0) - (o?.leagueGamesWon ?? 0);
+    const deltaLeagueGamesPlayed = (n?.leagueGamesPlayed ?? 0) - (o?.leagueGamesPlayed ?? 0);
     const teamId = (n ?? o)!.teamId;
 
     const ref = db.doc(`playerSeasonStats/${p.seasonId}_${playerId}`);
@@ -470,6 +518,10 @@ export async function applyMatchResultDelta(p: ResultDeltaParams): Promise<void>
       lost: FieldValue.increment(deltaLost),
       legsWon: FieldValue.increment(deltaLegsWon),
       oneEighties: FieldValue.increment(delta180),
+      leagueLegsWon: FieldValue.increment(deltaLeagueLegsWon),
+      leagueLegsPlayed: FieldValue.increment(deltaLeagueLegsPlayed),
+      leagueGamesWon: FieldValue.increment(deltaLeagueGamesWon),
+      leagueGamesPlayed: FieldValue.increment(deltaLeagueGamesPlayed),
       highCheckouts: rebuilt,
     }, { merge: true });
   }

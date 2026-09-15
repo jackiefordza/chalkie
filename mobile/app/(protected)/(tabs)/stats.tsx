@@ -82,12 +82,16 @@ export default function StatsScreen() {
     () => [...divisionStats].filter((s) => s.oneEighties > 0).sort((a, b) => b.oneEighties - a.oneEighties).slice(0, 10),
     [divisionStats],
   );
-  // Stats Rules audit (Season 1): legs won desc -> individual games won desc
-  // -> leg win-% desc. Never win-percentage as the primary key — see
-  // compareLeaderboard's own comment for the full rule.
+  // Stats Rules audit (Season 1, corrected): League legs won desc -> League
+  // individual games won desc -> League leg win-% desc. STRICTLY League —
+  // TKO/Friendly never affect this. Never win-percentage as the primary key
+  // — see compareLeaderboard's own comment for the full rule. Filtering on
+  // leagueLegsPlayed > 0 (not played > 0) excludes players who have only
+  // played TKO/Friendly matches — they have no League participation at all,
+  // and would otherwise divide by zero in the comparator's tiebreak.
   const leaderboard = useMemo(
     () => [...divisionStats]
-      .filter((s) => s.played > 0)
+      .filter((s) => s.leagueLegsPlayed > 0)
       .sort(compareLeaderboard)
       .slice(0, 10),
     [divisionStats],
@@ -202,7 +206,7 @@ export default function StatsScreen() {
                 <View key={s.id} className="flex-row py-2 items-center">
                   <Body size="sm" className="w-6">{i + 1}</Body>
                   <Body tone="strong" className="flex-1" onPress={() => router.push(`/(protected)/player-profile?playerId=${s.playerId}`)}>{playerName(s.playerId)}</Body>
-                  <Body tone="strong" weight="bold">{s.legsWon} legs</Body>
+                  <Body tone="strong" weight="bold">{s.leagueLegsWon} legs</Body>
                 </View>
               ))
             )}

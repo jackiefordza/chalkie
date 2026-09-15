@@ -55,9 +55,18 @@ test('computePlayerAccum: singles legs-won attribution', () => {
   assert.equal(a1.lost, 1);
   assert.equal(a1.legsWon, 1); // won leg 2 only
   assert.deepEqual(a1.highCheckouts, [{ value: '121', matchId: MATCH_ID, date: DATE }]);
+  // League-only leaderboard counters: a League match updates these too.
+  assert.equal(h1.leagueGamesPlayed, 1);
+  assert.equal(h1.leagueGamesWon, 1);
+  assert.equal(h1.leagueLegsPlayed, 3);
+  assert.equal(h1.leagueLegsWon, 2);
+  assert.equal(a1.leagueGamesPlayed, 1);
+  assert.equal(a1.leagueGamesWon, 0);
+  assert.equal(a1.leagueLegsPlayed, 3);
+  assert.equal(a1.leagueLegsWon, 1);
 });
 
-test('computePlayerAccum: pairs legs-won attribution credits BOTH partnered players on every winning leg', () => {
+test('computePlayerAccum: pairs legs-won attribution credits BOTH partnered players on every winning leg (League and league-only counters alike)', () => {
   const accum = computePlayerAccum([pairsGame()], HOME_TEAM, AWAY_TEAM, MATCH_ID, DATE, 'league');
   for (const id of ['h2', 'h3']) {
     const p = accum.get(id)!;
@@ -65,6 +74,10 @@ test('computePlayerAccum: pairs legs-won attribution credits BOTH partnered play
     assert.equal(p.won, 0);
     assert.equal(p.lost, 1);
     assert.equal(p.legsWon, 0, `${id} (losing side) should have 0 legs won`);
+    assert.equal(p.leagueGamesPlayed, 1);
+    assert.equal(p.leagueGamesWon, 0);
+    assert.equal(p.leagueLegsPlayed, 3);
+    assert.equal(p.leagueLegsWon, 0);
   }
   for (const id of ['a2', 'a3']) {
     const p = accum.get(id)!;
@@ -72,14 +85,37 @@ test('computePlayerAccum: pairs legs-won attribution credits BOTH partnered play
     assert.equal(p.won, 1);
     assert.equal(p.lost, 0);
     assert.equal(p.legsWon, 3, `${id} (winning side, swept 3-0) should be credited all 3 legs`);
+    assert.equal(p.leagueGamesPlayed, 1);
+    assert.equal(p.leagueGamesWon, 1);
+    assert.equal(p.leagueLegsPlayed, 3);
+    assert.equal(p.leagueLegsWon, 3, `${id} (pairs partner) should ALSO be credited all 3 legs on the League leaderboard counter`);
   }
 });
 
-test('computePlayerAccum: League and TKO accumulate identically', () => {
+test('computePlayerAccum: League and TKO accumulate identically on played/won/lost/legsWon/180s/checkouts, but TKO leaves the League-only leaderboard counters at zero', () => {
   const games = [singlesGame(), pairsGame()];
   const league = computePlayerAccum(games, HOME_TEAM, AWAY_TEAM, MATCH_ID, DATE, 'league');
   const tko = computePlayerAccum(games, HOME_TEAM, AWAY_TEAM, MATCH_ID, DATE, 'tko');
-  assert.deepEqual([...league.entries()], [...tko.entries()]);
+
+  for (const id of ['h1', 'a1', 'h2', 'h3', 'a2', 'a3']) {
+    const l = league.get(id)!;
+    const t = tko.get(id)!;
+    assert.equal(t.played, l.played, `${id}: played should match between League and TKO`);
+    assert.equal(t.won, l.won, `${id}: won should match between League and TKO`);
+    assert.equal(t.lost, l.lost, `${id}: lost should match between League and TKO`);
+    assert.equal(t.legsWon, l.legsWon, `${id}: legsWon should match between League and TKO`);
+    assert.equal(t.oneEighties, l.oneEighties, `${id}: oneEighties should match between League and TKO`);
+    assert.deepEqual(t.highCheckouts, l.highCheckouts, `${id}: highCheckouts should match between League and TKO`);
+
+    // The Players Leaderboard is strictly League-only — a TKO match must
+    // leave every one of these four at zero, even though its League
+    // counterpart is nonzero for the same game data.
+    assert.equal(t.leagueGamesPlayed, 0, `${id}: TKO must not affect leagueGamesPlayed`);
+    assert.equal(t.leagueGamesWon, 0, `${id}: TKO must not affect leagueGamesWon`);
+    assert.equal(t.leagueLegsPlayed, 0, `${id}: TKO must not affect leagueLegsPlayed`);
+    assert.equal(t.leagueLegsWon, 0, `${id}: TKO must not affect leagueLegsWon`);
+    assert.ok(l.leagueGamesPlayed > 0, `${id}: sanity check — League itself must actually update leagueGamesPlayed`);
+  }
 });
 
 test('computePlayerAccum: Friendly contributes zero accumulation (played/won/lost/legsWon/180s/checkouts)', () => {

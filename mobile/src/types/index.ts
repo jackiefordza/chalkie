@@ -247,13 +247,24 @@ export interface PlayerHighCheckout {
 
 // Server-computed only (Cloud Function). played/won/lost count individual
 // games (singles + pairs), not matches — a player can play more than one
-// game per match. legsWon (Stats Rules audit, Season 1) is at the LEG level,
-// not the game level — a leg won by a pairs game credits BOTH partnered
-// players. Every game always plays all 3 legs (Match's own invariant, see
-// MatchGame.legs), so legs *played* is always `played * 3` and isn't stored
-// separately — see mobile/src/lib/leaderboard.ts. All of played/won/lost/
-// oneEighties/highCheckouts/legsWon only ever accumulate from confirmed
-// League + TKO matches — Friendlies contribute nothing (computePlayerAccum).
+// game per match. legsWon is at the LEG level, not the game level — a leg
+// won by a pairs game credits BOTH partnered players. All of played/won/
+// lost/oneEighties/highCheckouts/legsWon only ever accumulate from
+// confirmed League + TKO matches — Friendlies contribute nothing
+// (computePlayerAccum). This is the SEASON ACHIEVEMENT scope (180s, high
+// checkouts) — legsWon itself is kept for backward compatibility but is no
+// longer read by the Player Leaderboard (see leagueLegsWon below); nothing
+// in the app currently displays it.
+//
+// Stats Rules audit (Season 1, corrected): the Players Leaderboard is a
+// SEPARATE, STRICTLY LEAGUE-ONLY scope — TKO and Friendly must have zero
+// effect on it. Rather than making legsWon/won/played ambiguous (sometimes
+// League-only, sometimes League+TKO), the leaderboard has its own explicit,
+// additive counters below, gated on competitionType === 'league' alone
+// (computePlayerAccum). Every game always plays all 3 legs today (Match's
+// own invariant, see MatchGame.legs), but leagueLegsPlayed is accumulated
+// from the actual recorded leg count per game rather than assumed, so it
+// stays correct if that invariant ever changes.
 export interface PlayerSeasonStats {
   id: string; // = `${seasonId}_${playerId}`
   leagueId: string;
@@ -267,4 +278,9 @@ export interface PlayerSeasonStats {
   legsWon: number;
   oneEighties: number;
   highCheckouts: PlayerHighCheckout[];
+  // Players Leaderboard scope — League matches ONLY (see the comment above).
+  leagueLegsWon: number;
+  leagueLegsPlayed: number;
+  leagueGamesWon: number;
+  leagueGamesPlayed: number;
 }

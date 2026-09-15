@@ -1,30 +1,31 @@
 import type { PlayerSeasonStats } from '@/types';
 
-// Stats Rules audit (Season 1) — the Player Leaderboard's authoritative
-// ranking order, and *only* this order:
-//   1. total legs won, descending
-//   2. total individual games won, descending (PlayerSeasonStats.won —
-//      already game-level, not team-match-level; see the type's own comment)
-//   3. leg win-percentage, descending
+// Stats Rules audit (Season 1, corrected) — the Player Leaderboard's
+// authoritative ranking order, and *only* this order:
+//   1. League legs won, descending
+//   2. League individual games won, descending (PlayerSeasonStats.
+//      leagueGamesWon — already game-level, not team-match-level)
+//   3. League leg win-percentage, descending (leagueLegsWon / leagueLegsPlayed)
 // Win percentage of individual games is never the primary criterion.
 //
-// Every game always plays all 3 legs (MatchGame.legs is always length 3,
-// per the Match type's own comment) — so legs *played* is always
-// `played * LEGS_PER_GAME`, not a separately stored/aggregated field.
-const LEGS_PER_GAME = 3;
-
-export function legsPlayed(stats: Pick<PlayerSeasonStats, 'played'>): number {
-  return stats.played * LEGS_PER_GAME;
-}
-
-// Callers must pre-filter to `played > 0` (the leaderboard already does, to
-// exclude players with no games yet) — legsPlayed(stats) would otherwise be
-// 0 and the final tiebreak below would divide by zero.
+// The Players Leaderboard is STRICTLY League-only — TKO and Friendly results
+// have zero effect on it. leagueLegsWon/leagueLegsPlayed/leagueGamesWon/
+// leagueGamesPlayed are separate, additive counters gated on
+// competitionType === 'league' alone (see computePlayerAccum in
+// functions/src/index.ts, the only place this is enforced) — they are NOT
+// derived from the season-wide legsWon/won/played fields, which remain
+// League + TKO combined for the season achievement totals (180s, high
+// checkouts) and are never read here.
+//
+// Callers must pre-filter to `leagueLegsPlayed > 0` (a player who has only
+// played TKO/Friendly matches has leagueLegsPlayed === 0 and must be
+// excluded before sorting — the final tiebreak below would otherwise divide
+// by zero).
 export function compareLeaderboard(
-  a: Pick<PlayerSeasonStats, 'legsWon' | 'won' | 'played'>,
-  b: Pick<PlayerSeasonStats, 'legsWon' | 'won' | 'played'>,
+  a: Pick<PlayerSeasonStats, 'leagueLegsWon' | 'leagueGamesWon' | 'leagueLegsPlayed'>,
+  b: Pick<PlayerSeasonStats, 'leagueLegsWon' | 'leagueGamesWon' | 'leagueLegsPlayed'>,
 ): number {
-  return (b.legsWon - a.legsWon)
-    || (b.won - a.won)
-    || (b.legsWon / legsPlayed(b) - a.legsWon / legsPlayed(a));
+  return (b.leagueLegsWon - a.leagueLegsWon)
+    || (b.leagueGamesWon - a.leagueGamesWon)
+    || (b.leagueLegsWon / b.leagueLegsPlayed - a.leagueLegsWon / a.leagueLegsPlayed);
 }

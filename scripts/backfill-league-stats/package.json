@@ -1,0 +1,21 @@
+{
+  "name": "backfill-league-stats",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Standalone Admin SDK script — the Stats Rules audit (Season 1) League-only leaderboard stats backfill. Reads every currently-confirmed League match in the chalkie-app Firebase project (read-only), computes each player's leagueLegsWon/leagueLegsPlayed/leagueGamesWon/leagueGamesPlayed the same way the live Cloud Function aggregation does, and (only with --apply) writes JUST those four fields to playerSeasonStats. Never touches matches, fixtures, legsWon, or any other field. See README.md before running anything.",
+  "engines": {
+    "node": "20"
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "tsc -p tsconfig.test.json && node --test \"dist-test/*.test.js\""
+  },
+  "dependencies": {
+    "firebase-admin": "^13.10.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2",
+    "@types/node": "^22.0.0"
+  }
+}

@@ -45,7 +45,7 @@ async function clearStats(...playerIds: string[]) {
   await Promise.all(playerIds.map((id) => db.doc(`playerSeasonStats/${SEASON_ID}_${id}`).delete().catch(() => {})));
 }
 
-test('applyMatchResultDelta: legsWon stays consistent through confirm -> admin correction -> delete', async () => {
+test('applyMatchResultDelta: legsWon AND league-only leaderboard counters stay consistent through confirm -> admin correction -> delete', async () => {
   await clearStats('p1', 'p2');
   const matchId = 'match-consistency';
 
@@ -62,6 +62,14 @@ test('applyMatchResultDelta: legsWon stays consistent through confirm -> admin c
   assert.equal(p1!.played, 1);
   assert.equal(p2!.legsWon, 1);
   assert.equal(p2!.lost, 1);
+  assert.equal(p1!.leagueLegsWon, 2);
+  assert.equal(p1!.leagueLegsPlayed, 3);
+  assert.equal(p1!.leagueGamesWon, 1);
+  assert.equal(p1!.leagueGamesPlayed, 1);
+  assert.equal(p2!.leagueLegsWon, 1);
+  assert.equal(p2!.leagueLegsPlayed, 3);
+  assert.equal(p2!.leagueGamesWon, 0);
+  assert.equal(p2!.leagueGamesPlayed, 1);
 
   // Admin correction: actually p2 (away) won 2-1, not p1.
   await applyMatchResultDelta({
@@ -79,6 +87,12 @@ test('applyMatchResultDelta: legsWon stays consistent through confirm -> admin c
   assert.equal(p1!.played, 1, 'playedDelta 0 on correction — still just the one game');
   assert.equal(p2!.legsWon, 2);
   assert.equal(p2!.won, 1);
+  assert.equal(p1!.leagueLegsWon, 1, 'league leg count must also drop after correction');
+  assert.equal(p1!.leagueGamesWon, 0);
+  assert.equal(p1!.leagueLegsPlayed, 3, 'legs played unchanged — still one game, still 3 legs');
+  assert.equal(p1!.leagueGamesPlayed, 1);
+  assert.equal(p2!.leagueLegsWon, 2);
+  assert.equal(p2!.leagueGamesWon, 1);
 
   // Delete: fully reverse.
   await applyMatchResultDelta({
@@ -94,6 +108,41 @@ test('applyMatchResultDelta: legsWon stays consistent through confirm -> admin c
   assert.equal(p1!.played, 0);
   assert.equal(p2!.legsWon, 0);
   assert.equal(p2!.played, 0);
+  assert.equal(p1!.leagueLegsWon, 0);
+  assert.equal(p1!.leagueLegsPlayed, 0);
+  assert.equal(p1!.leagueGamesWon, 0);
+  assert.equal(p1!.leagueGamesPlayed, 0);
+  assert.equal(p2!.leagueLegsWon, 0);
+  assert.equal(p2!.leagueLegsPlayed, 0);
+  assert.equal(p2!.leagueGamesWon, 0);
+  assert.equal(p2!.leagueGamesPlayed, 0);
+});
+
+test('applyMatchResultDelta: a TKO match updates 180s/high checkouts/legsWon but leaves the League-only leaderboard counters at zero', async () => {
+  await clearStats('p7', 'p8');
+  await applyMatchResultDelta({
+    matchId: 'match-tko', leagueId: LEAGUE_ID, seasonId: SEASON_ID, divisionId: DIVISION_ID,
+    homeTeamId: HOME_TEAM, awayTeamId: AWAY_TEAM, scheduledDate: DATE, competitionType: 'tko',
+    oldGames: [],
+    newGames: [singlesGame('p7', 'p8', ['home', 'home', 'away'], { side: 'home', legIndex: 0, value: '100' })],
+    playedDelta: 1,
+  });
+  const p7 = await readStats('p7');
+  const p8 = await readStats('p8');
+  // Season achievement scope (League + TKO) — these DO update for TKO.
+  assert.equal(p7!.legsWon, 2);
+  assert.equal(p7!.won, 1);
+  assert.equal(p7!.played, 1);
+  assert.deepEqual(p7!.highCheckouts.map((h: { value: string }) => h.value), ['100']);
+  // Players Leaderboard scope (League only) — TKO must leave these at zero.
+  assert.equal(p7!.leagueLegsWon, 0, 'TKO must not credit the League leaderboard');
+  assert.equal(p7!.leagueLegsPlayed, 0);
+  assert.equal(p7!.leagueGamesWon, 0);
+  assert.equal(p7!.leagueGamesPlayed, 0);
+  assert.equal(p8!.leagueLegsWon, 0);
+  assert.equal(p8!.leagueLegsPlayed, 0);
+  assert.equal(p8!.leagueGamesWon, 0);
+  assert.equal(p8!.leagueGamesPlayed, 0);
 });
 
 test('applyMatchResultDelta: legsWon delta applies correctly even when highCheckouts change on the same correction', () => {
