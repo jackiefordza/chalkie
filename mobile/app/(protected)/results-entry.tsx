@@ -8,6 +8,7 @@ import {
 import { db } from '@/config/firebase';
 import { useAuthStore } from '@/stores/authStore';
 import { goBack } from '@/lib/navigation';
+import { canSignOffMatch } from '@/lib/matchPermissions';
 import { RAW } from '@/lib/theme';
 import {
   Screen, Heading, Body, Caption, Stat, Badge, Button, Card, Chip, Input, Label, Sheet, AppBar,
@@ -36,6 +37,14 @@ export default function ResultsEntryScreen() {
   const [players, setPlayers] = useState<Player[]>([]);
   const [mySubmission, setMySubmission] = useState<MatchGame[] | null>(null);
   const [otherSubmission, setOtherSubmission] = useState<MatchGame[] | null>(null);
+  // The single team submission an admin is being asked to sign off on
+  // (awaiting_confirmation means exactly one side has submitted). Loaded
+  // separately from mySubmission/otherSubmission above, which only ever
+  // populate for a viewer on one of the two teams — a pure admin (no team)
+  // never triggers that effect, so this match's submission was previously
+  // never fetched for them at all.
+  const [awaitingSubmission, setAwaitingSubmission] = useState<{ teamId: string; games: MatchGame[] } | null>(null);
+  const [isLoadingAwaitingSubmission, setIsLoadingAwaitingSubmission] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -139,6 +148,27 @@ export default function ResultsEntryScreen() {
       });
     });
   }, [matchId, myTeamId, match, isHome]);
+
+  // Load the single submitted team's result for an admin who can sign this
+  // match off — gated by the same helper firestore.rules enforces, so this
+  // never fetches (or offers sign-off) for a match outside the admin's league
+  // or one that isn't actually awaiting confirmation.
+  useEffect(() => {
+    if (!matchId || !match || !canSignOffMatch(appUser, match)) { setAwaitingSubmission(null); return; }
+    setIsLoadingAwaitingSubmission(true);
+    Promise.all([
+      getDoc(doc(db, 'matches', matchId, 'submissions', match.homeTeamId)),
+      getDoc(doc(db, 'matches', matchId, 'submissions', match.awayTeamId)),
+    ]).then(([homeSnap, awaySnap]) => {
+      const submitted = homeSnap.exists()
+        ? { teamId: match.homeTeamId, games: homeSnap.data().games as MatchGame[] }
+        : awaySnap.exists()
+          ? { teamId: match.awayTeamId, games: awaySnap.data().games as MatchGame[] }
+          : null;
+      setAwaitingSubmission(submitted);
+      setIsLoadingAwaitingSubmission(false);
+    });
+  }, [matchId, match, appUser]);
 
   type Mode = 'blank' | 'review' | 'waiting' | 'reconcile';
   const mode: Mode = otherSubmission && !mySubmission
@@ -350,6 +380,37 @@ export default function ResultsEntryScreen() {
     }
   }
 
+  // Signs off an awaiting-confirmation match on the teams' behalf, using the
+  // already-submitted games unchanged. This goes through the exact same
+  // write (status → 'confirmed') a normal auto-confirmation makes, so
+  // onMatchConfirmed picks it up and recalculates standings/stats through
+  // the normal pipeline — no separate stats path, nothing duplicated here.
+  function confirmSignOff() {
+    if (!awaitingSubmission) return;
+    Alert.alert(
+      'Sign off this result?',
+      'This confirms the result the team submitted, on their behalf. Standings and player stats will update immediately, the same as if both teams had submitted matching results.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Sign Off', onPress: signOffMatch },
+      ],
+    );
+  }
+
+  async function signOffMatch() {
+    if (!matchId || !awaitingSubmission) return;
+    setIsSubmitting(true);
+    try {
+      await updateDoc(doc(db, 'matches', matchId), { status: 'confirmed', games: awaitingSubmission.games });
+      Alert.alert('Result confirmed', 'Standings and player stats have been updated.');
+      goBack();
+    } catch (e: unknown) {
+      Alert.alert('Error', (e as Error).message ?? 'Something went wrong');
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
   function confirmDeleteMatch() {
     Alert.alert(
       'Delete this fixture',
@@ -432,6 +493,36 @@ export default function ResultsEntryScreen() {
               onPress={() => setEditing(true)}
               tone={mode === 'reconcile' ? 'coral' : mode === 'review' ? 'butter' : 'brand'}
             />
+          ) : canSignOffMatch(appUser, match) ? (
+            isLoadingAwaitingSubmission ? (
+              <ActivityIndicator color={RAW.brand} style={{ marginTop: 20 }} />
+            ) : !awaitingSubmission ? (
+              <Card tone="coral" className="mb-4">
+                <Body size="sm">No submission found for this match yet.</Body>
+              </Card>
+            ) : (
+              <>
+                <Card tone="butter" className="mb-4">
+                  <Caption className="mb-1">Admin Sign-Off</Caption>
+                  <Body size="sm">
+                    {awaitingSubmission.teamId === match!.homeTeamId ? homeTeamName : awayTeamName} submitted this
+                    result and the other team hasn't responded. As a league admin, you can sign off on their behalf
+                    to confirm it.
+                  </Body>
+                </Card>
+                {awaitingSubmission.games.map((game, gameIndex) => (
+                  <GameRow key={gameIndex} game={game} gameIndex={gameIndex} playerName={playerName} />
+                ))}
+                <Button
+                  className="mb-2"
+                  disabled={isSubmitting}
+                  loading={isSubmitting}
+                  onPress={confirmSignOff}
+                >
+                  Sign Off Result (Admin)
+                </Button>
+              </>
+            )
           ) : isAdmin && match!.status === 'disputed' ? (
             <ActionBanner
               eyebrow="DISPUTED — ADMIN REVIEW NEEDED"

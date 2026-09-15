@@ -278,15 +278,15 @@ export default function AdminSeasonScreen() {
               const divTeams = teamsForDivision(division.id);
               return (
                 <View key={division.id} className="mb-6">
-                  <View className="flex-row items-center mb-1">
-                    <Heading size="sm" className="flex-1">{division.name}</Heading>
-                    <Button variant="secondary" size="sm" className="mr-2" onPress={() => router.push('/(protected)/(tabs)/standings')}>
+                  <Heading size="sm" className="mb-2">{division.name}</Heading>
+                  <View className="flex-row flex-wrap gap-2 mb-1">
+                    <Button variant="secondary" size="sm" onPress={() => router.push('/(protected)/(tabs)/standings')}>
                       Table
                     </Button>
-                    <Button variant="secondary" size="sm" className="mr-2" onPress={() => router.push(`/(protected)/admin-fixtures?divisionId=${division.id}`)}>
+                    <Button variant="secondary" size="sm" onPress={() => router.push(`/(protected)/admin-fixtures?divisionId=${division.id}`)}>
                       Fixtures
                     </Button>
-                    <Button variant="secondary" size="sm" className="mr-2" onPress={() => router.push(`/(protected)/admin-standings-override?divisionId=${division.id}`)}>
+                    <Button variant="secondary" size="sm" onPress={() => router.push(`/(protected)/admin-standings-override?divisionId=${division.id}`)}>
                       Adjust
                     </Button>
                     <Button size="sm" onPress={() => { setAddTeamTarget(division); setNewTeamName(''); setNewTeamAddress(''); }}>
