@@ -205,6 +205,16 @@ export default function TeamProfileScreen() {
   // win/loss computation already used by GameRow/player-profile.tsx.
   // Legs won/lost are deliberately not repeated here — they're already
   // shown in Team Performance from the same divisionTables row.
+  //
+  // Stats Rules audit (Season 1, corrected): total180s/highestCheckout are
+  // Season achievement totals — League + TKO only, Friendly excluded (same
+  // scope as PlayerSeasonStats.oneEighties/highCheckouts, computed
+  // server-side in functions/src/index.ts's computePlayerAccum). A match
+  // with no competitionType at all predates that field and is treated as
+  // League, matching every other reader in the app. gamesWon/gamesLost is a
+  // separate, unscoped Team Profile record (not one of the two authoritative
+  // stats scopes) and is deliberately left counting every confirmed match,
+  // Friendly included, unchanged from its existing behaviour.
   const teamGameStats = useMemo(() => {
     let gamesWon = 0;
     let gamesLost = 0;
@@ -212,12 +222,14 @@ export default function TeamProfileScreen() {
     let highestCheckout: number | undefined;
     confirmedMatches.forEach((m) => {
       const isHome = m.homeTeamId === teamId;
+      const countsTowardAchievements = (m.competitionType ?? 'league') !== 'friendly';
       (m.games as MatchGame[]).forEach((g) => {
         const ourIds = isHome ? g.homePlayerIds : g.awayPlayerIds;
         const homeLegs = g.legs.filter((l) => l.winner === 'home').length;
         const awayLegs = g.legs.filter((l) => l.winner === 'away').length;
         const weWon = isHome ? homeLegs > awayLegs : awayLegs > homeLegs;
         if (weWon) gamesWon += 1; else gamesLost += 1;
+        if (!countsTowardAchievements) return;
         g.legs.forEach((leg) => {
           total180s += leg.oneEighties.filter((pid) => ourIds.includes(pid)).length;
           if (leg.highCheckout && ourIds.includes(leg.highCheckout.playerId)) {

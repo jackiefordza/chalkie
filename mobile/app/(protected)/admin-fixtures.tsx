@@ -267,6 +267,7 @@ function useFixturesController(divisionId: string | undefined, leagueId: string 
           scheduledDate: fixture.scheduledDate,
           venue: teams.find((t) => t.id === fixture.homeTeamId)?.address ?? null,
           status: 'scheduled',
+          competitionType: 'league',
           homeGamesWon: null,
           awayGamesWon: null,
           homeLegsWon: null,
