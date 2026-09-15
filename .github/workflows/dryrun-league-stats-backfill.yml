@@ -1,0 +1,95 @@
+name: Dry-run League-only Stats Backfill (manual, read-only)
+
+# Manual-only, same reasoning as backfill-legs-won.yml/investigate-legswon.yml:
+# no push/pull_request/schedule trigger exists here, so this can never fire
+# on its own.
+#
+# Stats Rules audit (Season 1) correction: the Players Leaderboard was
+# corrected to be STRICTLY League-only (TKO/Friendly must have zero effect),
+# via four new additive PlayerSeasonStats fields — leagueLegsWon/
+# leagueLegsPlayed/leagueGamesWon/leagueGamesPlayed. This workflow runs
+# scripts/backfill-league-stats's backfill.ts WITHOUT --apply — it is
+# structurally always a dry run here: this workflow has no apply input at
+# all, unlike backfill-legs-won.yml. Producing an APPLY-capable workflow is
+# a separate, later step once this dry-run report has been reviewed — see
+# scripts/backfill-league-stats/README.md.
+#
+# Reuses the showcase-seed-production Environment for the same reason
+# backfill-legs-won.yml/investigate-legswon.yml do: this uses the same
+# sensitive Firestore-capable credential, even though this workflow never
+# calls a write method with it (backfill.ts without --apply never writes).
+#
+# scripts/backfill-league-stats lives only on pilot/mobile-web-hardening,
+# not on main — same situation as every other workflow here that runs
+# pilot-only code: the checkout step below is pinned to a fixed commit SHA
+# on that branch, not to whichever ref this run was dispatched against.
+# Update PINNED_SHA deliberately whenever a newer commit on that branch
+# needs running — it never follows the branch automatically.
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type DRYRUN-LEAGUE-STATS to run this read-only dry run against the real chalkie-app project.'
+        required: true
+
+env:
+  # pilot/mobile-web-hardening, exact commit — the commit that added
+  # scripts/backfill-league-stats itself.
+  PINNED_SHA: '81a52933b25a854cf04e2f7734d70755edcd8131'
+
+permissions:
+  contents: read
+
+jobs:
+  dry-run:
+    if: inputs.confirm == 'DRYRUN-LEAGUE-STATS'
+    runs-on: ubuntu-latest
+    environment: showcase-seed-production
+    defaults:
+      run:
+        working-directory: scripts/backfill-league-stats
+    steps:
+      - name: Checkout pinned commit (never main)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.PINNED_SHA }}
+
+      - name: Verify checked-out commit matches the pinned SHA
+        run: |
+          actual="$(git rev-parse HEAD)"
+          if [ "$actual" != "$PINNED_SHA" ]; then
+            echo "::error::Checked-out commit ($actual) does not match PINNED_SHA ($PINNED_SHA) — refusing to run."
+            exit 1
+          fi
+          echo "Confirmed checkout is pinned commit $actual"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      # Same write-to-temp-file pattern backfill-legs-won.yml/showcase-seed.yml
+      # already use for this same secret. Never printed, never passed as a
+      # command argument.
+      - name: Write Firebase service-account credential
+        env:
+          SHOWCASE_SEED_SERVICE_ACCOUNT: ${{ secrets.SHOWCASE_SEED_SERVICE_ACCOUNT }}
+        run: printf '%s' "$SHOWCASE_SEED_SERVICE_ACCOUNT" > "$RUNNER_TEMP/sa.json"
+
+      # No --apply flag exists anywhere in this workflow — this always runs
+      # the read-only dry-run mode, matching investigate-legswon.yml's
+      # no-apply-possible posture.
+      - name: Run dry run (read-only)
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/sa.json
+        run: node dist/backfill.js --confirm-backfill | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove credential file
+        if: always()
+        run: rm -f "$RUNNER_TEMP/sa.json"
