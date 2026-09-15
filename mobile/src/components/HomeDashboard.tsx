@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { View, Text, TouchableOpacity, ActivityIndicator, Image, Linking } from 'react-native';
 import { router } from 'expo-router';
 import { useColorScheme } from 'nativewind';
 import {
@@ -11,7 +11,7 @@ import { RAW, toneClasses } from '@/lib/theme';
 import { FONT_MONO, FONT_DISPLAY } from '@/styles/typography';
 import { STATUS_LABEL, STATUS_TONE } from '@/lib/matchStatus';
 import { Screen, Header, Button, Card, Body, AppIcon } from '@/components/ui';
-import type { Match, DivisionTable, PlayerSeasonStats } from '@/types';
+import type { Match, DivisionTable, PlayerSeasonStats, LeagueSponsor } from '@/types';
 
 // ─────────────────────────────────────────────────────────────────────────
 // Phase E, Step 2 — Home V1 visual prototype. Every data-fetching effect,
@@ -459,6 +459,39 @@ function YourStatsSection({ stats, playerId }: { stats: PlayerSeasonStats | null
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// SPONSOR — same data/behaviour as the shared SponsorBanner (returns
+// nothing for a missing/inactive sponsor). Deliberately placed low on the
+// page — league branding, not what the player came to Home to see. Kept as
+// a plain divider row (SponsorBanner wraps its content in a Card, which
+// would read here as "one more card" right at the bottom of an otherwise
+// card-free page) rather than switched to the shared component.
+// ─────────────────────────────────────────────────────────────────────────
+function HomeSponsorRow({ sponsor }: { sponsor: LeagueSponsor | null | undefined }) {
+  if (!sponsor || !sponsor.active) return null;
+
+  const inner = (
+    <View className="flex-row items-center gap-3 pt-4 mt-2 border-t border-border dark:border-border-dark">
+      {sponsor.logoUrl ? (
+        <Image source={{ uri: sponsor.logoUrl }} style={{ width: 26, height: 26, borderRadius: 6 }} resizeMode="contain" />
+      ) : null}
+      <View className="flex-1">
+        <Text className="text-[10px] uppercase tracking-wide text-text-faint dark:text-text-faint-dark">Proudly sponsored by</Text>
+        <Text className="text-[12px] font-semibold text-text-dim dark:text-text-dim-dark mt-0.5" numberOfLines={1}>{sponsor.name}</Text>
+      </View>
+    </View>
+  );
+
+  if (sponsor.websiteUrl) {
+    return (
+      <TouchableOpacity activeOpacity={0.7} onPress={() => Linking.openURL(sponsor.websiteUrl!)}>
+        {inner}
+      </TouchableOpacity>
+    );
+  }
+  return inner;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // HOME DASHBOARD — shared by both the player ("home") and captain/VC
 // ("captain") tabs, exactly as before.
 // ─────────────────────────────────────────────────────────────────────────
@@ -475,6 +508,7 @@ export function HomeDashboard() {
   const [leagueSnapshot, setLeagueSnapshot] = useState<DivisionTable[]>([]);
   const [myStats, setMyStats] = useState<PlayerSeasonStats | null>(null);
   const [leagueName, setLeagueName] = useState<string | null>(null);
+  const [sponsor, setSponsor] = useState<LeagueSponsor | null>(null);
   const [divisionName, setDivisionName] = useState<string | null>(null);
   const [pendingRequestCount, setPendingRequestCount] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
@@ -570,7 +604,10 @@ export function HomeDashboard() {
   // League/division names — one-time reads; this data essentially never
   // changes, so a listener would just be an idle connection for no benefit.
   useEffect(() => {
-    if (appUser?.leagueId) getDoc(doc(db, 'leagues', appUser.leagueId)).then((s) => setLeagueName(s.exists() ? s.data().name : null));
+    if (appUser?.leagueId) getDoc(doc(db, 'leagues', appUser.leagueId)).then((s) => {
+      setLeagueName(s.exists() ? s.data().name : null);
+      setSponsor(s.exists() ? s.data().sponsor ?? null : null);
+    });
     if (appUser?.divisionId) getDoc(doc(db, 'divisions', appUser.divisionId)).then((s) => setDivisionName(s.exists() ? s.data().name : null));
   }, [appUser?.leagueId, appUser?.divisionId]);
 
@@ -651,6 +688,8 @@ export function HomeDashboard() {
             <RecentResultsList matches={recentMatches} teamId={teamId} teamNames={teamNames} />
 
             <YourStatsSection stats={myStats} playerId={appUser?.playerId ?? null} />
+
+            <HomeSponsorRow sponsor={sponsor} />
           </>
         )}
       </View>
