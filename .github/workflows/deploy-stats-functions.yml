@@ -32,11 +32,14 @@ on:
 
 env:
   # pilot/mobile-web-hardening, exact commit — see the comment above for why
-  # this is a fixed SHA, not a branch name. Updated to fb893ef (fixes
-  # functions/package.json's test script: unquoted glob so `sh -c` expands
-  # it before node sees it, instead of relying on node's own --test glob
-  # handling, which wasn't resolving on this runner's pinned Node 20).
-  PINNED_SHA: 'fb893ef7f0383f47d8ce44092ca88e15f90c1713'
+  # this is a fixed SHA, not a branch name. Updated to 81a5293 — the
+  # corrected Stats Rules scope model: the Players Leaderboard is now
+  # strictly League-only (leagueLegsWon/leagueLegsPlayed/leagueGamesWon/
+  # leagueGamesPlayed, gated on competitionType === 'league' alone), while
+  # Season 180s/High Checkouts remain League + TKO, Friendly excluded,
+  # unchanged. Already independently backfilled and verified 273/273
+  # against this exact commit before this deploy.
+  PINNED_SHA: '81a52933b25a854cf04e2f7734d70755edcd8131'
 
 permissions:
   contents: read
