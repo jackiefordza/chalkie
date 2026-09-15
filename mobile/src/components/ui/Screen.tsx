@@ -11,7 +11,9 @@ interface ScreenProps {
   header?: ReactNode;
 }
 
-export function Screen({ children, scroll = true, contentClassName = '', contentContainerStyle, header }: ScreenProps) {
+export function Screen({
+  children, scroll = true, contentClassName = '', contentContainerStyle, header,
+}: ScreenProps) {
   // Floating tab bar overlays content — 0 outside a tabs screen (context is unset there)
   const tabBarHeight = useContext(BottomTabBarHeightContext) ?? 0;
 

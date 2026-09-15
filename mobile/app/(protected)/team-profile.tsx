@@ -9,7 +9,7 @@ import { db } from '@/config/firebase';
 import { RAW } from '@/lib/theme';
 import { STATUS_LABEL, STATUS_TONE } from '@/lib/matchStatus';
 import {
-  Screen, AppBar, Heading, Body, Caption, Badge, Card, StatTile, Avatar, AppIcon, FormBadge,
+  Screen, AppBar, Heading, Body, Caption, Stat, Badge, Card, Avatar, AppIcon, FormBadge,
 } from '@/components/ui';
 import { formatMatchDate } from '@/components/MatchCentre';
 import { recentForm, ordinal } from '@/components/HomeDashboard';
@@ -281,23 +281,26 @@ export default function TeamProfileScreen() {
               <Body size="sm">No table position yet — this fills in once matches are confirmed.</Body>
             </Card>
           ) : (
+            // Editorial hierarchy — one dominant figure (league position)
+            // plus supporting lines, not seven equal-weight tiles.
             <Card className="mb-4">
-              <Caption className="mb-3">Team Performance</Caption>
-              <View className="flex-row gap-2.5 mb-2.5">
-                <StatTile label="Position" value={ordinal(tableRow.position)} tone="brand" />
-                <StatTile label="Points" value={tableRow.points} tone="butter" />
-                <StatTile label="Played" value={tableRow.played} tone="sage" />
-                <StatTile label="W-L" value={`${tableRow.won}-${tableRow.lost}`} tone="sage" />
+              <Caption className="mb-2">Team Performance</Caption>
+              <View className="flex-row items-end gap-4 mt-1">
+                <Stat size="lg" tone="brand">{ordinal(tableRow.position)}</Stat>
+                <Body size="sm" className="pb-1 flex-1">
+                  <Body tone="strong" weight="bold" size="sm">{tableRow.points}</Body>
+                  {' pts  ·  '}
+                  <Body tone="strong" size="sm">{tableRow.won}-{tableRow.lost}</Body>
+                  {' W-L  ·  '}
+                  <Body tone={tableRow.legDiff >= 0 ? 'sage' : 'coral'} weight="semibold" size="sm">
+                    {tableRow.legDiff > 0 ? `+${tableRow.legDiff}` : tableRow.legDiff}
+                  </Body>
+                  {' legs'}
+                </Body>
               </View>
-              <View className="flex-row gap-2.5">
-                <StatTile label="Legs For" value={tableRow.legsFor} />
-                <StatTile label="Legs Against" value={tableRow.legsAgainst} />
-                <StatTile
-                  label="Leg Diff"
-                  value={tableRow.legDiff > 0 ? `+${tableRow.legDiff}` : tableRow.legDiff}
-                  tone={tableRow.legDiff >= 0 ? 'sage' : 'coral'}
-                />
-              </View>
+              <Body size="sm" className="mt-2.5">
+                {tableRow.played} played · {tableRow.legsFor}-{tableRow.legsAgainst} legs for-against
+              </Body>
             </Card>
           )}
 
@@ -322,8 +325,8 @@ export default function TeamProfileScreen() {
           ) : upcomingFixtures.length === 0 ? (
             <Card className="mb-4"><Body size="sm">No upcoming fixture scheduled.</Body></Card>
           ) : (
-            <View className="mb-4">
-              {upcomingFixtures.map((m) => {
+            <View className="rounded-lg border border-border dark:border-border-dark overflow-hidden mb-4">
+              {upcomingFixtures.map((m, i) => {
                 const isHome = m.homeTeamId === teamId;
                 const opponentId = isHome ? m.awayTeamId : m.homeTeamId;
                 return (
@@ -331,20 +334,22 @@ export default function TeamProfileScreen() {
                     key={m.id}
                     activeOpacity={0.7}
                     onPress={() => router.push(`/(protected)/results-entry?matchId=${m.id}`)}
+                    className={[
+                      'px-4 py-3 bg-surface dark:bg-surface-dark',
+                      i > 0 ? 'border-t border-border dark:border-border-dark' : '',
+                    ].join(' ')}
                   >
-                    <Card className="mb-2.5">
-                      <View className="flex-row items-center justify-between mb-1">
-                        <Body tone="strong" weight="semibold" className="flex-1" numberOfLines={1}>
-                          {isHome ? 'vs' : '@'} {teamNamesById[opponentId] ?? '…'}
-                        </Body>
-                        <Badge tone={STATUS_TONE[m.status] ?? 'brand'}>
-                          {STATUS_LABEL[m.status]}
-                        </Badge>
-                      </View>
-                      <Body size="sm">
-                        {formatMatchDate(m.scheduledDate)} · {isHome ? (m.venue ?? 'Home') : 'Away'}
+                    <View className="flex-row items-center justify-between mb-1">
+                      <Body tone="strong" weight="semibold" className="flex-1" numberOfLines={1}>
+                        {isHome ? 'vs' : '@'} {teamNamesById[opponentId] ?? '…'}
                       </Body>
-                    </Card>
+                      <Badge tone={STATUS_TONE[m.status] ?? 'brand'}>
+                        {STATUS_LABEL[m.status]}
+                      </Badge>
+                    </View>
+                    <Body size="sm">
+                      {formatMatchDate(m.scheduledDate)} · {isHome ? (m.venue ?? 'Home') : 'Away'}
+                    </Body>
                   </TouchableOpacity>
                 );
               })}
@@ -358,8 +363,8 @@ export default function TeamProfileScreen() {
           ) : recentResults.length === 0 ? (
             <Card className="mb-4"><Body size="sm">No completed matches yet this season.</Body></Card>
           ) : (
-            <View className="mb-4">
-              {recentResults.map((m) => {
+            <View className="rounded-lg border border-border dark:border-border-dark overflow-hidden mb-4">
+              {recentResults.map((m, i) => {
                 const isHome = m.homeTeamId === teamId;
                 const opponentId = isHome ? m.awayTeamId : m.homeTeamId;
                 const won = isHome
@@ -372,19 +377,21 @@ export default function TeamProfileScreen() {
                     key={m.id}
                     activeOpacity={0.7}
                     onPress={() => router.push(`/(protected)/results-entry?matchId=${m.id}`)}
+                    className={[
+                      'px-4 py-3 bg-surface dark:bg-surface-dark',
+                      i > 0 ? 'border-t border-border dark:border-border-dark' : '',
+                    ].join(' ')}
                   >
-                    <Card className="mb-2.5">
-                      <View className="flex-row items-center justify-between mb-1">
-                        <Body tone="strong" weight="semibold" className="flex-1" numberOfLines={1}>
-                          {isHome ? 'vs' : '@'} {teamNamesById[opponentId] ?? '…'}
-                        </Body>
-                        <Badge tone={won ? 'sage' : 'coral'}>{won ? 'Won' : 'Lost'}</Badge>
-                      </View>
-                      <View className="flex-row items-center justify-between">
-                        <Body size="sm">{formatMatchDate(m.scheduledDate)}</Body>
-                        <Body size="sm" tone={won ? 'sage' : 'coral'} weight="semibold">{gamesFor}-{gamesAgainst} games</Body>
-                      </View>
-                    </Card>
+                    <View className="flex-row items-center justify-between mb-1">
+                      <Body tone="strong" weight="semibold" className="flex-1" numberOfLines={1}>
+                        {isHome ? 'vs' : '@'} {teamNamesById[opponentId] ?? '…'}
+                      </Body>
+                      <Badge tone={won ? 'sage' : 'coral'}>{won ? 'Won' : 'Lost'}</Badge>
+                    </View>
+                    <View className="flex-row items-center justify-between">
+                      <Body size="sm">{formatMatchDate(m.scheduledDate)}</Body>
+                      <Body size="sm" tone={won ? 'sage' : 'coral'} weight="semibold">{gamesFor}-{gamesAgainst} games</Body>
+                    </View>
                   </TouchableOpacity>
                 );
               })}
@@ -398,8 +405,8 @@ export default function TeamProfileScreen() {
           ) : players.length === 0 ? (
             <Card className="mb-4"><Body size="sm">No players on this team yet.</Body></Card>
           ) : (
-            <View className="mb-4">
-              {players.map((player) => {
+            <View className="rounded-lg border border-border dark:border-border-dark overflow-hidden mb-4">
+              {players.map((player, i) => {
                 const role = roleOf(player, team.captainUserId, team.viceCaptainUserId);
                 const isClaimed = !!player.claimedByUserId;
                 return (
@@ -407,19 +414,20 @@ export default function TeamProfileScreen() {
                     key={player.id}
                     activeOpacity={0.7}
                     onPress={() => router.push(`/(protected)/player-profile?playerId=${player.id}`)}
+                    className={[
+                      'flex-row items-center px-4 py-3',
+                      isClaimed ? 'bg-sage-fill dark:bg-sage-fill-dark' : 'bg-surface dark:bg-surface-dark',
+                      i > 0 ? 'border-t border-border dark:border-border-dark' : '',
+                    ].join(' ')}
                   >
-                    <Card tone={isClaimed ? 'sage' : 'default'} className="mb-2.5">
-                      <View className="flex-row items-center">
-                        <Avatar initial={player.name.charAt(0)} tone={isClaimed ? 'sage' : 'brand'} size="sm" className="mr-3" />
-                        <View className="flex-1">
-                          <Body tone="strong" weight="semibold">{player.name}</Body>
-                          {!isClaimed && <Body size="xs" className="mt-0.5">Not yet claimed</Body>}
-                        </View>
-                        {role && role !== 'player' && (
-                          <Badge tone="brand" className="mr-2">{ROLE_BADGE_LABEL[role]}</Badge>
-                        )}
-                      </View>
-                    </Card>
+                    <Avatar initial={player.name.charAt(0)} tone={isClaimed ? 'sage' : 'brand'} size="sm" className="mr-3" />
+                    <View className="flex-1">
+                      <Body tone="strong" weight="semibold">{player.name}</Body>
+                      {!isClaimed && <Body size="xs" className="mt-0.5">Not yet claimed</Body>}
+                    </View>
+                    {role && role !== 'player' && (
+                      <Badge tone="brand" className="mr-2">{ROLE_BADGE_LABEL[role]}</Badge>
+                    )}
                   </TouchableOpacity>
                 );
               })}
@@ -429,15 +437,18 @@ export default function TeamProfileScreen() {
           {/* TEAM STATISTICS */}
           {confirmedMatches.length > 0 && (
             <Card className="mb-2">
-              <Caption className="mb-3">Team Statistics</Caption>
-              <View className="flex-row gap-2.5">
-                <StatTile label="Games Won" value={teamGameStats.gamesWon} tone="sage" />
-                <StatTile label="Games Lost" value={teamGameStats.gamesLost} tone="coral" />
-                <StatTile label="180s" value={teamGameStats.total180s} tone="butter" />
-              </View>
+              <Caption className="mb-2">Team Statistics</Caption>
+              <Body size="sm" className="mt-1">
+                <Body tone="sage" weight="bold" size="sm">{teamGameStats.gamesWon}</Body>
+                {' games won  ·  '}
+                <Body tone="coral" weight="bold" size="sm">{teamGameStats.gamesLost}</Body>
+                {' lost  ·  '}
+                <Body tone="strong" weight="bold" size="sm">{teamGameStats.total180s}</Body>
+                {' × 180'}
+              </Body>
               {teamGameStats.highestCheckout !== undefined && (
-                <Body size="sm" className="mt-3">
-                  Highest checkout: <Body size="sm" tone="butter" weight="bold">{teamGameStats.highestCheckout}</Body>
+                <Body size="sm" className="mt-1.5">
+                  Highest checkout: <Body size="sm" tone="strong" weight="bold">{teamGameStats.highestCheckout}</Body>
                 </Body>
               )}
             </Card>

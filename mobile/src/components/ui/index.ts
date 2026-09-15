@@ -9,6 +9,7 @@ export { Card } from './Card';
 export { ListRow } from './ListRow';
 export { Badge } from './Badge';
 export { StatTile } from './StatTile';
+export { Header } from './Header';
 export { Avatar } from './Avatar';
 export { FormBadge } from './FormBadge';
 export { Input, Label } from './Input';

@@ -8,7 +8,7 @@ import {
 import { db } from '@/config/firebase';
 import { RAW } from '@/lib/theme';
 import {
-  Screen, AppBar, Heading, Body, Caption, Badge, Card, StatTile, Avatar, AppIcon, FormBadge,
+  Screen, AppBar, Heading, Body, Caption, Stat, Badge, Card, Avatar, AppIcon, FormBadge,
 } from '@/components/ui';
 import { formatMatchDate } from '@/components/MatchCentre';
 import type { Player, PlayerSeasonStats, Match, MatchGame } from '@/types';
@@ -263,17 +263,31 @@ export default function PlayerProfileScreen() {
               <Body size="sm">No stats yet — these fill in once {player.name.split(' ')[0]}'s matches are confirmed.</Body>
             </Card>
           ) : (
+            // Editorial hierarchy — same pattern as Home's Your Stats
+            // (indeed, the same fields): one dominant figure, not four
+            // equal-weight tiles.
             <Card className="mb-4">
-              <Caption className="mb-3">Season Stats{seasonName ? ` · ${seasonName}` : ''}</Caption>
-              <View className="flex-row gap-2.5">
-                <StatTile label="Played" value={stats.played} tone="brand" />
-                <StatTile label="Won" value={stats.won} tone="sage" />
-                <StatTile label="Win %" value={winPct !== null ? `${winPct}%` : '—'} tone="sage" />
-                <StatTile label="180s" value={stats.oneEighties} tone="butter" />
+              <Caption className="mb-2">Season Stats{seasonName ? ` · ${seasonName}` : ''}</Caption>
+              <View className="flex-row items-end gap-5 mt-1">
+                <Stat size="lg" tone="brand">{winPct !== null ? `${winPct}%` : '—'}</Stat>
+                <View className="flex-row gap-4 pb-1">
+                  <View>
+                    <Stat size="sm">{stats.played}</Stat>
+                    <Caption className="mt-0.5">Played</Caption>
+                  </View>
+                  <View>
+                    <Stat size="sm">{stats.won}</Stat>
+                    <Caption className="mt-0.5">Won</Caption>
+                  </View>
+                  <View>
+                    <Stat size="sm">{stats.oneEighties}</Stat>
+                    <Caption className="mt-0.5">180s</Caption>
+                  </View>
+                </View>
               </View>
               {highestCheckout !== undefined && (
                 <Body size="sm" className="mt-3">
-                  Highest checkout: <Body size="sm" tone="butter" weight="bold">{highestCheckout}</Body>
+                  Highest checkout: <Body size="sm" tone="strong" weight="bold">{highestCheckout}</Body>
                 </Body>
               )}
             </Card>
@@ -300,18 +314,22 @@ export default function PlayerProfileScreen() {
           ) : matchHistory.length === 0 ? (
             <Card className="mb-2"><Body size="sm">No completed matches yet this season.</Body></Card>
           ) : (
-            matchHistory.map((entry) => {
-              const opponentName = teamNamesById[entry.opponentId] ?? '…';
-              const teamWon = entry.isHome
-                ? (entry.match.homeGamesWon ?? 0) > (entry.match.awayGamesWon ?? 0)
-                : (entry.match.awayGamesWon ?? 0) > (entry.match.homeGamesWon ?? 0);
-              return (
-                <TouchableOpacity
-                  key={entry.match.id}
-                  activeOpacity={0.7}
-                  onPress={() => router.push(`/(protected)/results-entry?matchId=${entry.match.id}`)}
-                >
-                  <Card className="mb-2.5">
+            <View className="rounded-lg border border-border dark:border-border-dark overflow-hidden">
+              {matchHistory.map((entry, i) => {
+                const opponentName = teamNamesById[entry.opponentId] ?? '…';
+                const teamWon = entry.isHome
+                  ? (entry.match.homeGamesWon ?? 0) > (entry.match.awayGamesWon ?? 0)
+                  : (entry.match.awayGamesWon ?? 0) > (entry.match.homeGamesWon ?? 0);
+                return (
+                  <TouchableOpacity
+                    key={entry.match.id}
+                    activeOpacity={0.7}
+                    onPress={() => router.push(`/(protected)/results-entry?matchId=${entry.match.id}`)}
+                    className={[
+                      'px-4 py-3 bg-surface dark:bg-surface-dark',
+                      i > 0 ? 'border-t border-border dark:border-border-dark' : '',
+                    ].join(' ')}
+                  >
                     <View className="flex-row items-center justify-between mb-1">
                       <Body tone="strong" weight="semibold" className="flex-1" numberOfLines={1}>
                         {entry.isHome ? 'vs' : '@'} {opponentName}
@@ -322,10 +340,10 @@ export default function PlayerProfileScreen() {
                       <Body size="sm">{formatMatchDate(entry.match.scheduledDate)}</Body>
                       <Body size="sm">Games: {entry.gamesWon}-{entry.gamesLost}</Body>
                     </View>
-                  </Card>
-                </TouchableOpacity>
-              );
-            })
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
           )}
         </ScrollView>
       )}
