@@ -21,11 +21,11 @@ on:
 env:
   # fix/production-qa-issues (PR #35 — production QA fixes: player match
   # display, League Admin responsive layout/sign-off/reset, match score
-  # semantics, 180/checkout entry UX), exact commit — see the comment above
-  # for why this is a fixed SHA, not a branch name. Currently PR #35's head
-  # commit (all six QA fixes), the latest commit on the branch as of this
-  # update.
-  PINNED_SHA: 'bf8be517525be65a2c4bce8827c80f6f13b5eb07'
+  # semantics, 180/checkout entry UX, team W/L record formatting, Next
+  # Match opponent data), exact commit — see the comment above for why
+  # this is a fixed SHA, not a branch name. Currently PR #35's head commit
+  # (all eight QA fixes), the latest commit on the branch as of this update.
+  PINNED_SHA: 'bdd65efe669cfdfb665076a19a6a39dc3589074c'
 
 permissions:
   contents: read
