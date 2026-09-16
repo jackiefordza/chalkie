@@ -13,7 +13,7 @@ import {
 } from '@/components/ui';
 import { formatMatchDate } from '@/components/MatchCentre';
 import { recentForm, ordinal } from '@/components/HomeDashboard';
-import { teamMatchScore } from '@/lib/matchScore';
+import { teamMatchScore, formatTeamRecord } from '@/lib/matchScore';
 import type { Team, DivisionTable, Match, MatchGame, Player } from '@/types';
 
 type TeamRole = 'captain' | 'viceCaptain' | 'player';
@@ -290,9 +290,9 @@ export default function TeamProfileScreen() {
                 <Stat size="lg" tone="brand">{ordinal(tableRow.position)}</Stat>
                 <Body size="sm" className="pb-1 flex-1">
                   <Body tone="strong" weight="bold" size="sm">{tableRow.points}</Body>
-                  {' pts  ·  '}
-                  <Body tone="strong" size="sm">{tableRow.won}-{tableRow.lost}</Body>
-                  {' W-L  ·  '}
+                  {' pts · '}
+                  <Body tone="strong" size="sm">{formatTeamRecord(tableRow.won, tableRow.lost)}</Body>
+                  {' · '}
                   <Body tone={tableRow.legDiff >= 0 ? 'sage' : 'coral'} weight="semibold" size="sm">
                     {tableRow.legDiff > 0 ? `+${tableRow.legDiff}` : tableRow.legDiff}
                   </Body>

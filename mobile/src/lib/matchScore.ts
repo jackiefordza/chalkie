@@ -6,11 +6,19 @@ import type { Match } from '@/types';
 // bug this helper exists to prevent:
 //  - MATCH SCORE (legsFor/legsAgainst) — total legs won across all 7 games,
 //    e.g. 12-9. This is "the score" when someone says "what was the match?"
-//  - TEAM MATCH RECORD (gamesFor/gamesAgainst) — individual games won,
-//    e.g. 4-3. This decides who won the match and seeds the league table,
-//    but it is NOT the match score and must always be labeled as games.
+//  - GAMES (gamesFor/gamesAgainst) — individual games won WITHIN this one
+//    match, e.g. 4-3 (always sums to 7). This decides who won the match and
+//    seeds the league table, but it is NOT the match score and must always
+//    be labeled as games.
 //  - An individual player's own game score (e.g. 2-1) is a different concept
 //    again — see computePlayerSinglesGames in playerMatchHistory.ts.
+//
+// A FOURTH, unrelated concept lives on DivisionTable, not Match — see
+// formatTeamRecord below: a team's SEASON-LONG record of MATCHES (not
+// individual games) won and lost, e.g. "W4 · L2" after 6 matches played.
+// Never confuse this with the per-match GAMES figure above — "4-3 games in
+// this one match" and "W4 · L2 matches across the season" can both be true
+// at once and mean completely different things.
 export interface TeamMatchScore {
   won: boolean;
   legsFor: number;
@@ -40,4 +48,13 @@ export function teamMatchScore(match: ScoredMatch, teamId: string): TeamMatchSco
   const legsFor = isHome ? match.homeLegsWon : match.awayLegsWon;
   const legsAgainst = isHome ? match.awayLegsWon : match.homeLegsWon;
   return { won: gamesFor > gamesAgainst, legsFor, legsAgainst, gamesFor, gamesAgainst };
+}
+
+// A team's season-long record of MATCHES won/lost (DivisionTable.won/lost —
+// NOT Match.homeGamesWon/awayGamesWon, a different per-match figure — see
+// the file header). Always explicit "W{n} · L{n}", never a bare "4-2":
+// unprefixed, that reads identically to a match score or individual game
+// score, which is exactly the ambiguity this format exists to remove.
+export function formatTeamRecord(won: number, lost: number): string {
+  return `W${won} · L${lost}`;
 }

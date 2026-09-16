@@ -10,6 +10,9 @@ import { useAuthStore } from '@/stores/authStore';
 import { RAW, toneClasses } from '@/lib/theme';
 import { FONT_MONO, FONT_DISPLAY } from '@/styles/typography';
 import { STATUS_LABEL, STATUS_TONE } from '@/lib/matchStatus';
+import { formatTeamRecord } from '@/lib/matchScore';
+import { resolveOpponentInfo } from '@/lib/opponentInfo';
+import { recentForm } from '@/lib/recentForm';
 import { Screen, Header, Button, Card, Body, AppIcon } from '@/components/ui';
 import type { Match, DivisionTable, PlayerSeasonStats } from '@/types';
 
@@ -48,16 +51,10 @@ function canViewContact(viewerRole: string | undefined, visibility: string | nul
   return false;
 }
 
-export function recentForm(matches: Match[], teamId: string, count = 3): ('W' | 'L')[] {
-  return matches
-    .filter((m) => m.status === 'confirmed')
-    .slice(-count)
-    .map((m): 'W' | 'L' => {
-      const isHome = m.homeTeamId === teamId;
-      const won = isHome ? (m.homeGamesWon ?? 0) > (m.awayGamesWon ?? 0) : (m.awayGamesWon ?? 0) > (m.homeGamesWon ?? 0);
-      return won ? 'W' : 'L';
-    });
-}
+// Moved to src/lib/recentForm.ts so it can be unit-tested without pulling in
+// this whole file's react-native imports (see recentForm.test.ts) — team-
+// profile.tsx still imports it from here, so it's re-exported unchanged.
+export { recentForm };
 
 // A slightly more compact W/L dot than the shared FormBadge (Home packs
 // several in a row next to a label) — same tone tokens, so it now renders
@@ -84,17 +81,30 @@ interface NextMatchHeroProps {
   match: Match | null;
   teamId: string;
   opponentName: string;
-  tableRow: DivisionTable | null;
+  // The VIEWER's own recent form — used only in the "no fixture scheduled"
+  // empty state below ("Your Form"). The opponent's own position/form for
+  // the fixture itself is resolved independently inside this component
+  // (see opponentTableRows/opponentLeagueMatches below) — it must never
+  // come from the viewer's own standings row, which was the bug this
+  // component previously had (the same tableRow was shown twice: once here,
+  // once in YourTeamSection).
   form: ('W' | 'L')[];
   isCaptainOrVC: boolean;
 }
 
-function NextMatchHero({ match, teamId, opponentName, tableRow, form, isCaptainOrVC }: NextMatchHeroProps) {
+function NextMatchHero({ match, teamId, opponentName, form, isCaptainOrVC }: NextMatchHeroProps) {
   const { appUser } = useAuthStore();
   const { colorScheme } = useColorScheme();
   const isDark = colorScheme === 'dark';
   const [opponentContact, setOpponentContact] = useState<OpponentContact | null>(null);
   const [venuePhone, setVenuePhone] = useState<string | null>(null);
+  // Raw ingredients for resolveOpponentInfo — the opponent's division table
+  // (scoped to THIS fixture's own league/season/division, never the
+  // viewer's) and the opponent's own league matches (for their recent
+  // form). Kept as separate live queries rather than one bigger query so
+  // each can be independently and defensively scoped — see opponentInfo.ts.
+  const [opponentTableRows, setOpponentTableRows] = useState<DivisionTable[]>([]);
+  const [opponentLeagueMatches, setOpponentLeagueMatches] = useState<Match[]>([]);
   // Whether OUR team has a saved submission for this match yet — only
   // meaningful (and only fetched) once there's actually a submission to
   // check for, i.e. once the match is past 'scheduled'. Lets the action
@@ -140,6 +150,45 @@ function NextMatchHero({ match, teamId, opponentName, tableRow, form, isCaptainO
       .catch(() => setHasSubmitted(null));
   }, [isCaptainOrVC, match?.id, match?.status, teamId]);
 
+  // The opponent's own division table — scoped to this fixture's own
+  // league/season/division (never the viewer's own appUser.* fields, which
+  // is what the old bug effectively did by reusing the viewer's tableRow).
+  // A small collection (one division's worth of teams), same query shape
+  // standings.tsx already uses, just without its orderBy.
+  useEffect(() => {
+    if (!match || !opponentId) { setOpponentTableRows([]); return; }
+    return onSnapshot(
+      query(
+        collection(db, 'divisionTables'),
+        where('leagueId', '==', match.leagueId),
+        where('seasonId', '==', match.seasonId),
+        where('divisionId', '==', match.divisionId),
+      ),
+      (snap) => setOpponentTableRows(snap.docs.map((d) => ({ id: d.id, ...d.data() } as DivisionTable))),
+      () => setOpponentTableRows([]),
+    );
+  }, [match?.leagueId, match?.seasonId, match?.divisionId, opponentId]);
+
+  // The opponent's own league matches, for their recent form — same query
+  // shape HomeDashboard uses for the viewer's own matches below, scoped to
+  // opponentId instead of teamId.
+  useEffect(() => {
+    if (!match || !opponentId) { setOpponentLeagueMatches([]); return; }
+    return onSnapshot(
+      query(
+        collection(db, 'matches'),
+        and(where('leagueId', '==', match.leagueId), or(where('homeTeamId', '==', opponentId), where('awayTeamId', '==', opponentId))),
+        orderBy('scheduledDate', 'asc'),
+      ),
+      (snap) => setOpponentLeagueMatches(snap.docs.map((d) => ({
+        id: d.id, ...d.data(), scheduledDate: d.data().scheduledDate?.toDate() ?? new Date(),
+      } as Match))),
+      () => setOpponentLeagueMatches([]),
+    );
+  }, [match?.leagueId, opponentId]);
+
+  const opponentInfo = match ? resolveOpponentInfo(match, teamId, opponentTableRows, opponentLeagueMatches) : null;
+
   if (!match || !opponentId) {
     return (
       <View className="rounded-lg border border-border dark:border-border-dark bg-surface dark:bg-surface-dark px-5 py-5 mb-6">
@@ -184,19 +233,30 @@ function NextMatchHero({ match, teamId, opponentName, tableRow, form, isCaptainO
       </View>
       <Text className="text-[15px] text-text-dim dark:text-text-dim-dark mb-4" numberOfLines={1}>vs {opponentName}</Text>
 
-      <View className="flex-row items-center justify-between mb-4">
-        <Text className="text-[13px] text-text-dim dark:text-text-dim-dark flex-1 mr-2" numberOfLines={1}>
-          {formatDate(match.scheduledDate)}{match.venue ? ` · ${match.venue}` : ''}
-        </Text>
-        {tableRow && (
-          <Text
-            className="text-[13px] font-bold text-brand dark:text-brand-dark"
-            style={{ fontFamily: FONT_MONO, fontVariant: ['tabular-nums'] }}
-          >
-            {ordinal(tableRow.position)}
-          </Text>
-        )}
-      </View>
+      <Text className="text-[13px] text-text-dim dark:text-text-dim-dark mb-1" numberOfLines={1}>
+        {formatDate(match.scheduledDate)}{match.venue ? ` · ${match.venue}` : ''}
+      </Text>
+
+      {/* Opponent snapshot — their league position and recent form, never
+          the viewer's own (see NextMatchHeroProps comment / opponentInfo.ts).
+          "Your Team" below is where the viewer's own numbers live. */}
+      {(opponentInfo?.tableRow || (opponentInfo && opponentInfo.form.length > 0)) && (
+        <View className="flex-row items-center justify-between mb-4">
+          {opponentInfo?.tableRow ? (
+            <Text
+              className="text-[13px] font-bold text-brand dark:text-brand-dark"
+              style={{ fontFamily: FONT_MONO, fontVariant: ['tabular-nums'] }}
+            >
+              {ordinal(opponentInfo.tableRow.position)}
+            </Text>
+          ) : <View />}
+          {opponentInfo && opponentInfo.form.length > 0 && (
+            <View className="flex-row gap-1">
+              {opponentInfo.form.map((r, i) => <FormDot key={i} result={r} />)}
+            </View>
+          )}
+        </View>
+      )}
 
       {isCaptainOrVC && (
         <Button
@@ -261,9 +321,9 @@ function YourTeamSection({ tableRow, form, teamId }: { tableRow: DivisionTable; 
             <Text className="font-bold text-text dark:text-text-dark" style={{ fontFamily: FONT_MONO, fontVariant: ['tabular-nums'] }}>
               {tableRow.points}
             </Text>
-            {' pts  ·  '}
-            <Text style={{ fontFamily: FONT_MONO, fontVariant: ['tabular-nums'] }}>{tableRow.won}-{tableRow.lost}</Text>
-            {' W-L  ·  '}
+            {' pts · '}
+            <Text style={{ fontFamily: FONT_MONO, fontVariant: ['tabular-nums'] }}>{formatTeamRecord(tableRow.won, tableRow.lost)}</Text>
+            {' · '}
             <Text style={{ fontFamily: FONT_MONO, fontVariant: ['tabular-nums'] }}>{legDiffText}</Text>
             {' legs'}
           </Text>
@@ -639,7 +699,6 @@ export function HomeDashboard() {
               match={nextMatch}
               teamId={teamId}
               opponentName={nextOpponentId ? (teamNames[nextOpponentId] ?? '…') : ''}
-              tableRow={tableRow}
               form={form}
               isCaptainOrVC={isCaptainOrVC}
             />

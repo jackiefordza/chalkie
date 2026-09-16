@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { teamMatchScore } from './matchScore';
+import { teamMatchScore, formatTeamRecord } from './matchScore';
 
 function match(overrides: Partial<Parameters<typeof teamMatchScore>[0]> = {}) {
   return {
@@ -43,4 +43,17 @@ test('a drawn games count (e.g. postponed edge case) is not "won"', () => {
   const m = match({ homeGamesWon: 3, awayGamesWon: 3, homeLegsWon: 9, awayLegsWon: 9 });
   assert.equal(teamMatchScore(m, 'team-home')!.won, false);
   assert.equal(teamMatchScore(m, 'team-away')!.won, false);
+});
+
+test('formatTeamRecord: uses explicit W/L prefixes, never a bare "4-2"', () => {
+  assert.equal(formatTeamRecord(4, 2), 'W4 · L2');
+});
+
+test('formatTeamRecord: a team with zero wins/losses displays sensibly, not ambiguous or missing', () => {
+  assert.equal(formatTeamRecord(0, 0), 'W0 · L0');
+});
+
+test('formatTeamRecord: matches the exact example format from the QA brief', () => {
+  assert.equal(formatTeamRecord(4, 2), 'W4 · L2');
+  assert.equal(formatTeamRecord(2, 4), 'W2 · L4');
 });
