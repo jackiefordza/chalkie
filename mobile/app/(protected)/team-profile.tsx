@@ -13,6 +13,7 @@ import {
 } from '@/components/ui';
 import { formatMatchDate } from '@/components/MatchCentre';
 import { recentForm, ordinal } from '@/components/HomeDashboard';
+import { teamMatchScore } from '@/lib/matchScore';
 import type { Team, DivisionTable, Match, MatchGame, Player } from '@/types';
 
 type TeamRole = 'captain' | 'viceCaptain' | 'player';
@@ -367,11 +368,8 @@ export default function TeamProfileScreen() {
               {recentResults.map((m, i) => {
                 const isHome = m.homeTeamId === teamId;
                 const opponentId = isHome ? m.awayTeamId : m.homeTeamId;
-                const won = isHome
-                  ? (m.homeGamesWon ?? 0) > (m.awayGamesWon ?? 0)
-                  : (m.awayGamesWon ?? 0) > (m.homeGamesWon ?? 0);
-                const gamesFor = isHome ? m.homeGamesWon : m.awayGamesWon;
-                const gamesAgainst = isHome ? m.awayGamesWon : m.homeGamesWon;
+                const score = teamMatchScore(m, teamId);
+                if (!score) return null;
                 return (
                   <TouchableOpacity
                     key={m.id}
@@ -386,11 +384,13 @@ export default function TeamProfileScreen() {
                       <Body tone="strong" weight="semibold" className="flex-1" numberOfLines={1}>
                         {isHome ? 'vs' : '@'} {teamNamesById[opponentId] ?? '…'}
                       </Body>
-                      <Badge tone={won ? 'sage' : 'coral'}>{won ? 'Won' : 'Lost'}</Badge>
+                      <Badge tone={score.won ? 'sage' : 'coral'}>{score.won ? 'Won' : 'Lost'}</Badge>
                     </View>
                     <View className="flex-row items-center justify-between">
                       <Body size="sm">{formatMatchDate(m.scheduledDate)}</Body>
-                      <Body size="sm" tone={won ? 'sage' : 'coral'} weight="semibold">{gamesFor}-{gamesAgainst} games</Body>
+                      <Body size="sm" tone={score.won ? 'sage' : 'coral'} weight="semibold">
+                        {score.legsFor}-{score.legsAgainst} legs
+                      </Body>
                     </View>
                   </TouchableOpacity>
                 );

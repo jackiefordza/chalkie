@@ -14,3 +14,19 @@ export function canSignOffMatch(
   if (appUser.isGlobalAdmin) return true;
   return appUser.isLeagueAdmin && appUser.leagueId === match.leagueId;
 }
+
+// Client-side gate for showing the "Reset Result" action — mirrors the same
+// isAdminFor() scoping (global admin any league; league admin only their
+// own), matching the real enforcement in the adminResetMatchResult callable
+// (functions/src/index.ts), which re-checks this server-side via
+// assertLeagueAdmin regardless of what this returns. There's nothing to
+// reset on a fixture that hasn't been touched yet.
+export function canResetMatch(
+  appUser: Pick<AppUser, 'isLeagueAdmin' | 'isGlobalAdmin' | 'leagueId'> | null | undefined,
+  match: Pick<Match, 'leagueId' | 'status'> | null | undefined,
+): boolean {
+  if (!appUser || !match) return false;
+  if (match.status === 'scheduled') return false;
+  if (appUser.isGlobalAdmin) return true;
+  return appUser.isLeagueAdmin && appUser.leagueId === match.leagueId;
+}

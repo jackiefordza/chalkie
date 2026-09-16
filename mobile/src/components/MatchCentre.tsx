@@ -43,12 +43,15 @@ export function MatchHeader({ match, homeTeamName, awayTeamName }: { match: Matc
 
       {isConfirmed ? (
         <View className="items-center py-2">
+          {/* The match score is total legs (e.g. 12-9), not games won — see
+              matchScore.ts. Games decide who won and are shown small below,
+              clearly labeled, never as the headline figure. */}
           <View className="flex-row items-center gap-3">
-            <Stat size="lg">{match.homeGamesWon}</Stat>
+            <Stat size="lg">{match.homeLegsWon}</Stat>
             <Body size="sm">–</Body>
-            <Stat size="lg">{match.awayGamesWon}</Stat>
+            <Stat size="lg">{match.awayLegsWon}</Stat>
           </View>
-          <Caption className="mt-1">{match.homeLegsWon}-{match.awayLegsWon} legs · games</Caption>
+          <Caption className="mt-1">{match.homeGamesWon}-{match.awayGamesWon} games</Caption>
         </View>
       ) : (
         <Body size="sm" className="mb-1">
@@ -93,13 +96,17 @@ export function MatchSummary({ match, playerName }: { match: Match; playerName: 
     <Card className="mb-4">
       <Caption className="mb-3">Match Summary</Caption>
       <View className="flex-row gap-2.5">
+        {/* Legs first — the actual match score (see matchScore.ts). Games
+            (the team match record, which decides who won) is real and
+            useful but secondary, and always explicitly labeled "Games" so
+            it's never mistaken for the match score. */}
         <View className="flex-1 rounded-2xl bg-surface-2 dark:bg-surface-2-dark p-3 items-center">
-          <Stat size="md" tone="sage">{match.homeGamesWon}-{match.awayGamesWon}</Stat>
-          <Caption className="mt-1">Games</Caption>
+          <Stat size="md" tone="sage">{match.homeLegsWon}-{match.awayLegsWon}</Stat>
+          <Caption className="mt-1">Legs</Caption>
         </View>
         <View className="flex-1 rounded-2xl bg-surface-2 dark:bg-surface-2-dark p-3 items-center">
-          <Stat size="md">{match.homeLegsWon}-{match.awayLegsWon}</Stat>
-          <Caption className="mt-1">Legs</Caption>
+          <Stat size="md">{match.homeGamesWon}-{match.awayGamesWon}</Stat>
+          <Caption className="mt-1">Games</Caption>
         </View>
         <View className="flex-1 rounded-2xl bg-surface-2 dark:bg-surface-2-dark p-3 items-center">
           <Stat size="md">{oneEightyCount}</Stat>
@@ -187,22 +194,19 @@ export function GameRow({ game, gameIndex, playerName, tone, label }: GameRowPro
         <AppIcon name={expanded ? 'chevron-down' : 'chevron-right'} size={12} color={isDark ? RAW.brandInkDark : RAW.brandInk} />
       </TouchableOpacity>
 
+      {/* Per leg, only the winner — the one thing that's still real,
+          leg-accurate data. 180s/high checkouts are recorded per player,
+          not per leg (see Issue 6/matchResultDraft.ts), so the game-level
+          summary above is the accurate place to show them; breaking them
+          out by leg here would just be an arbitrary internal detail. */}
       {expanded && (
         <View className="mt-2 gap-1.5">
           {game.legs.map((leg, i) => (
             <View key={i} className="flex-row items-center justify-between py-2 px-3 rounded-lg bg-surface-2 dark:bg-surface-2-dark">
               <Body size="sm">Leg {i + 1}</Body>
-              <View className="flex-row items-center gap-2 flex-1 justify-end">
-                {leg.oneEighties.length > 0 && (
-                  <Body size="xs">180: {leg.oneEighties.map(playerName).join(', ')}</Body>
-                )}
-                {leg.highCheckout && (
-                  <Body size="xs">{playerName(leg.highCheckout.playerId)} {leg.highCheckout.value}</Body>
-                )}
-                <Body size="sm" tone={leg.winner === 'home' ? 'sage' : 'coral'} weight="semibold">
-                  {leg.winner === 'home' ? 'Home' : 'Away'}
-                </Body>
-              </View>
+              <Body size="sm" tone={leg.winner === 'home' ? 'sage' : 'coral'} weight="semibold">
+                {leg.winner === 'home' ? 'Home' : 'Away'}
+              </Body>
             </View>
           ))}
         </View>

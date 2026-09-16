@@ -5,10 +5,11 @@ import { Stack, useLocalSearchParams, router } from 'expo-router';
 import {
   collection, doc, onSnapshot, query, where, getDoc, setDoc, updateDoc, deleteDoc, serverTimestamp,
 } from 'firebase/firestore';
-import { db } from '@/config/firebase';
+import { httpsCallable } from 'firebase/functions';
+import { db, functions } from '@/config/firebase';
 import { useAuthStore } from '@/stores/authStore';
 import { goBack } from '@/lib/navigation';
-import { canSignOffMatch } from '@/lib/matchPermissions';
+import { canSignOffMatch, canResetMatch } from '@/lib/matchPermissions';
 import { RAW } from '@/lib/theme';
 import {
   Screen, Heading, Body, Caption, Stat, Badge, Button, Card, Chip, Input, Label, Sheet, AppBar,
@@ -59,18 +60,10 @@ export default function ResultsEntryScreen() {
   // player-picker modal
   const [picker, setPicker] = useState<{ gameIndex: number; side: MatchSide } | null>(null);
 
-  // Which leg (0-2) new 180s get attributed to, per game — defaults to the
-  // first leg. Lets a captain tap through several 180s in the same leg
-  // without re-selecting it each time, matching the existing tap-to-add
-  // interaction; switching legs is one extra tap when a 180 happened later
-  // in the game.
-  const [activeLeg, setActiveLeg] = useState<Record<number, number>>({});
-
   // high-checkout modal (add new, or edit an existing entry) for a given game
   const [checkoutModal, setCheckoutModal] = useState<{ gameIndex: number; editIndex: number | null } | null>(null);
   const [checkoutPlayerId, setCheckoutPlayerId] = useState<string | null>(null);
   const [checkoutValue, setCheckoutValue] = useState('');
-  const [checkoutLegIndex, setCheckoutLegIndex] = useState<number | null>(null);
 
   const teamId = appUser?.teamId ?? null;
   const isHome = match ? teamId === match.homeTeamId : false;
@@ -276,22 +269,19 @@ export default function ResultsEntryScreen() {
     }
   }
 
-  function legIndexFor(gameIndex: number): number {
-    return activeLeg[gameIndex] ?? 0;
+  // 180s are a plain per-player count — see Issue 6: which leg it happened
+  // in was never something any consumer of this data actually needed (see
+  // matchResultDraft.ts), just an unnecessary extra decision for the person
+  // entering the result. Incrementing adds one entry for this player;
+  // decrementing removes the last one — order among a single player's own
+  // entries has no meaning, only the count does.
+  function incrementOneEighty(gameIndex: number, playerId: string) {
+    updateGame(gameIndex, { oneEighties: [...games[gameIndex].oneEighties, playerId] });
   }
 
-  function addOneEighty(gameIndex: number, playerId: string) {
-    const legIndex = legIndexFor(gameIndex);
-    updateGame(gameIndex, { oneEighties: [...games[gameIndex].oneEighties, { playerId, legIndex }] });
-  }
-
-  // Removes one 180 for this player from the currently-selected leg — the UI
-  // only offers this when one exists there (see the "−" button's condition
-  // in the render below), so there's always a matching entry to remove.
-  function removeOneEighty(gameIndex: number, playerId: string) {
-    const legIndex = legIndexFor(gameIndex);
+  function decrementOneEighty(gameIndex: number, playerId: string) {
     const list = [...games[gameIndex].oneEighties];
-    const idx = list.findIndex((o) => o.playerId === playerId && o.legIndex === legIndex);
+    const idx = list.lastIndexOf(playerId);
     if (idx !== -1) list.splice(idx, 1);
     updateGame(gameIndex, { oneEighties: list });
   }
@@ -299,7 +289,6 @@ export default function ResultsEntryScreen() {
   function openAddCheckout(gameIndex: number) {
     setCheckoutPlayerId(null);
     setCheckoutValue('');
-    setCheckoutLegIndex(null);
     setCheckoutModal({ gameIndex, editIndex: null });
   }
 
@@ -307,14 +296,13 @@ export default function ResultsEntryScreen() {
     const existing = games[gameIndex].highCheckouts[editIndex];
     setCheckoutPlayerId(existing.playerId);
     setCheckoutValue(existing.value);
-    setCheckoutLegIndex(existing.legIndex);
     setCheckoutModal({ gameIndex, editIndex });
   }
 
   function saveCheckout() {
-    if (!checkoutModal || !checkoutPlayerId || !checkoutValue.trim() || checkoutLegIndex === null) return;
+    if (!checkoutModal || !checkoutPlayerId || !checkoutValue.trim()) return;
     const { gameIndex, editIndex } = checkoutModal;
-    const entry = { playerId: checkoutPlayerId, value: checkoutValue.trim(), legIndex: checkoutLegIndex };
+    const entry = { playerId: checkoutPlayerId, value: checkoutValue.trim() };
     const list = [...games[gameIndex].highCheckouts];
     if (editIndex === null) list.push(entry); else list[editIndex] = entry;
     updateGame(gameIndex, { highCheckouts: list });
@@ -411,6 +399,38 @@ export default function ResultsEntryScreen() {
     }
   }
 
+  // Returns a fixture to its original unplayed state — distinct from
+  // deleting it (confirmDeleteMatch/deleteMatch below): the fixture itself
+  // (teams, date, venue, league/season/division) stays, only the result/
+  // submission state and its stats/standings contribution are cleared. Goes
+  // through the adminResetMatchResult callable rather than a plain client
+  // write, since only that callable actually reverses the derived stats —
+  // see functions/src/index.ts for why a raw status flip can't safely do it.
+  function confirmResetMatch() {
+    Alert.alert(
+      'Reset this result?',
+      "This clears the submitted or confirmed result and any 180/checkout data, reverses its contribution to standings and player stats, and returns the fixture to scheduled with no result. The fixture itself — teams, date, venue — stays exactly as it is. This can't be undone.",
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Reset Result', style: 'destructive', onPress: resetMatch },
+      ],
+    );
+  }
+
+  async function resetMatch() {
+    if (!matchId) return;
+    setIsSubmitting(true);
+    try {
+      await httpsCallable(functions, 'adminResetMatchResult')({ matchId });
+      Alert.alert('Result reset', 'This fixture is back to scheduled with no result.');
+      goBack();
+    } catch (e: unknown) {
+      Alert.alert('Error', (e as Error).message ?? 'Something went wrong');
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
   function confirmDeleteMatch() {
     Alert.alert(
       'Delete this fixture',
@@ -457,9 +477,12 @@ export default function ResultsEntryScreen() {
           <MatchHeader match={match!} homeTeamName={homeTeamName} awayTeamName={awayTeamName} />
           <MatchSummary match={match!} playerName={playerName} />
           {isAdmin && (
-            <View className="flex-row gap-2.5 mb-4">
-              <Button variant="secondary" size="sm" className="flex-1" onPress={openAdminCorrection}>Edit Result</Button>
-              <Button variant="danger" size="sm" className="flex-1" onPress={confirmDeleteMatch}>Delete Fixture</Button>
+            <View className="flex-row flex-wrap gap-2.5 mb-4">
+              <Button variant="secondary" size="sm" onPress={openAdminCorrection}>Edit Result</Button>
+              {canResetMatch(appUser, match) && (
+                <Button variant="secondary" size="sm" disabled={isSubmitting} onPress={confirmResetMatch}>Reset Result</Button>
+              )}
+              <Button variant="danger" size="sm" onPress={confirmDeleteMatch}>Delete Fixture</Button>
             </View>
           )}
           {(match!.games ?? []).map((game, gameIndex) => (
@@ -521,16 +544,28 @@ export default function ResultsEntryScreen() {
                 >
                   Sign Off Result (Admin)
                 </Button>
+                {/* Covers the common real case behind Issue 5: a captain
+                    submitted this result against the WRONG fixture. */}
+                <Button variant="ghost" size="sm" disabled={isSubmitting} onPress={confirmResetMatch}>
+                  Reset Result Instead
+                </Button>
               </>
             )
           ) : isAdmin && match!.status === 'disputed' ? (
-            <ActionBanner
-              eyebrow="DISPUTED — ADMIN REVIEW NEEDED"
-              description="The two submitted results don't match. Resolve it to confirm the final result."
-              buttonLabel="Resolve Dispute"
-              onPress={() => router.push(`/(protected)/admin-dispute?matchId=${matchId}`)}
-              tone="coral"
-            />
+            <>
+              <ActionBanner
+                eyebrow="DISPUTED — ADMIN REVIEW NEEDED"
+                description="The two submitted results don't match. Resolve it to confirm the final result."
+                buttonLabel="Resolve Dispute"
+                onPress={() => router.push(`/(protected)/admin-dispute?matchId=${matchId}`)}
+                tone="coral"
+              />
+              {canResetMatch(appUser, match) && (
+                <Button variant="ghost" size="sm" disabled={isSubmitting} onPress={confirmResetMatch}>
+                  Reset Result Instead
+                </Button>
+              )}
+            </>
           ) : match!.status === 'disputed' ? (
             // A viewer with no way to act (not this match's captain/VC, not
             // an admin) — still worth telling them something is happening,
@@ -593,7 +628,7 @@ export default function ResultsEntryScreen() {
               return (
                 <Card key={gameIndex} className="mb-3.5">
                   <View className="flex-row items-center mb-2.5">
-                    <Caption className="flex-1">Game {gameIndex + 1} · {game.type === 'singles' ? 'Singles' : 'Pairs'}</Caption>
+                    <Caption className="flex-1">Game {gameIndex + 1} of {games.length} · {game.type === 'singles' ? 'Singles' : 'Pairs'}</Caption>
                     {isGameComplete(game) && <Badge tone="sage" className="mr-2">Complete</Badge>}
                     {mode === 'review' && editedGameIndexes.has(gameIndex) && (
                       <TouchableOpacity activeOpacity={0.7}
@@ -648,55 +683,48 @@ export default function ResultsEntryScreen() {
                     </Chip>
                   </View>
 
-                  {/* 180s — attributed to a specific leg (fixes BUG-007: these
-                      used to always land on leg 1 regardless of which leg
-                      they actually happened in). "Leg" here uses the same
-                      ordering Show Legs displays: home's legs first, then
-                      away's, matching how the score above determines them. */}
+                  {/* 180s — a plain per-player count (see Issue 6): nothing
+                      implies one happened until it's actually recorded, and
+                      which leg it happened in is never asked — the persisted
+                      data still supports player/season stats correctly (see
+                      matchResultDraft.ts's toMatchGame). */}
                   {participants.length > 0 && (
                     <>
-                      <Caption className="mb-1.5">180s — which leg?</Caption>
-                      <View className="flex-row gap-2 mb-2.5">
-                        {Array.from({ length: LEGS_PER_GAME }, (_, legIndex) => (
-                          <Chip
-                            key={legIndex}
-                            label={`Leg ${legIndex + 1}`}
-                            selected={legIndexFor(gameIndex) === legIndex}
-                            onPress={() => setActiveLeg((prev) => ({ ...prev, [gameIndex]: legIndex }))}
-                          />
-                        ))}
-                      </View>
-                      <Caption className="mb-1.5">180s in this leg (tap to add, tap − to remove)</Caption>
-                      <View className="flex-row flex-wrap gap-2 mb-3.5">
+                      <Caption className="mb-1.5">180s</Caption>
+                      <View className="gap-2 mb-3.5">
                         {participants.map((id) => {
-                          const totalCount = game.oneEighties.filter((o) => o.playerId === id).length;
-                          const activeOnThisLeg = game.oneEighties.some((o) => o.playerId === id && o.legIndex === legIndexFor(gameIndex));
+                          const count = game.oneEighties.filter((playerId) => playerId === id).length;
                           return (
                             <View
                               key={id}
-                              className={[
-                                'flex-row min-h-[44px] rounded-full items-center pl-1',
-                                totalCount > 0 ? 'bg-brand-fill dark:bg-brand-fill-dark' : 'bg-surface-2 dark:bg-surface-2-dark',
-                              ].join(' ')}
+                              className="flex-row items-center justify-between px-3.5 py-2.5 rounded-xl bg-surface-2 dark:bg-surface-2-dark"
                             >
-                              {/* A recorded 180 is a selected/toggled-on state,
-                                  not a warning — the approved accent (brand),
-                                  not amber, communicates that, consistent with
-                                  every other "selected" state in the app. */}
-                              <TouchableOpacity activeOpacity={0.7} onPress={() => addOneEighty(gameIndex, id)} className="px-2.5 py-2.5">
-                                <Body size="sm" tone={totalCount > 0 ? 'brand' : 'dim'} weight="semibold">
-                                  {playerName(id)}{totalCount > 0 ? ` × ${totalCount}` : ''}
-                                </Body>
-                              </TouchableOpacity>
-                              {activeOnThisLeg && (
-                                <TouchableOpacity activeOpacity={0.7}
-                                  onPress={() => removeOneEighty(gameIndex, id)}
+                              <Body tone={count > 0 ? 'brand' : 'strong'} weight="semibold" className="flex-1" numberOfLines={1}>
+                                {playerName(id)}
+                              </Body>
+                              <View className="flex-row items-center gap-3">
+                                <TouchableOpacity
+                                  activeOpacity={0.7}
+                                  disabled={count === 0}
+                                  onPress={() => decrementOneEighty(gameIndex, id)}
                                   hitSlop={8}
-                                  className="px-3 py-2.5 border-l border-border dark:border-border-dark"
+                                  className={[
+                                    'w-8 h-8 rounded-full items-center justify-center bg-surface dark:bg-surface-dark',
+                                    count === 0 ? 'opacity-30' : '',
+                                  ].join(' ')}
                                 >
-                                  <Body tone="brand" weight="bold">−</Body>
+                                  <Body tone="dim" weight="bold">−</Body>
                                 </TouchableOpacity>
-                              )}
+                                <Stat size="sm" tone={count > 0 ? 'brand' : undefined} className="w-5 text-center">{count}</Stat>
+                                <TouchableOpacity
+                                  activeOpacity={0.7}
+                                  onPress={() => incrementOneEighty(gameIndex, id)}
+                                  hitSlop={8}
+                                  className="w-8 h-8 rounded-full items-center justify-center bg-brand-fill dark:bg-brand-fill-dark"
+                                >
+                                  <Body tone="brand" weight="bold">+</Body>
+                                </TouchableOpacity>
+                              </View>
                             </View>
                           );
                         })}
@@ -704,21 +732,20 @@ export default function ResultsEntryScreen() {
                     </>
                   )}
 
-                  {/* High checkouts — each now carries the leg it happened in
-                      (fixes BUG-007: previously mapped to a leg purely by
-                      array position, unrelated to the leg it actually
-                      happened in). Capped at one per leg, same as before. */}
+                  {/* High checkouts — who and how much, no leg to pick (see
+                      Issue 6). Still capped at LEGS_PER_GAME entries, since a
+                      game only has that many legs to check out in. */}
                   <Caption className="mb-1.5">High checkouts</Caption>
                   <View className="flex-row flex-wrap gap-2">
                     {/* Selected/recorded state — Chip's default tone
                         (brand) already gives the same "selected = accent"
-                        treatment as the 180 pills above, not amber. */}
+                        treatment as the 180 counter above, not amber. */}
                     {game.highCheckouts.map((hc, i) => (
                       <Chip
                         key={i}
                         selected
                         onPress={() => openEditCheckout(gameIndex, i)}
-                        label={`Leg ${hc.legIndex + 1}: ${playerName(hc.playerId)} — ${hc.value}`}
+                        label={`${playerName(hc.playerId)} — ${hc.value}`}
                       />
                     ))}
                     {participants.length > 0 && game.highCheckouts.length < LEGS_PER_GAME && (
@@ -782,29 +809,6 @@ export default function ResultsEntryScreen() {
       {/* High checkout modal */}
       <Sheet visible={!!checkoutModal} onClose={() => setCheckoutModal(null)}>
         <Heading className="mb-4">High Checkout</Heading>
-        <Label>Which leg?</Label>
-        <View className="flex-row gap-1.5 mb-4">
-          {checkoutModal && Array.from({ length: LEGS_PER_GAME }, (_, legIndex) => {
-            // At most one checkout per leg — a leg already claimed by a
-            // DIFFERENT entry than the one being edited can't be picked.
-            const takenByAnother = games[checkoutModal.gameIndex].highCheckouts.some(
-              (hc, i) => hc.legIndex === legIndex && i !== checkoutModal.editIndex,
-            );
-            return (
-              <Chip
-                key={legIndex}
-                label={`Leg ${legIndex + 1}`}
-                selected={checkoutLegIndex === legIndex}
-                disabled={takenByAnother}
-                className={takenByAnother ? 'opacity-40' : ''}
-                onPress={() => setCheckoutLegIndex(legIndex)}
-              />
-            );
-          })}
-        </View>
-        {checkoutLegIndex === null && (
-          <Body size="sm" tone="dim" className="mb-3 -mt-2">Pick which leg this happened in before saving.</Body>
-        )}
         <Label>Player</Label>
         <View className="flex-row flex-wrap gap-1.5 mb-4">
           {checkoutModal && [...games[checkoutModal.gameIndex].homePlayerIds, ...games[checkoutModal.gameIndex].awayPlayerIds].map((id) => (
@@ -831,7 +835,7 @@ export default function ResultsEntryScreen() {
           {checkoutModal?.editIndex !== null && (
             <Button variant="danger" className="flex-1" onPress={removeCheckout}>Remove</Button>
           )}
-          <Button className="flex-1" disabled={!checkoutPlayerId || !checkoutValue.trim() || checkoutLegIndex === null} onPress={saveCheckout}>Save</Button>
+          <Button className="flex-1" disabled={!checkoutPlayerId || !checkoutValue.trim()} onPress={saveCheckout}>Save</Button>
         </View>
       </Sheet>
     </>

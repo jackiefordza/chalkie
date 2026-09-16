@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { canSignOffMatch } from './matchPermissions';
+import { canSignOffMatch, canResetMatch } from './matchPermissions';
 import type { AppUser, Match } from '@/types';
 
 function admin(overrides: Partial<AppUser> = {}): Pick<AppUser, 'isLeagueAdmin' | 'isGlobalAdmin' | 'leagueId'> {
@@ -63,6 +63,53 @@ test('null or undefined appUser/match is always rejected', () => {
 test('a league admin with a null leagueId may not sign off any league\'s match', () => {
   assert.equal(
     canSignOffMatch(admin({ isLeagueAdmin: true, leagueId: null }), match({ leagueId: 'league-1' })),
+    false,
+  );
+});
+
+test('a global admin may reset a result in any league, in any non-scheduled status', () => {
+  const appUser = admin({ isGlobalAdmin: true, leagueId: 'other-league' });
+  assert.equal(canResetMatch(appUser, match({ status: 'awaiting_confirmation' })), true);
+  assert.equal(canResetMatch(appUser, match({ status: 'disputed' })), true);
+  assert.equal(canResetMatch(appUser, match({ status: 'confirmed' })), true);
+});
+
+test('nobody may reset a scheduled fixture — there is nothing to reset', () => {
+  assert.equal(canResetMatch(admin({ isGlobalAdmin: true }), match({ status: 'scheduled' })), false);
+  assert.equal(
+    canResetMatch(admin({ isLeagueAdmin: true, leagueId: 'league-1' }), match({ leagueId: 'league-1', status: 'scheduled' })),
+    false,
+  );
+});
+
+test('a league admin may reset a result in their own league', () => {
+  const appUser = admin({ isLeagueAdmin: true, leagueId: 'league-1' });
+  assert.equal(canResetMatch(appUser, match({ leagueId: 'league-1', status: 'confirmed' })), true);
+  assert.equal(canResetMatch(appUser, match({ leagueId: 'league-1', status: 'disputed' })), true);
+  assert.equal(canResetMatch(appUser, match({ leagueId: 'league-1', status: 'awaiting_confirmation' })), true);
+});
+
+test('a league admin may NOT reset a result in a different league — the critical cross-league boundary', () => {
+  assert.equal(
+    canResetMatch(admin({ isLeagueAdmin: true, leagueId: 'league-1' }), match({ leagueId: 'league-2', status: 'confirmed' })),
+    false,
+  );
+});
+
+test('a plain player or captain/VC may never reset a result', () => {
+  assert.equal(canResetMatch(admin({ leagueId: 'league-1' }), match({ leagueId: 'league-1', status: 'confirmed' })), false);
+});
+
+test('canResetMatch: null or undefined appUser/match is always rejected', () => {
+  assert.equal(canResetMatch(null, match({ status: 'confirmed' })), false);
+  assert.equal(canResetMatch(undefined, match({ status: 'confirmed' })), false);
+  assert.equal(canResetMatch(admin({ isGlobalAdmin: true }), null), false);
+  assert.equal(canResetMatch(admin({ isGlobalAdmin: true }), undefined), false);
+});
+
+test('canResetMatch: a league admin with a null leagueId may not reset any league\'s match', () => {
+  assert.equal(
+    canResetMatch(admin({ isLeagueAdmin: true, leagueId: null }), match({ leagueId: 'league-1', status: 'confirmed' })),
     false,
   );
 });
