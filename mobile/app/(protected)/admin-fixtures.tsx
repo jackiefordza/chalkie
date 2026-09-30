@@ -71,13 +71,19 @@ function ResultsTable({
       <View className="flex-row items-center justify-between p-4 border-b border-border dark:border-border-dark">
         <Heading size="sm">{matches.length} result{matches.length === 1 ? '' : 's'}</Heading>
       </View>
+      {/* Column widths are deliberately tighter than DesktopFixtureTable's:
+          this table never shows the (long) "Awaiting Confirmation" status —
+          only "Confirmed"/"Disputed" — so Round/Score/Status can give up
+          space to the two name columns, which matter more and are the ones
+          that get unreadably cramped first as the admin console's fixed
+          256px sidebar eats into narrower desktop windows. */}
       <View className="flex-row px-4 py-2.5 bg-surface-2 dark:bg-surface-2-dark">
-        <Caption className="w-14">Round</Caption>
+        <Caption className="w-10">Round</Caption>
         <Caption className="flex-1">Home</Caption>
         <Caption className="flex-1">Away</Caption>
-        <Caption className="w-24">Score</Caption>
+        <Caption className="w-20">Score</Caption>
         <Caption className="w-36">Date</Caption>
-        <Caption className="w-32">Status</Caption>
+        <Caption className="w-24">Status</Caption>
       </View>
       {matches.map((match, i) => {
         const tone = STATUS_TONE[match.status];
@@ -91,12 +97,12 @@ function ResultsTable({
               i < matches.length - 1 ? 'border-b border-border dark:border-border-dark' : '',
             ].join(' ')}
           >
-            <Body size="sm" className="w-14">{match.round}</Body>
+            <Body size="sm" className="w-10">{match.round}</Body>
             <Body size="sm" tone="strong" weight="semibold" className="flex-1" numberOfLines={1}>{teamName(match.homeTeamId)}</Body>
             <Body size="sm" tone="strong" weight="semibold" className="flex-1" numberOfLines={1}>{teamName(match.awayTeamId)}</Body>
-            <Body size="sm" className="w-24">{match.homeLegsWon ?? '–'}-{match.awayLegsWon ?? '–'}</Body>
+            <Body size="sm" className="w-20">{match.homeLegsWon ?? '–'}-{match.awayLegsWon ?? '–'}</Body>
             <Body size="sm" className="w-36">{formatDate(match.scheduledDate)}</Body>
-            <View className="w-32">
+            <View className="w-24">
               {tone ? <Badge tone={tone}>{STATUS_LABEL[match.status]}</Badge> : <Body size="sm">{STATUS_LABEL[match.status]}</Body>}
             </View>
           </TouchableOpacity>

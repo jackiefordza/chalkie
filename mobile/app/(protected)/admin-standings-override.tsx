@@ -227,7 +227,7 @@ function StandingsBody({ c }: { c: StandingsController }) {
             <TouchableOpacity key={row.id} activeOpacity={0.7} onPress={() => c.openEditTeam(row)}>
               <Card className="flex-row items-center">
                 <Body tone="dim" className="w-6">{i + 1}</Body>
-                <Body tone="strong" weight="semibold" className="flex-1">{row.teamName}</Body>
+                <Body tone="strong" weight="semibold" className="flex-1" numberOfLines={1}>{row.teamName}</Body>
                 <Body size="sm" className="w-16 text-right">P {row.played}</Body>
                 <Body size="sm" className="w-16 text-right">Pts {row.points}</Body>
                 <Body size="sm" className="w-20 text-right">{row.legsFor - row.legsAgainst >= 0 ? '+' : ''}{row.legsFor - row.legsAgainst}</Body>
@@ -241,8 +241,8 @@ function StandingsBody({ c }: { c: StandingsController }) {
               <TouchableOpacity key={row.id} activeOpacity={0.7} onPress={() => c.openEditPlayer(row)}>
                 <Card className="flex-row items-center">
                   <View className="flex-1">
-                    <Body tone="strong" weight="semibold">{row.playerName}</Body>
-                    <Caption className="mt-0.5">{row.teamName}</Caption>
+                    <Body tone="strong" weight="semibold" numberOfLines={1}>{row.playerName}</Body>
+                    <Caption className="mt-0.5" numberOfLines={1}>{row.teamName}</Caption>
                   </View>
                   <Body size="sm" className="w-16 text-right">P {row.played}</Body>
                   <Body size="sm" className="w-16 text-right">W {row.won}</Body>

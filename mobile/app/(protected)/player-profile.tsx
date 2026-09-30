@@ -8,28 +8,23 @@ import {
 import { db } from '@/config/firebase';
 import { RAW } from '@/lib/theme';
 import {
-  Screen, AppBar, Heading, Body, Caption, Stat, Badge, Card, Avatar, AppIcon, FormBadge,
+  Screen, AppBar, Heading, Body, Caption, Stat, Card, Avatar, AppIcon, FormBadge,
 } from '@/components/ui';
 import { formatMatchDate } from '@/components/MatchCentre';
-import type { Player, PlayerSeasonStats, Match, MatchGame } from '@/types';
+import { computePlayerSinglesGames, type PlayerGameResult } from '@/lib/playerMatchHistory';
+import type { Player, PlayerSeasonStats, Match } from '@/types';
 
-// A single game this player took part in, with their personal win/loss for
-// that game — GameRow's own homeWon/awayWon computation, ported here rather
-// than imported, since GameRow renders a full row UI this screen doesn't want.
-interface PlayerGameEntry {
-  match: Match;
-  won: boolean;
-}
-
-// One row of Match History — a confirmed match this player played at least
-// one game in, with their personal games won/lost tally for that match
-// (a player can play more than one game per match: singles + pairs).
+// One row of Match History — a confirmed match this player played their
+// singles game in, with the leg score of that specific game. Doubles are
+// excluded entirely (see computePlayerSinglesGames) — a player plays at
+// most one singles game per match, so this is never an aggregate.
 interface MatchHistoryEntry {
   match: Match;
   opponentId: string;
   isHome: boolean;
-  gamesWon: number;
-  gamesLost: number;
+  won: boolean;
+  legsWon: number;
+  legsLost: number;
 }
 
 const RECENT_FORM_COUNT = 5;
@@ -165,55 +160,33 @@ export default function PlayerProfileScreen() {
     );
   }, [player?.teamId, player?.leagueId]);
 
-  // Every game (singles or pairs) this player actually appeared in, across
-  // this team's confirmed matches, oldest first (same order as the query —
-  // reversed at the point of use, mirroring fixtures.tsx's own
-  // `[...matches].reverse()` convention rather than requesting a `desc`
-  // variant of this compound query, which would risk needing a new,
-  // unverified composite index).
-  const playerGames = useMemo<PlayerGameEntry[]>(() => {
-    if (!player) return [];
-    const entries: PlayerGameEntry[] = [];
-    teamMatches
-      .filter((m) => m.status === 'confirmed' && m.games)
-      .forEach((m) => {
-        (m.games as MatchGame[]).forEach((g) => {
-          const isHome = g.homePlayerIds.includes(player.id);
-          const isAway = g.awayPlayerIds.includes(player.id);
-          if (!isHome && !isAway) return;
-          const homeLegs = g.legs.filter((l) => l.winner === 'home').length;
-          const awayLegs = g.legs.filter((l) => l.winner === 'away').length;
-          const won = isHome ? homeLegs > awayLegs : awayLegs > homeLegs;
-          entries.push({ match: m, won });
-        });
-      });
-    return entries;
-  }, [teamMatches, player]);
+  // This player's singles-only games across this team's confirmed matches
+  // (see computePlayerSinglesGames for why doubles are excluded), oldest
+  // first (same order as the query — reversed at the point of use).
+  const playerGames = useMemo<PlayerGameResult[]>(
+    () => (player ? computePlayerSinglesGames(teamMatches, player.id) : []),
+    [teamMatches, player],
+  );
 
-  // Recent Form — this player's personal per-game outcomes (consistent with
-  // PlayerSeasonStats itself counting games, not matches), most recent first.
+  // Recent Form — this player's personal singles outcomes, most recent first.
   const recentForm = useMemo<('W' | 'L')[]>(
     () => playerGames.slice(-RECENT_FORM_COUNT).reverse().map((e) => (e.won ? 'W' : 'L')),
     [playerGames],
   );
 
-  // Match History — one row per match (a player can play multiple games in
-  // the same match), most recent first, capped to a sensible recent window
-  // rather than full career history.
+  // Match History — one row per match (a player plays at most one singles
+  // game per match, so no aggregation needed), most recent first, capped to
+  // a sensible recent window rather than full career history.
   const matchHistory = useMemo<MatchHistoryEntry[]>(() => {
     if (!player) return [];
-    const byMatchId = new Map<string, MatchHistoryEntry>();
-    playerGames.forEach(({ match, won }) => {
-      const isHome = match.homeTeamId === player.teamId;
-      const opponentId = isHome ? match.awayTeamId : match.homeTeamId;
-      const existing = byMatchId.get(match.id);
-      if (existing) {
-        if (won) existing.gamesWon += 1; else existing.gamesLost += 1;
-      } else {
-        byMatchId.set(match.id, { match, opponentId, isHome, gamesWon: won ? 1 : 0, gamesLost: won ? 0 : 1 });
-      }
-    });
-    return [...byMatchId.values()].reverse().slice(0, MATCH_HISTORY_LIMIT);
+    return playerGames
+      .map(({ match, won, legsWon, legsLost }) => {
+        const isHome = match.homeTeamId === player.teamId;
+        const opponentId = isHome ? match.awayTeamId : match.homeTeamId;
+        return { match, opponentId, isHome, won, legsWon, legsLost };
+      })
+      .reverse()
+      .slice(0, MATCH_HISTORY_LIMIT);
   }, [playerGames, player]);
 
   const winPct = stats && stats.played > 0 ? Math.round((stats.won / stats.played) * 100) : null;
@@ -317,9 +290,6 @@ export default function PlayerProfileScreen() {
             <View className="rounded-lg border border-border dark:border-border-dark overflow-hidden">
               {matchHistory.map((entry, i) => {
                 const opponentName = teamNamesById[entry.opponentId] ?? '…';
-                const teamWon = entry.isHome
-                  ? (entry.match.homeGamesWon ?? 0) > (entry.match.awayGamesWon ?? 0)
-                  : (entry.match.awayGamesWon ?? 0) > (entry.match.homeGamesWon ?? 0);
                 return (
                   <TouchableOpacity
                     key={entry.match.id}
@@ -334,12 +304,11 @@ export default function PlayerProfileScreen() {
                       <Body tone="strong" weight="semibold" className="flex-1" numberOfLines={1}>
                         {entry.isHome ? 'vs' : '@'} {opponentName}
                       </Body>
-                      <Badge tone={teamWon ? 'sage' : 'coral'}>{teamWon ? 'Won' : 'Lost'}</Badge>
+                      <Body tone={entry.won ? 'sage' : 'coral'} weight="bold" size="sm">
+                        {entry.won ? 'WIN' : 'LOSS'} · {entry.legsWon}–{entry.legsLost}
+                      </Body>
                     </View>
-                    <View className="flex-row items-center justify-between">
-                      <Body size="sm">{formatMatchDate(entry.match.scheduledDate)}</Body>
-                      <Body size="sm">Games: {entry.gamesWon}-{entry.gamesLost}</Body>
-                    </View>
+                    <Body size="sm">{formatMatchDate(entry.match.scheduledDate)}</Body>
                   </TouchableOpacity>
                 );
               })}

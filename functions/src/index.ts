@@ -641,3 +641,84 @@ export const adminDeleteSeason = onCall(async (request) => {
   await assertLeagueAdmin(request.auth?.uid, seasonSnap.data()!.leagueId);
   await deleteSeasonCascade(seasonId);
 });
+
+// ── Reset a prematurely/incorrectly entered result back to scheduled ───────
+// Distinct from deleting a fixture: the match document itself, its ID, its
+// teams, date/venue and league/season/division references all stay exactly
+// as they were — only the result/submission state is cleared, returning the
+// fixture to the same shape a freshly generated one has (see
+// admin-fixtures.tsx's fixture-creation code for that shape). Deliberately a
+// callable (not a plain client updateDoc admin-fixtures.tsx/results-entry.tsx
+// could make under firestore.rules' existing unrestricted admin update
+// rule) so the derived-stats reversal below can never be skipped: a raw
+// client-side status flip to 'scheduled' would leave divisionTables/
+// playerSeasonStats permanently stale, since onMatchConfirmed only ever
+// fires forward INTO 'confirmed', never back out of it.
+export const adminResetMatchResult = onCall(async (request) => {
+  const { matchId } = (request.data ?? {}) as { matchId?: string };
+  if (!matchId) throw new HttpsError('invalid-argument', 'matchId is required.');
+  const matchRef = db.doc(`matches/${matchId}`);
+  const matchSnap = await matchRef.get();
+  if (!matchSnap.exists) throw new HttpsError('not-found', 'Match not found.');
+  const match = matchSnap.data()!;
+  await assertLeagueAdmin(request.auth?.uid, match.leagueId);
+
+  if (match.status === 'scheduled') {
+    throw new HttpsError('failed-precondition', 'This fixture has no result to reset.');
+  }
+
+  const { leagueId, seasonId, divisionId, homeTeamId, awayTeamId, scheduledDate } = match as {
+    leagueId: string; seasonId: string; divisionId: string;
+    homeTeamId: string; awayTeamId: string; scheduledDate: FirebaseFirestore.Timestamp;
+  };
+
+  // Reverse the confirmed result's contribution to standings/player stats
+  // FIRST, using the same reversal onMatchDeleted makes — just without
+  // deleting the fixture itself. A disputed or awaiting_confirmation match
+  // never had games confirmed (Match.games is only ever set once confirmed),
+  // so there's nothing to reverse in that case.
+  if (match.status === 'confirmed') {
+    const games = (match.games ?? []) as MatchGame[];
+    if (games.length > 0 && (!isValidGamesShape(games) || !(await allPlayersLegitimate(games, homeTeamId, awayTeamId)))) {
+      throw new HttpsError(
+        'failed-precondition',
+        'This match\'s confirmed result looks invalid — refusing to reset without a safe reversal.',
+      );
+    }
+    await applyMatchResultDelta({
+      matchId, leagueId, seasonId, divisionId, homeTeamId, awayTeamId,
+      scheduledDate: scheduledDate.toDate(),
+      oldGames: games,
+      newGames: [],
+      playedDelta: -1,
+    });
+  }
+
+  // Clear any submitted result. Both deletes land in one batch so
+  // onSubmissionWrite (which re-reads both submission docs on any write to
+  // either) always observes them either both present or both already gone —
+  // never a stale one paired with a since-cleared other, which could
+  // otherwise let a leftover submission wrongly combine with a later,
+  // unrelated resubmission after the reset.
+  const [homeSubSnap, awaySubSnap] = await Promise.all([
+    matchRef.collection('submissions').doc(homeTeamId).get(),
+    matchRef.collection('submissions').doc(awayTeamId).get(),
+  ]);
+  if (homeSubSnap.exists || awaySubSnap.exists) {
+    const deleteBatch = db.batch();
+    if (homeSubSnap.exists) deleteBatch.delete(homeSubSnap.ref);
+    if (awaySubSnap.exists) deleteBatch.delete(awaySubSnap.ref);
+    await deleteBatch.commit();
+  }
+
+  // Finally, return the fixture to its original unplayed shape — every
+  // other field (teams, date, venue, league/season/division refs) untouched.
+  await matchRef.update({
+    status: 'scheduled',
+    games: null,
+    homeGamesWon: null,
+    awayGamesWon: null,
+    homeLegsWon: null,
+    awayLegsWon: null,
+  });
+});
