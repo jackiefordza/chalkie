@@ -665,16 +665,22 @@ async function applyMatchResultDelta(p: ResultDeltaParams): Promise<void> {
   }
 }
 
-// ── On confirm (auto-confirm above, or an admin correcting an already-
-// confirmed result): recompute totals, divisionTables, standings positions,
-// and playerSeasonStats. ────────────────────────────────────────────────────
-export const onMatchConfirmed = onDocumentUpdated('matches/{matchId}', async (event) => {
-  const before = event.data?.before.data();
-  const after = event.data?.after.data();
-  if (!before || !after) return;
+// Exported for the same reason as handleSubmissionWrite/
+// handleConfirmationWrite above — direct testability against a real
+// Firestore emulator without the (unavailable in this sandbox) Functions
+// emulator or synthetic v2 CloudEvent construction. Pure mechanical
+// extraction — zero logic change — added specifically to let the PR #39
+// manual UI walkthrough verify, with the genuinely unmodified pipeline,
+// that a confirmed match's games correctly reach computeTotals/
+// applyMatchResultDelta (standings/playerSeasonStats). See
+// reconciliation.test.ts for the automated coverage this also enables.
+export async function handleMatchConfirmed(
+  matchId: string,
+  before: FirebaseFirestore.DocumentData,
+  after: FirebaseFirestore.DocumentData,
+): Promise<void> {
   if (after.status !== 'confirmed') return;
 
-  const matchId = event.params.matchId;
   const { leagueId, seasonId, divisionId, homeTeamId, awayTeamId, scheduledDate } = after as {
     leagueId: string; seasonId: string; divisionId: string;
     homeTeamId: string; awayTeamId: string; scheduledDate: FirebaseFirestore.Timestamp;
@@ -710,6 +716,16 @@ export const onMatchConfirmed = onDocumentUpdated('matches/{matchId}', async (ev
   } catch (err) {
     console.error(`onMatchConfirmed: failed to apply result delta for match ${matchId}`, err);
   }
+}
+
+// ── On confirm (auto-confirm above, or an admin correcting an already-
+// confirmed result): recompute totals, divisionTables, standings positions,
+// and playerSeasonStats. ────────────────────────────────────────────────────
+export const onMatchConfirmed = onDocumentUpdated('matches/{matchId}', async (event) => {
+  const before = event.data?.before.data();
+  const after = event.data?.after.data();
+  if (!before || !after) return;
+  await handleMatchConfirmed(event.params.matchId, before, after);
 });
 
 // ── On delete of a confirmed match: fully reverse its contribution to
