@@ -5,11 +5,11 @@ import { Stack, useLocalSearchParams, router } from 'expo-router';
 import {
   collection, doc, onSnapshot, query, where, getDoc, setDoc, updateDoc, deleteDoc, serverTimestamp,
 } from 'firebase/firestore';
-import { httpsCallable } from 'firebase/functions';
-import { db, functions } from '@/config/firebase';
+import { db } from '@/config/firebase';
 import { useAuthStore } from '@/stores/authStore';
 import { goBack } from '@/lib/navigation';
 import { canSignOffMatch, canResetMatch } from '@/lib/matchPermissions';
+import { runAdminTask } from '@/lib/adminTasks';
 import { RAW } from '@/lib/theme';
 import {
   Screen, Heading, Body, Caption, Stat, Badge, Button, Card, Chip, Input, Label, Sheet, AppBar,
@@ -403,9 +403,11 @@ export default function ResultsEntryScreen() {
   // deleting it (confirmDeleteMatch/deleteMatch below): the fixture itself
   // (teams, date, venue, league/season/division) stays, only the result/
   // submission state and its stats/standings contribution are cleared. Goes
-  // through the adminResetMatchResult callable rather than a plain client
-  // write, since only that callable actually reverses the derived stats —
-  // see functions/src/index.ts for why a raw status flip can't safely do it.
+  // through the adminTasks Firestore-triggered task rather than a plain
+  // client write, since only that reverses the derived stats — see
+  // functions/src/index.ts's performMatchResultReset for why a raw status
+  // flip can't safely do it, and its onAdminTaskCreated trigger for why
+  // this isn't a callable function.
   function confirmResetMatch() {
     Alert.alert(
       'Reset this result?',
@@ -418,10 +420,13 @@ export default function ResultsEntryScreen() {
   }
 
   async function resetMatch() {
-    if (!matchId) return;
+    if (!matchId || !appUser) return;
     setIsSubmitting(true);
     try {
-      await httpsCallable(functions, 'adminResetMatchResult')({ matchId });
+      const result = await runAdminTask(db, 'resetMatchResult', { matchId }, appUser.uid);
+      if (result.status === 'failed') {
+        throw new Error(result.error ?? 'Something went wrong');
+      }
       Alert.alert('Result reset', 'This fixture is back to scheduled with no result.');
       goBack();
     } catch (e: unknown) {
