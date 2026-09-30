@@ -14,8 +14,33 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  blankGames, toDraft, toMatchGame, normalizeGameForCompare, isGameComplete, type DraftGame,
+  blankGames, toDraft, toMatchGame, normalizeGameForCompare, isGameComplete, mergeGame, keepOnlyOwnTeamStats,
+  type DraftGame,
 } from './matchResultDraft';
+import type { MatchGame } from '@/types';
+
+function matchGame(overrides: Partial<MatchGame> = {}): MatchGame {
+  return {
+    order: 1,
+    type: 'singles',
+    homePlayerIds: ['home-1'],
+    awayPlayerIds: ['away-1'],
+    legs: [
+      { winner: 'home', oneEighties: [], highCheckout: null },
+      { winner: 'home', oneEighties: [], highCheckout: null },
+      { winner: 'away', oneEighties: [], highCheckout: null },
+    ],
+    ...overrides,
+  };
+}
+
+function allOneEighties(g: MatchGame): string[] {
+  return g.legs.flatMap((l) => l.oneEighties);
+}
+
+function allCheckouts(g: MatchGame): { playerId: string; value: string }[] {
+  return g.legs.map((l) => l.highCheckout).filter((hc): hc is { playerId: string; value: string } => hc !== null);
+}
 
 function draftSinglesGame(overrides: Partial<DraftGame> = {}): DraftGame {
   return {
@@ -140,16 +165,92 @@ test('normalizeGameForCompare: same 180s/checkouts in different entry order comp
   assert.equal(normalizeGameForCompare(a), normalizeGameForCompare(b));
 });
 
-test('normalizeGameForCompare: a different 180 count for the same player compares unequal', () => {
+// Reconciliation model change: each team only ever reports its OWN players'
+// stats (never the opponent's), so two independently-submitted sheets are
+// EXPECTED to differ on 180s/checkouts by construction — that's never a real
+// disagreement (see functions/src/index.ts's pairingsAndScoreAgree, which
+// this mirrors client-side). Only pairings + score are compared.
+test('normalizeGameForCompare: a different 180 count for the same player compares EQUAL (stats are never compared)', () => {
   const a = draftSinglesGame({ oneEighties: ['home-1'] });
   const b = draftSinglesGame({ oneEighties: ['home-1', 'home-1'] });
+  assert.equal(normalizeGameForCompare(a), normalizeGameForCompare(b));
+});
+
+test('normalizeGameForCompare: a different checkout value for the same player compares EQUAL (stats are never compared)', () => {
+  const a = draftSinglesGame({ highCheckouts: [{ playerId: 'home-1', value: '100' }] });
+  const b = draftSinglesGame({ highCheckouts: [{ playerId: 'home-1', value: '121' }] });
+  assert.equal(normalizeGameForCompare(a), normalizeGameForCompare(b));
+});
+
+test('normalizeGameForCompare: a different score compares unequal', () => {
+  const a = draftSinglesGame({ score: { home: 2, away: 1 } });
+  const b = draftSinglesGame({ score: { home: 1, away: 2 } });
   assert.notEqual(normalizeGameForCompare(a), normalizeGameForCompare(b));
 });
 
-test('normalizeGameForCompare: a different checkout value for the same player compares unequal', () => {
-  const a = draftSinglesGame({ highCheckouts: [{ playerId: 'home-1', value: '100' }] });
-  const b = draftSinglesGame({ highCheckouts: [{ playerId: 'home-1', value: '121' }] });
+test('normalizeGameForCompare: a different pairing compares unequal', () => {
+  const a = draftSinglesGame({ homePlayerIds: ['home-1'] });
+  const b = draftSinglesGame({ homePlayerIds: ['home-2'] });
   assert.notEqual(normalizeGameForCompare(a), normalizeGameForCompare(b));
+});
+
+test('mergeGame: combines each side\'s OWN players\' 180s/checkouts, pairings/score from home', () => {
+  const home = matchGame({
+    legs: [
+      { winner: 'home', oneEighties: ['home-1'], highCheckout: null },
+      { winner: 'home', oneEighties: [], highCheckout: { playerId: 'home-1', value: '100' } },
+      { winner: 'away', oneEighties: [], highCheckout: null },
+    ],
+  });
+  const away = matchGame({
+    legs: [
+      { winner: 'home', oneEighties: [], highCheckout: null },
+      { winner: 'home', oneEighties: [], highCheckout: null },
+      { winner: 'away', oneEighties: ['away-1'], highCheckout: { playerId: 'away-1', value: '121' } },
+    ],
+  });
+  const merged = mergeGame(home, away);
+  assert.deepEqual(allOneEighties(merged).sort(), ['away-1', 'home-1']);
+  assert.deepEqual(
+    allCheckouts(merged).sort((x, y) => x.playerId.localeCompare(y.playerId)),
+    [{ playerId: 'away-1', value: '121' }, { playerId: 'home-1', value: '100' }],
+  );
+  assert.equal(merged.homePlayerIds[0], 'home-1');
+  assert.equal(merged.awayPlayerIds[0], 'away-1');
+});
+
+test('mergeGame: ignores a stat wrongly present for the opponent\'s player, as a defense-in-depth re-check', () => {
+  // Should never happen (server-side validation refuses this at write
+  // time) but the merge itself must never trust it either.
+  const home = matchGame({
+    legs: [
+      { winner: 'home', oneEighties: ['away-1'], highCheckout: null }, // not home's own player
+      { winner: 'home', oneEighties: [], highCheckout: null },
+      { winner: 'away', oneEighties: [], highCheckout: null },
+    ],
+  });
+  const away = matchGame({ legs: matchGame().legs });
+  const merged = mergeGame(home, away);
+  assert.deepEqual(allOneEighties(merged), []);
+});
+
+test('keepOnlyOwnTeamStats: strips a stat belonging to the other side, keeps pairings/score/winners', () => {
+  const game = matchGame({
+    legs: [
+      { winner: 'home', oneEighties: ['home-1'], highCheckout: null },
+      { winner: 'home', oneEighties: ['away-1'], highCheckout: { playerId: 'away-1', value: '121' } },
+      { winner: 'away', oneEighties: [], highCheckout: null },
+    ],
+  });
+  const strippedForHome = keepOnlyOwnTeamStats(game, 'home-team', 'home-team');
+  assert.deepEqual(allOneEighties(strippedForHome), ['home-1']);
+  assert.deepEqual(allCheckouts(strippedForHome), []);
+  assert.deepEqual(strippedForHome.homePlayerIds, game.homePlayerIds);
+  assert.deepEqual(strippedForHome.legs.map((l) => l.winner), game.legs.map((l) => l.winner));
+
+  const strippedForAway = keepOnlyOwnTeamStats(game, 'away-team', 'home-team');
+  assert.deepEqual(allOneEighties(strippedForAway), ['away-1']);
+  assert.deepEqual(allCheckouts(strippedForAway), [{ playerId: 'away-1', value: '121' }]);
 });
 
 test('isGameComplete: unaffected by this fix — still just player counts + score, no 180/checkout requirement', () => {

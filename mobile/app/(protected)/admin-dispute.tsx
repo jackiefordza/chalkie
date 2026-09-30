@@ -10,21 +10,25 @@ import { goBack } from '@/lib/navigation';
 import { RAW } from '@/lib/theme';
 import { Screen, Body, Caption, Button, Card, Chip, AppBar, AppIcon } from '@/components/ui';
 import { AdminShell } from '@/components/admin/AdminShell';
+import { mergeGame } from '@/lib/matchResultDraft';
 import type { Match, MatchGame, MatchSide } from '@/types';
 
 const DESKTOP_BREAKPOINT = 768;
 
 interface Player { id: string; name: string; teamId: string }
 
+// Pairings + leg-winner sequence ONLY — matches functions/src/index.ts's
+// pairingsAndScoreAgree (the actual server-side reconciliation check) and
+// mobile/src/lib/matchResultDraft.ts's normalizeGameForCompare. Stats
+// (180s/checkouts) are deliberately excluded: each team only ever reports
+// its own players' stats, so they're expected to differ between the two
+// submissions by construction — never a real disagreement, just
+// complementary data mergeGame combines below.
 function normalize(game: MatchGame) {
   return JSON.stringify({
     homePlayerIds: [...game.homePlayerIds].sort(),
     awayPlayerIds: [...game.awayPlayerIds].sort(),
-    legs: game.legs.map((l) => ({
-      winner: l.winner,
-      oneEighties: [...l.oneEighties].sort(),
-      highCheckout: l.highCheckout,
-    })),
+    legs: game.legs.map((l) => l.winner),
   });
 }
 
@@ -72,12 +76,15 @@ export default function AdminDisputeScreen() {
         setHomeGames(hGames);
         setAwayGames(aGames);
 
-        // Pre-resolve any games both teams already agree on
+        // Pre-resolve any games both teams already agree on (pairings/score)
+        // — merged, not just home's copy: each side only ever reports its
+        // OWN players' stats, so using hg wholesale here would silently
+        // drop every one of away's 180s/checkouts for this game.
         if (hGames && aGames) {
           const initial: Record<number, MatchGame> = {};
           hGames.forEach((hg) => {
             const ag = aGames.find((g) => g.order === hg.order);
-            if (ag && normalize(hg) === normalize(ag)) initial[hg.order] = hg;
+            if (ag && normalize(hg) === normalize(ag)) initial[hg.order] = mergeGame(hg, ag);
           });
           setResolved(initial);
         }
@@ -126,7 +133,7 @@ export default function AdminDisputeScreen() {
     setIsConfirming(true);
     try {
       const finalGames = gameOrders.map((o) => resolved[o]).sort((a, b) => a.order - b.order);
-      await updateDoc(doc(db, 'matches', matchId), { status: 'confirmed', games: finalGames });
+      await updateDoc(doc(db, 'matches', matchId), { status: 'confirmed', games: finalGames, confirmedVia: 'adminOverride' });
       if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       Alert.alert('Result confirmed', 'Standings and stats will update shortly.');
       goBack();

@@ -30,3 +30,19 @@ export function canResetMatch(
   if (appUser.isGlobalAdmin) return true;
   return appUser.isLeagueAdmin && appUser.leagueId === match.leagueId;
 }
+
+// Client-side gate for the Confirm / Dispute actions on a reconciled match —
+// mirrors the real enforcement: firestore.rules' confirmations/{teamId}
+// create rule for Confirm, and the disputeMatch callable's own check
+// (functions/src/index.ts) for Dispute. Both require the match to actually
+// be pending_confirmation and the viewer to be a captain/VC of one of its
+// two teams — there's nothing to confirm or dispute otherwise.
+export function canActOnPendingConfirmation(
+  appUser: Pick<AppUser, 'role' | 'teamId'> | null | undefined,
+  match: Pick<Match, 'homeTeamId' | 'awayTeamId' | 'status'> | null | undefined,
+): boolean {
+  if (!appUser || !match) return false;
+  if (match.status !== 'pending_confirmation') return false;
+  if (appUser.role !== 'captain' && appUser.role !== 'viceCaptain') return false;
+  return appUser.teamId === match.homeTeamId || appUser.teamId === match.awayTeamId;
+}

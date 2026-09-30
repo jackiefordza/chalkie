@@ -105,7 +105,14 @@ export interface JoinRequest {
 // A league match: 7 games (5 singles then 2 pairs), all 501, 3 legs per game,
 // all 3 legs always played. Match winner = team that wins more games (odd
 // count, so no draws are possible at match level).
-export type MatchStatus = 'scheduled' | 'awaiting_confirmation' | 'disputed' | 'confirmed';
+//
+// 'awaiting_confirmation' means exactly one team has submitted and the other
+// hasn't yet — distinct from 'pending_confirmation', which means BOTH teams
+// submitted and their pairings/scores reconciled, and it's now waiting on
+// one or both teams' explicit Confirm (see MatchConfirmation below). Only a
+// Cloud Function (onConfirmationWrite) ever moves a match into 'confirmed' —
+// no client write can set that status directly (see firestore.rules).
+export type MatchStatus = 'scheduled' | 'awaiting_confirmation' | 'pending_confirmation' | 'disputed' | 'confirmed';
 export type GameType = 'singles' | 'pairs';
 export type MatchSide = 'home' | 'away';
 
@@ -131,13 +138,25 @@ export interface Match {
   venue: string | null;
   status: MatchStatus;
   competitionType: CompetitionType;
-  // Set once confirmed (by the onSubmissionWrite/dispute-resolution Cloud Function path)
+  // Set once confirmed (by onConfirmationWrite, admin sign-off, or dispute resolution)
   homeGamesWon: number | null;
   awayGamesWon: number | null;
   homeLegsWon: number | null;
   awayLegsWon: number | null;
-  // The agreed-upon (or admin-resolved) game-by-game detail — only set once confirmed
+  // The reconciled game-by-game detail. Set as soon as the match reaches
+  // 'pending_confirmation' (onSubmissionWrite merges both teams' own-reported
+  // stats into it at that point) — NOT only once confirmed. It never changes
+  // again between 'pending_confirmation' and 'confirmed' (onConfirmationWrite
+  // only flips status), so it's safe to display as "the match sheet" the
+  // moment pending_confirmation is reached, before either captain confirms.
   games: MatchGame[] | null;
+  // Who most recently produced the 'confirmed' status — 'captains' when both
+  // teams' MatchConfirmation docs did it (onConfirmationWrite), 'adminOverride'
+  // when a league admin confirmed unilaterally (one-sided sign-off, dispute
+  // resolution, or a direct correction of an already-confirmed result).
+  // Undefined on any match confirmed before this field existed, and on a
+  // match that isn't confirmed at all — never backfilled.
+  confirmedVia?: 'captains' | 'adminOverride';
   createdAt: Date;
 }
 
@@ -162,14 +181,34 @@ export interface MatchGame {
   legs: MatchLeg[]; // always length 3
 }
 
-// One captain/VC's version of a match result. Auto-confirmed when both
-// teams' submissions agree; otherwise the match is flagged disputed for
-// the admin to resolve.
+// One captain/VC's version of a match result — their OWN team's pairings,
+// all 7 game/leg scores as they observed them, and their OWN players' 180s/
+// checkouts only (never the opponent's — enforced server-side, see
+// functions/src/index.ts). When both teams' submissions agree on pairings
+// and scores, the match moves to 'pending_confirmation' with a merged
+// Match.games combining each side's own-reported stats; a genuine pairing/
+// score disagreement flags the match 'disputed' for a captain to fix or an
+// admin to resolve. Blocked from further writes once the match leaves
+// 'scheduled'/'awaiting_confirmation'/'disputed' — see firestore.rules.
 export interface MatchSubmission {
   id: string; // = submittedByTeamId, one submission doc per team per match
   submittedByTeamId: string;
   submittedByUserId: string;
   games: MatchGame[];
+  createdAt: Date;
+}
+
+// One team's explicit confirmation of the reconciled match sheet shown at
+// Match.games once status is 'pending_confirmation'. A match only becomes
+// 'confirmed' once BOTH teams' confirmation docs exist — enforced by
+// onConfirmationWrite (functions/src/index.ts), never by a client write
+// (see firestore.rules — status can never be set to 'confirmed' directly).
+// Immutable once created (no un-confirming) — a team that changes its mind
+// must use the dispute path (disputeMatch callable) instead.
+export interface MatchConfirmation {
+  id: string; // = confirmedByTeamId, one confirmation doc per team per match
+  confirmedByTeamId: string;
+  confirmedByUserId: string;
   createdAt: Date;
 }
 

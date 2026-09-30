@@ -47,9 +47,101 @@ function normalizeGames(games: MatchGame[]) {
     }));
 }
 
-function gamesEqual(a: MatchGame[], b: MatchGame[]): boolean {
+// ── Reconciliation: compare pairings + score ONLY, never stats ─────────────
+// Two independently-submitted sheets are "reconciled" when they agree on who
+// played and who won each leg — NOT on 180s/checkouts, which each team only
+// ever reports for its own players (isValidGamesShape enforces this
+// server-side) and are therefore expected to differ between submissions by
+// construction, never a real disagreement. Score is compared by the leg WIN
+// COUNT per side, not the exact leg-by-leg sequence: the app's own entry UI
+// (toMatchGame in mobile/src/lib/matchResultDraft.ts) always derives that
+// sequence deterministically from the score alone, so two submissions with
+// the same score already have byte-identical sequences — comparing counts
+// is equivalent and simpler.
+export function pairingsAndScoreAgree(a: MatchGame[], b: MatchGame[]): boolean {
   if (a.length !== b.length) return false;
-  return JSON.stringify(normalizeGames(a)) === JSON.stringify(normalizeGames(b));
+  const bByOrder = new Map(b.map((g) => [g.order, g]));
+  return a.every((ag) => {
+    const bg = bByOrder.get(ag.order);
+    if (!bg) return false;
+    if (JSON.stringify([...ag.homePlayerIds].sort()) !== JSON.stringify([...bg.homePlayerIds].sort())) return false;
+    if (JSON.stringify([...ag.awayPlayerIds].sort()) !== JSON.stringify([...bg.awayPlayerIds].sort())) return false;
+    const aHomeLegs = ag.legs.filter((l) => l.winner === 'home').length;
+    const bHomeLegs = bg.legs.filter((l) => l.winner === 'home').length;
+    return aHomeLegs === bHomeLegs;
+  });
+}
+
+// Deterministic placement into LEGS_PER_GAME slots by SORTED CONTENT, never
+// by which submission it came from or what order it was entered in — the
+// same principle mobile/src/lib/matchResultDraft.ts's toMatchGame already
+// uses for a single submission, extended here to a MERGE of two. Leg index
+// carries no meaning to any consumer of this data (see that file's own
+// comment) — computePlayerAccum below only ever sums across ALL of a game's
+// legs, never per-leg — so which specific slot a stat lands in is cosmetic.
+function distributeOneEightiesByLeg(oneEighties: string[]): string[][] {
+  const byLeg: string[][] = Array.from({ length: LEGS_PER_GAME }, () => []);
+  [...oneEighties].sort().forEach((playerId, i) => {
+    byLeg[i % LEGS_PER_GAME].push(playerId);
+  });
+  return byLeg;
+}
+
+// A leg holds at most one highCheckout, so at most LEGS_PER_GAME (3) can
+// exist across a game. Two teams' own submissions are validated
+// independently and can't coordinate on this, so their combined total could
+// exceed 3 in a genuinely implausible case (more checkouts claimed, across
+// both sides, than legs exist to have won them in) — rather than reject the
+// whole reconciliation over that, the excess is dropped deterministically
+// (by the same sort used for placement) so the result is still well-formed.
+function distributeHighCheckouts(highCheckouts: HighCheckout[]): (HighCheckout | null)[] {
+  const sorted = [...highCheckouts].sort((a, b) => (
+    a.playerId === b.playerId ? a.value.localeCompare(b.value) : a.playerId.localeCompare(b.playerId)
+  ));
+  return Array.from({ length: LEGS_PER_GAME }, (_, i) => sorted[i] ?? null);
+}
+
+// Combines one already-pairings-and-score-agreed game from each side: the
+// pairings/leg-winner sequence come from homeGame (guaranteed equivalent to
+// awayGame's — see pairingsAndScoreAgree); each side's own-team 180s/
+// checkouts are pulled from ITS OWN submission only, filtered to that side's
+// own players as a defense-in-depth re-check (isValidGamesShape should
+// already have refused a submission naming the opponent's player, but this
+// never trusts that alone), then merged.
+function buildMergedGame(homeGame: MatchGame, awayGame: MatchGame): MatchGame {
+  const homeOwn = new Set(homeGame.homePlayerIds);
+  const awayOwn = new Set(awayGame.awayPlayerIds);
+
+  const homeOneEighties = homeGame.legs.flatMap((l) => l.oneEighties).filter((id) => homeOwn.has(id));
+  const awayOneEighties = awayGame.legs.flatMap((l) => l.oneEighties).filter((id) => awayOwn.has(id));
+  const mergedOneEightiesByLeg = distributeOneEightiesByLeg([...homeOneEighties, ...awayOneEighties]);
+
+  const homeCheckouts = homeGame.legs
+    .map((l) => l.highCheckout)
+    .filter((hc): hc is HighCheckout => hc !== null && homeOwn.has(hc.playerId));
+  const awayCheckouts = awayGame.legs
+    .map((l) => l.highCheckout)
+    .filter((hc): hc is HighCheckout => hc !== null && awayOwn.has(hc.playerId));
+  const mergedCheckouts = distributeHighCheckouts([...homeCheckouts, ...awayCheckouts]);
+
+  return {
+    order: homeGame.order,
+    type: homeGame.type,
+    homePlayerIds: homeGame.homePlayerIds,
+    awayPlayerIds: homeGame.awayPlayerIds,
+    legs: homeGame.legs.map((leg, i) => ({
+      winner: leg.winner,
+      oneEighties: mergedOneEightiesByLeg[i],
+      highCheckout: mergedCheckouts[i] ? { playerId: mergedCheckouts[i]!.playerId, value: mergedCheckouts[i]!.value } : null,
+    })),
+  };
+}
+
+export function mergeSubmissionGames(homeGames: MatchGame[], awayGames: MatchGame[]): MatchGame[] {
+  const awayByOrder = new Map(awayGames.map((g) => [g.order, g]));
+  return [...homeGames]
+    .sort((a, b) => a.order - b.order)
+    .map((hg) => buildMergedGame(hg, awayByOrder.get(hg.order)!));
 }
 
 // ── Server-side result validation ───────────────────────────────────────────
@@ -86,7 +178,16 @@ function isValidLeg(leg: unknown, eligiblePlayerIds: Set<string>): leg is MatchL
   return true;
 }
 
-function isValidGame(game: unknown): game is MatchGame {
+// `statScope`, when passed, restricts which players' 180s/checkouts this
+// specific games array may claim — used to validate a RAW SUBMISSION from
+// one team, where oneEighties/highCheckout may only name players on the
+// SUBMITTING team (never the opponent's — this is the server-side half of
+// "own-team stat security"; the client UI only hides the controls, it
+// doesn't enforce anything). Omitted (the default) when validating a
+// FINAL/MERGED games array (onMatchConfirmed/onMatchDeleted/
+// adminResetMatchResult), where a stat legitimately naming either side's
+// player is correct — that's the whole point of the merge.
+function isValidGame(game: unknown, statScope?: { submittedByTeamId: string; matchHomeTeamId: string }): game is MatchGame {
   if (!game || typeof game !== 'object') return false;
   const g = game as Record<string, unknown>;
   if (typeof g.order !== 'number' || !Number.isInteger(g.order) || g.order < 1 || g.order > GAMES_PER_MATCH) return false;
@@ -102,19 +203,25 @@ function isValidGame(game: unknown): game is MatchGame {
   const awayIds = g.awayPlayerIds as string[];
   if (homeIds.some((id) => awayIds.includes(id))) return false; // can't play both sides
   if (!Array.isArray(g.legs) || g.legs.length !== LEGS_PER_GAME) return false;
-  const eligible = new Set<string>([...homeIds, ...awayIds]);
+  const eligible = statScope
+    ? new Set<string>(statScope.submittedByTeamId === statScope.matchHomeTeamId ? homeIds : awayIds)
+    : new Set<string>([...homeIds, ...awayIds]);
   return g.legs.every((leg) => isValidLeg(leg, eligible));
 }
 
 // Structural validation only: exactly 7 well-formed games with unique order
 // values covering 1..7, and every 180/checkout attributed to a player who is
-// actually listed on that specific game. Does NOT confirm the player IDs are
+// actually listed on that specific game (and, when statScope is passed, on
+// the submitting team specifically). Does NOT confirm the player IDs are
 // real roster members of the right team — see allPlayersLegitimate.
-function isValidGamesShape(games: unknown): games is MatchGame[] {
+export function isValidGamesShape(
+  games: unknown,
+  statScope?: { submittedByTeamId: string; matchHomeTeamId: string },
+): games is MatchGame[] {
   if (!Array.isArray(games) || games.length !== GAMES_PER_MATCH) return false;
   const seenOrders = new Set<number>();
   for (const g of games) {
-    if (!isValidGame(g)) return false;
+    if (!isValidGame(g, statScope)) return false;
     if (seenOrders.has(g.order)) return false;
     seenOrders.add(g.order);
   }
@@ -141,14 +248,31 @@ async function allPlayersLegitimate(games: MatchGame[], homeTeamId: string, away
   return true;
 }
 
-async function isValidSubmission(data: unknown, homeTeamId: string, awayTeamId: string): Promise<boolean> {
+// `submittedByTeamId`, when passed, is a raw single-team submission being
+// validated pre-reconciliation — 180s/checkouts are restricted to that
+// team's own players (see isValidGamesShape). Omitted when re-validating a
+// FINAL/MERGED games array, where either side's players are legitimately
+// eligible for stats.
+export async function isValidSubmission(
+  data: unknown,
+  homeTeamId: string,
+  awayTeamId: string,
+  submittedByTeamId?: string,
+): Promise<boolean> {
   if (!data || typeof data !== 'object') return false;
   const { games } = data as { games?: unknown };
-  if (!isValidGamesShape(games)) return false;
+  const statScope = submittedByTeamId ? { submittedByTeamId, matchHomeTeamId: homeTeamId } : undefined;
+  if (!isValidGamesShape(games, statScope)) return false;
   return allPlayersLegitimate(games, homeTeamId, awayTeamId);
 }
 
-// ── Submission comparison: auto-confirm when both teams agree, else dispute ─
+// ── Submission comparison: reconcile when both teams' pairings AND scores
+// agree, else dispute. Player statistics are never compared between
+// submissions — each team is authoritative for its own players' stats — and
+// are MERGED into the reconciled record instead (see mergeSubmissionGames
+// above). Reaching agreement does NOT confirm the match: it moves to
+// 'pending_confirmation', and onConfirmationWrite (below) is the only path
+// from there to 'confirmed'.
 //
 // Security invariants (complementing firestore.rules, which enforces the doc
 // ID == submittedByTeamId convention that makes this lookup-by-identity
@@ -157,71 +281,181 @@ async function isValidSubmission(data: unknown, homeTeamId: string, awayTeamId: 
 //    never by array position or count — two submissions from the same team
 //    can no longer be mistaken for "both sides agreed".
 //  - Each submission is re-validated (structure + real player/team
-//    membership) before it's allowed to count towards confirmation. An
-//    invalid submission is deleted (quarantined) rather than silently
-//    skipped, so it can never combine with a later resubmission and slip
-//    through, and so the submitting captain sees it actually disappeared
-//    rather than being invisibly ignored.
+//    membership + own-team-only stats) before it's allowed to count towards
+//    reconciliation. An invalid submission is deleted (quarantined) rather
+//    than silently skipped, so it can never combine with a later
+//    resubmission and slip through, and so the submitting captain sees it
+//    actually disappeared rather than being invisibly ignored.
+// Exported (not just the onDocumentWritten wrapper below) so it can be
+// exercised directly against a real Firestore (emulator) in tests without
+// needing the Functions emulator or synthetic trigger-event construction —
+// see reconciliation.test.ts. Contains the entire behavior; the wrapper adds
+// nothing but the trigger binding.
+export async function handleSubmissionWrite(matchId: string): Promise<void> {
+  const matchRef = db.doc(`matches/${matchId}`);
+  const matchSnap = await matchRef.get();
+  if (!matchSnap.exists) return;
+  const match = matchSnap.data()!;
+  // Locked once reconciled or confirmed — firestore.rules already blocks a
+  // client write to submissions in either state; this is defense in depth.
+  if (match.status === 'confirmed' || match.status === 'pending_confirmation') return;
+
+  const homeTeamId = match.homeTeamId as string;
+  const awayTeamId = match.awayTeamId as string;
+
+  const [homeSnap, awaySnap] = await Promise.all([
+    matchRef.collection('submissions').doc(homeTeamId).get(),
+    matchRef.collection('submissions').doc(awayTeamId).get(),
+  ]);
+
+  const [homeValid, awayValid] = await Promise.all([
+    homeSnap.exists && homeSnap.data()!.submittedByTeamId === homeTeamId
+      ? isValidSubmission(homeSnap.data(), homeTeamId, awayTeamId, homeTeamId)
+      : Promise.resolve(false),
+    awaySnap.exists && awaySnap.data()!.submittedByTeamId === awayTeamId
+      ? isValidSubmission(awaySnap.data(), homeTeamId, awayTeamId, awayTeamId)
+      : Promise.resolve(false),
+  ]);
+
+  const toQuarantine = [
+    ...(homeSnap.exists && !homeValid ? [homeSnap.ref] : []),
+    ...(awaySnap.exists && !awayValid ? [awaySnap.ref] : []),
+  ];
+  if (toQuarantine.length) {
+    console.warn(`handleSubmissionWrite: deleting ${toQuarantine.length} invalid submission(s) for match ${matchId}`);
+    await Promise.all(toQuarantine.map((ref) => ref.delete()));
+  }
+
+  const validCount = (homeValid ? 1 : 0) + (awayValid ? 1 : 0);
+  if (validCount === 0) return;
+  if (validCount === 1) {
+    if (match.status === 'scheduled') {
+      await matchRef.update({ status: 'awaiting_confirmation' });
+    }
+    return;
+  }
+
+  // Both sides have a genuinely valid, correctly-attributed submission.
+  const homeData = homeSnap.data() as MatchSubmissionData;
+  const awayData = awaySnap.data() as MatchSubmissionData;
+  if (!pairingsAndScoreAgree(homeData.games, awayData.games)) {
+    await matchRef.update({ status: 'disputed' });
+    return;
+  }
+
+  // Pairings and scores agree — merge each side's own-reported stats into
+  // the reconciled record and move to pending_confirmation, NOT confirmed.
+  const merged = mergeSubmissionGames(homeData.games, awayData.games);
+  await matchRef.update({ status: 'pending_confirmation', games: normalizeGames(merged) });
+}
+
+// ── Submission comparison: reconcile when both teams' pairings AND scores
+// agree, else dispute. Player statistics are never compared between
+// submissions — each team is authoritative for its own players' stats — and
+// are MERGED into the reconciled record instead (see mergeSubmissionGames
+// above). Reaching agreement does NOT confirm the match: it moves to
+// 'pending_confirmation', and onConfirmationWrite (below) is the only path
+// from there to 'confirmed'.
+//
+// Security invariants (complementing firestore.rules, which enforces the doc
+// ID == submittedByTeamId convention that makes this lookup-by-identity
+// possible in the first place — see the comment there):
+//  - Submissions are read by TEAM IDENTITY (doc IDs homeTeamId/awayTeamId),
+//    never by array position or count — two submissions from the same team
+//    can no longer be mistaken for "both sides agreed".
+//  - Each submission is re-validated (structure + real player/team
+//    membership + own-team-only stats) before it's allowed to count towards
+//    reconciliation. An invalid submission is deleted (quarantined) rather
+//    than silently skipped, so it can never combine with a later
+//    resubmission and slip through, and so the submitting captain sees it
+//    actually disappeared rather than being invisibly ignored.
 export const onSubmissionWrite = onDocumentWritten(
   'matches/{matchId}/submissions/{submissionId}',
-  async (event) => {
-    const matchId = event.params.matchId;
-    const matchRef = db.doc(`matches/${matchId}`);
-    const matchSnap = await matchRef.get();
-    if (!matchSnap.exists) return;
-    const match = matchSnap.data()!;
-    if (match.status === 'confirmed') return; // locked once confirmed — resubmission can't reopen it
-
-    const homeTeamId = match.homeTeamId as string;
-    const awayTeamId = match.awayTeamId as string;
-
-    const [homeSnap, awaySnap] = await Promise.all([
-      matchRef.collection('submissions').doc(homeTeamId).get(),
-      matchRef.collection('submissions').doc(awayTeamId).get(),
-    ]);
-
-    const [homeValid, awayValid] = await Promise.all([
-      homeSnap.exists && homeSnap.data()!.submittedByTeamId === homeTeamId
-        ? isValidSubmission(homeSnap.data(), homeTeamId, awayTeamId)
-        : Promise.resolve(false),
-      awaySnap.exists && awaySnap.data()!.submittedByTeamId === awayTeamId
-        ? isValidSubmission(awaySnap.data(), homeTeamId, awayTeamId)
-        : Promise.resolve(false),
-    ]);
-
-    const toQuarantine = [
-      ...(homeSnap.exists && !homeValid ? [homeSnap.ref] : []),
-      ...(awaySnap.exists && !awayValid ? [awaySnap.ref] : []),
-    ];
-    if (toQuarantine.length) {
-      console.warn(`onSubmissionWrite: deleting ${toQuarantine.length} invalid submission(s) for match ${matchId}`);
-      await Promise.all(toQuarantine.map((ref) => ref.delete()));
-    }
-
-    const validCount = (homeValid ? 1 : 0) + (awayValid ? 1 : 0);
-    if (validCount === 0) return;
-    if (validCount === 1) {
-      if (match.status === 'scheduled') {
-        await matchRef.update({ status: 'awaiting_confirmation' });
-      }
-      return;
-    }
-
-    // Both sides have a genuinely valid, correctly-attributed submission.
-    const homeData = homeSnap.data() as MatchSubmissionData;
-    const awayData = awaySnap.data() as MatchSubmissionData;
-    if (!gamesEqual(homeData.games, awayData.games)) {
-      await matchRef.update({ status: 'disputed' });
-      return;
-    }
-
-    // Both submissions agree — confirm using the canonical (normalized) games.
-    // onMatchConfirmed picks up from here to compute totals + standings/stats.
-    await matchRef.update({ status: 'confirmed', games: normalizeGames(homeData.games) });
-  },
+  (event) => handleSubmissionWrite(event.params.matchId),
 );
 
-function computeTotals(games: MatchGame[]) {
+// Exported for the same reason as handleSubmissionWrite above — see
+// reconciliation.test.ts.
+export async function handleConfirmationWrite(matchId: string): Promise<void> {
+  const matchRef = db.doc(`matches/${matchId}`);
+  const matchSnap = await matchRef.get();
+  if (!matchSnap.exists) return;
+  const match = matchSnap.data()!;
+  // Only act while genuinely awaiting confirmation — a confirmation doc
+  // that arrives after a dispute or a reset (or, defensively, any other
+  // status) must never itself move the match forward.
+  if (match.status !== 'pending_confirmation') return;
+
+  const homeTeamId = match.homeTeamId as string;
+  const awayTeamId = match.awayTeamId as string;
+
+  const [homeSnap, awaySnap] = await Promise.all([
+    matchRef.collection('confirmations').doc(homeTeamId).get(),
+    matchRef.collection('confirmations').doc(awayTeamId).get(),
+  ]);
+  const homeConfirmed = homeSnap.exists && homeSnap.data()!.confirmedByTeamId === homeTeamId;
+  const awayConfirmed = awaySnap.exists && awaySnap.data()!.confirmedByTeamId === awayTeamId;
+  if (!homeConfirmed || !awayConfirmed) return;
+
+  await matchRef.update({ status: 'confirmed', confirmedVia: 'captains' });
+}
+
+// ── Explicit two-team confirmation: a match only becomes 'confirmed' once
+// BOTH teams have created their own matches/{matchId}/confirmations/{teamId}
+// doc. This is the ONLY path from 'pending_confirmation' to 'confirmed' — no
+// client write can set status:'confirmed' directly (matches/{matchId}'s
+// update rule stays admin-only — see firestore.rules). Match.games is
+// already the reconciled record (set by onSubmissionWrite above) and is left
+// untouched here; this trigger only ever flips status.
+export const onConfirmationWrite = onDocumentWritten(
+  'matches/{matchId}/confirmations/{teamId}',
+  (event) => handleConfirmationWrite(event.params.matchId),
+);
+
+// Exported for the same reason as handleSubmissionWrite above — see
+// reconciliation.test.ts. Throws exactly what the onCall wrapper throws
+// (HttpsError), so a test can assert on the same error codes/messages a
+// real client would see.
+export async function performDisputeMatch(matchId: string, uid: string | undefined): Promise<void> {
+  if (!uid) throw new HttpsError('unauthenticated', 'Sign in required.');
+
+  const matchRef = db.doc(`matches/${matchId}`);
+  const matchSnap = await matchRef.get();
+  if (!matchSnap.exists) throw new HttpsError('not-found', 'Match not found.');
+  const match = matchSnap.data()!;
+
+  const userSnap = await db.doc(`users/${uid}`).get();
+  const user = userSnap.data();
+  const isCaptainOrVCOfMatch = !!user
+    && (user.role === 'captain' || user.role === 'viceCaptain')
+    && (user.teamId === match.homeTeamId || user.teamId === match.awayTeamId);
+  if (!isCaptainOrVCOfMatch) {
+    throw new HttpsError('permission-denied', 'Only a captain or vice-captain of one of this match\'s two teams may dispute it.');
+  }
+  if (match.status !== 'pending_confirmation') {
+    throw new HttpsError('failed-precondition', 'This match isn\'t awaiting confirmation.');
+  }
+
+  await matchRef.update({ status: 'disputed' });
+}
+
+// ── A captain/VC of either team disputing a reconciled-but-unconfirmed
+// result (e.g. they don't recognize a merged stat, even though pairings and
+// scores agreed) — the explicit alternative to Confirm the model calls for.
+// A callable, not a client write, so the permission check (genuinely a
+// captain/VC of ONE of this match's two teams) and the state check (only
+// while pending_confirmation) are both enforced authoritatively in one
+// place, without widening matches/{matchId}'s otherwise admin-only update
+// rule. Any confirmation doc(s) already created are left in place — inert,
+// since onConfirmationWrite only ever acts while status is still
+// 'pending_confirmation', and this call has already moved it to 'disputed'.
+export const disputeMatch = onCall(async (request) => {
+  const { matchId } = (request.data ?? {}) as { matchId?: string };
+  if (!matchId) throw new HttpsError('invalid-argument', 'matchId is required.');
+  await performDisputeMatch(matchId, request.auth?.uid);
+});
+
+export function computeTotals(games: MatchGame[]) {
   let homeGamesWon = 0, awayGamesWon = 0, homeLegsWon = 0, awayLegsWon = 0;
   for (const game of games) {
     let gameHomeLegs = 0, gameAwayLegs = 0;
@@ -694,20 +928,25 @@ export const adminResetMatchResult = onCall(async (request) => {
     });
   }
 
-  // Clear any submitted result. Both deletes land in one batch so
-  // onSubmissionWrite (which re-reads both submission docs on any write to
-  // either) always observes them either both present or both already gone —
-  // never a stale one paired with a since-cleared other, which could
-  // otherwise let a leftover submission wrongly combine with a later,
-  // unrelated resubmission after the reset.
-  const [homeSubSnap, awaySubSnap] = await Promise.all([
+  // Clear any submitted result AND any confirmations. All deletes land in
+  // one batch so onSubmissionWrite/onConfirmationWrite (which re-read both
+  // docs of their respective subcollection on any write to either) always
+  // observe them either both present or both already gone — never a stale
+  // one paired with a since-cleared other, which could otherwise let a
+  // leftover submission/confirmation wrongly combine with a later, unrelated
+  // resubmission after the reset.
+  const [homeSubSnap, awaySubSnap, homeConfSnap, awayConfSnap] = await Promise.all([
     matchRef.collection('submissions').doc(homeTeamId).get(),
     matchRef.collection('submissions').doc(awayTeamId).get(),
+    matchRef.collection('confirmations').doc(homeTeamId).get(),
+    matchRef.collection('confirmations').doc(awayTeamId).get(),
   ]);
-  if (homeSubSnap.exists || awaySubSnap.exists) {
+  if (homeSubSnap.exists || awaySubSnap.exists || homeConfSnap.exists || awayConfSnap.exists) {
     const deleteBatch = db.batch();
     if (homeSubSnap.exists) deleteBatch.delete(homeSubSnap.ref);
     if (awaySubSnap.exists) deleteBatch.delete(awaySubSnap.ref);
+    if (homeConfSnap.exists) deleteBatch.delete(homeConfSnap.ref);
+    if (awayConfSnap.exists) deleteBatch.delete(awayConfSnap.ref);
     await deleteBatch.commit();
   }
 
@@ -720,5 +959,6 @@ export const adminResetMatchResult = onCall(async (request) => {
     awayGamesWon: null,
     homeLegsWon: null,
     awayLegsWon: null,
+    confirmedVia: FieldValue.delete(),
   });
 });
