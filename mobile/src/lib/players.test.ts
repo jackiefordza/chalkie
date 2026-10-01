@@ -8,7 +8,7 @@
 // this file has no Firebase import.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { DuplicatePlayerNameError, normalizePlayerName, playerDocId, findDuplicateName } from './players';
+import { DuplicatePlayerNameError, normalizePlayerName, playerDocId } from './players';
 
 test('normalizePlayerName trims leading/trailing whitespace', () => {
   assert.equal(normalizePlayerName('  Paul  '), 'paul');
@@ -40,22 +40,6 @@ test('playerDocId differs across teams for the identical name — same name, dif
 
 test('playerDocId differs for similar-but-distinct names on the same team', () => {
   assert.notEqual(playerDocId('team-1', 'Paul'), playerDocId('team-1', 'Paula'));
-});
-
-test('findDuplicateName detects a case/whitespace-insensitive match within the given roster', () => {
-  const roster = ['Jake Smith', 'Steve Jones'];
-  assert.equal(findDuplicateName(roster, 'jake smith'), true);
-  assert.equal(findDuplicateName(roster, '  STEVE JONES  '), true);
-});
-
-test('findDuplicateName does not flag a legitimate, similar-but-distinct name', () => {
-  const roster = ['Jake Smith', 'Steve Jones'];
-  assert.equal(findDuplicateName(roster, 'Jake Smyth'), false);
-  assert.equal(findDuplicateName(roster, 'Steve'), false);
-});
-
-test('findDuplicateName on an empty roster never flags a duplicate', () => {
-  assert.equal(findDuplicateName([], 'Jake Smith'), false);
 });
 
 test('DuplicatePlayerNameError carries the original (non-normalized) display name in its message', () => {

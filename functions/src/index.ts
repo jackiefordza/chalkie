@@ -904,14 +904,17 @@ export const adminDeleteSeason = onCall(async (request) => {
 // client-side status flip to 'scheduled' would leave divisionTables/
 // playerSeasonStats permanently stale, since onMatchConfirmed only ever
 // fires forward INTO 'confirmed', never back out of it.
-export const adminResetMatchResult = onCall(async (request) => {
-  const { matchId } = (request.data ?? {}) as { matchId?: string };
-  if (!matchId) throw new HttpsError('invalid-argument', 'matchId is required.');
+// Exported for the same reason as performDisputeMatch above — direct
+// testability against a real Firestore emulator without the (sandbox-
+// unavailable) Functions emulator, and throws exactly what the onCall
+// wrapper throws (HttpsError) so a test can assert on the same error
+// codes/messages a real client would see.
+export async function performAdminResetMatchResult(matchId: string, uid: string | undefined): Promise<void> {
   const matchRef = db.doc(`matches/${matchId}`);
   const matchSnap = await matchRef.get();
   if (!matchSnap.exists) throw new HttpsError('not-found', 'Match not found.');
   const match = matchSnap.data()!;
-  await assertLeagueAdmin(request.auth?.uid, match.leagueId);
+  await assertLeagueAdmin(uid, match.leagueId);
 
   if (match.status === 'scheduled') {
     throw new HttpsError('failed-precondition', 'This fixture has no result to reset.');
@@ -977,4 +980,10 @@ export const adminResetMatchResult = onCall(async (request) => {
     awayLegsWon: null,
     confirmedVia: FieldValue.delete(),
   });
+}
+
+export const adminResetMatchResult = onCall(async (request) => {
+  const { matchId } = (request.data ?? {}) as { matchId?: string };
+  if (!matchId) throw new HttpsError('invalid-argument', 'matchId is required.');
+  await performAdminResetMatchResult(matchId, request.auth?.uid);
 });

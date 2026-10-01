@@ -73,7 +73,10 @@ export function ConfirmDialog({
   }
 
   async function handleConfirm() {
-    if (phase !== 'idle') return; // already submitting, or already resolved — ignore repeat taps/clicks
+    // Retriable from 'idle' (first attempt) or 'error' (the "Try Again"
+    // button) — only 'submitting' (already in flight) and 'success'
+    // (nothing left to confirm) block a confirm press.
+    if (phase === 'submitting' || phase === 'success') return;
     setPhase('submitting');
     try {
       await onConfirm();

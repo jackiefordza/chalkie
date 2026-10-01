@@ -5,13 +5,19 @@
 // all; per the implementation spec, this harness is deliberately scoped to
 // the rewritten surface (onSubmissionWrite/onConfirmationWrite/
 // disputeMatch and their pure helpers), not a retroactive full-file suite.
+// Also covers handleMatchConfirmed (the onMatchConfirmed trigger body) and
+// performAdminResetMatchResult (the adminResetMatchResult callable body) —
+// both pre-existing/adjacent pieces of the same match lifecycle that this
+// PR's own changes depend on behaving correctly, extracted the same way for
+// the same reason: direct testability without the Functions emulator.
 //
 // Two kinds of test here:
 //  - PURE tests (isValidGamesShape, pairingsAndScoreAgree,
 //    mergeSubmissionGames, computeTotals) — no Firestore, no emulator.
 //  - INTEGRATION tests (handleSubmissionWrite/handleConfirmationWrite/
-//    performDisputeMatch) — exercise the real trigger BODIES directly
-//    (extracted from the onDocumentWritten/onCall wrappers specifically so
+//    performDisputeMatch/handleMatchConfirmed/performAdminResetMatchResult)
+//    — exercise the real trigger/callable BODIES directly (extracted from
+//    the onDocumentWritten/onDocumentUpdated/onCall wrappers specifically so
 //    this is possible) against a genuinely live Firestore emulator, not a
 //    mock. Requires `firebase emulators:start --only firestore` already
 //    running; defaults to 127.0.0.1:8080 (override with
@@ -27,6 +33,7 @@ import { getFirestore } from 'firebase-admin/firestore';
 import {
   pairingsAndScoreAgree, mergeSubmissionGames, isValidGamesShape, isValidSubmission, computeTotals,
   handleSubmissionWrite, handleConfirmationWrite, performDisputeMatch, handleMatchConfirmed,
+  performAdminResetMatchResult,
 } from './index'; // also runs index.ts's own initializeApp()
 
 // A second, differently-named app pointed at the same emulator, purely so
@@ -560,4 +567,234 @@ test('isValidSubmission: a genuinely valid own-team submission is accepted (test
   const games = sevenGames({ homeIds, awayIds });
   const valid = await isValidSubmission({ games }, homeTeamId, awayTeamId, homeTeamId);
   assert.equal(valid, true);
+});
+
+// performAdminResetMatchResult (the adminResetMatchResult callable, body
+// extracted the same way as performDisputeMatch above — see index.ts).
+// Pre-existing logic, unmodified by this PR; these tests close a gap this
+// PR's own review found (no automated coverage existed at all).
+
+async function seedUser(uid: string, data: Record<string, unknown>): Promise<void> {
+  await db.doc(`users/${uid}`).set(data);
+}
+
+// Confirms a match with a real result (via the genuine handleMatchConfirmed
+// pipeline, not a hand-rolled stats write) so a reset test has real
+// divisionTables/playerSeasonStats contributions to verify get reversed.
+async function confirmWithRealResult(
+  matchId: string, homeTeamId: string, awayTeamId: string, games: MatchGame[],
+): Promise<void> {
+  const before = await getMatchSnapshotData(matchId);
+  await db.doc(`matches/${matchId}`).update({ status: 'confirmed', games, confirmedVia: 'captains' });
+  const after = await getMatchSnapshotData(matchId);
+  await handleMatchConfirmed(matchId, before, after);
+}
+
+test('performAdminResetMatchResult: a league admin can reset a confirmed match, and standings/stats are reversed (not just the match doc)', async () => {
+  const homeIds = uniqueIds('h', 6);
+  const awayIds = uniqueIds('a', 6);
+  const homeTeamId = uniqueId('team-home');
+  const awayTeamId = uniqueId('team-away');
+  const adminUid = uniqueId('admin');
+  const matchId = await seedMatch({ homeTeamId, awayTeamId, homeIds, awayIds, status: 'pending_confirmation' });
+  await seedUser(adminUid, { isLeagueAdmin: true, isGlobalAdmin: false, leagueId: 'test-league' });
+
+  const games = sevenGames({
+    homeIds, awayIds,
+    overrides: {
+      1: {
+        legs: [
+          { winner: 'home', oneEighties: [homeIds[0]], highCheckout: { playerId: homeIds[0], value: '140' } },
+          { winner: 'home', oneEighties: [], highCheckout: null },
+          { winner: 'away', oneEighties: [], highCheckout: null },
+        ],
+      },
+    },
+  });
+  await confirmWithRealResult(matchId, homeTeamId, awayTeamId, games);
+
+  // Leftover submissions/confirmations docs, as a real confirmed-via-
+  // captains match would have — the reset must clear these too, not just
+  // flip the match doc's status.
+  await db.doc(`matches/${matchId}/submissions/${homeTeamId}`).set({ submittedByTeamId: homeTeamId, games });
+  await db.doc(`matches/${matchId}/submissions/${awayTeamId}`).set({ submittedByTeamId: awayTeamId, games });
+  await db.doc(`matches/${matchId}/confirmations/${homeTeamId}`).set({ confirmedByTeamId: homeTeamId });
+  await db.doc(`matches/${matchId}/confirmations/${awayTeamId}`).set({ confirmedByTeamId: awayTeamId });
+
+  const homeTableBefore = (await db.doc(`divisionTables/test-season_test-division_${homeTeamId}`).get()).data()!;
+  const h0StatsBefore = (await db.doc(`playerSeasonStats/test-season_${homeIds[0]}`).get()).data()!;
+  assert.equal(homeTableBefore.played, 1, 'precondition: the confirm actually applied a real result');
+  assert.equal(h0StatsBefore.oneEighties, 1, 'precondition: the confirm actually applied real player stats');
+
+  await performAdminResetMatchResult(matchId, adminUid);
+
+  const match = await getMatch(matchId);
+  assert.equal(match.status, 'scheduled');
+  assert.equal(match.games, null);
+  assert.equal(match.homeGamesWon, null);
+  assert.equal(match.awayGamesWon, null);
+  assert.equal(match.homeLegsWon, null);
+  assert.equal(match.awayLegsWon, null);
+  assert.equal('confirmedVia' in match, false, 'confirmedVia must be removed entirely, not just set to null');
+
+  const [homeSub, awaySub, homeConf, awayConf] = await Promise.all([
+    db.doc(`matches/${matchId}/submissions/${homeTeamId}`).get(),
+    db.doc(`matches/${matchId}/submissions/${awayTeamId}`).get(),
+    db.doc(`matches/${matchId}/confirmations/${homeTeamId}`).get(),
+    db.doc(`matches/${matchId}/confirmations/${awayTeamId}`).get(),
+  ]);
+  assert.equal(homeSub.exists, false, 'home submission must be deleted');
+  assert.equal(awaySub.exists, false, 'away submission must be deleted');
+  assert.equal(homeConf.exists, false, 'home confirmation must be deleted');
+  assert.equal(awayConf.exists, false, 'away confirmation must be deleted');
+
+  const homeTableAfter = (await db.doc(`divisionTables/test-season_test-division_${homeTeamId}`).get()).data()!;
+  const awayTableAfter = (await db.doc(`divisionTables/test-season_test-division_${awayTeamId}`).get()).data()!;
+  assert.equal(homeTableAfter.played, 0, 'played must be reversed back to 0, not left at 1');
+  assert.equal(homeTableAfter.won + homeTableAfter.lost, 0);
+  assert.equal(homeTableAfter.legsFor, 0);
+  assert.equal(homeTableAfter.legsAgainst, 0);
+  assert.equal(awayTableAfter.played, 0);
+
+  const h0StatsAfter = (await db.doc(`playerSeasonStats/test-season_${homeIds[0]}`).get()).data()!;
+  assert.equal(h0StatsAfter.played, 0, 'player stats must be reversed, not left from the confirmed result');
+  assert.equal(h0StatsAfter.oneEighties, 0);
+  assert.deepEqual(h0StatsAfter.highCheckouts, []);
+});
+
+test('performAdminResetMatchResult: a non-admin (plain player) is refused (permission-denied), and nothing changes', async () => {
+  const homeTeamId = uniqueId('team-home');
+  const awayTeamId = uniqueId('team-away');
+  const playerUid = uniqueId('player');
+  const matchId = await seedMatch({ homeTeamId, awayTeamId, homeIds: [], awayIds: [], status: 'confirmed' });
+  await db.doc(`matches/${matchId}`).update({ games: [] });
+  await seedUser(playerUid, { isLeagueAdmin: false, isGlobalAdmin: false, leagueId: 'test-league', role: 'player' });
+
+  await assertRejectsWithCode(() => performAdminResetMatchResult(matchId, playerUid), 'permission-denied');
+
+  const match = await getMatch(matchId);
+  assert.equal(match.status, 'confirmed', 'a refused reset must leave the match untouched');
+});
+
+// Asserts on HttpsError's own `.code` property — the same field a real
+// client's httpsCallable sees (as `error.code`) — rather than string-
+// matching the thrown error's message, which HttpsError's own toString()
+// doesn't even include (confirmed: `new HttpsError('permission-denied',
+// 'x').toString()` is just `'Error: x'`, no code).
+async function assertRejectsWithCode(fn: () => Promise<unknown>, expectedCode: string): Promise<void> {
+  try {
+    await fn();
+    assert.fail(`expected a rejection with code ${expectedCode}, but it resolved`);
+  } catch (e) {
+    assert.equal((e as { code?: string }).code, expectedCode);
+  }
+}
+
+test('performAdminResetMatchResult: a league admin of a DIFFERENT league is refused (permission-denied)', async () => {
+  const homeTeamId = uniqueId('team-home');
+  const awayTeamId = uniqueId('team-away');
+  const otherLeagueAdminUid = uniqueId('other-league-admin');
+  const matchId = await seedMatch({ homeTeamId, awayTeamId, homeIds: [], awayIds: [], status: 'confirmed' });
+  await db.doc(`matches/${matchId}`).update({ games: [] });
+  await seedUser(otherLeagueAdminUid, { isLeagueAdmin: true, isGlobalAdmin: false, leagueId: uniqueId('other-league') });
+
+  await assertRejectsWithCode(() => performAdminResetMatchResult(matchId, otherLeagueAdminUid), 'permission-denied');
+
+  const match = await getMatch(matchId);
+  assert.equal(match.status, 'confirmed');
+});
+
+test('performAdminResetMatchResult: an unauthenticated caller is refused (unauthenticated)', async () => {
+  const homeTeamId = uniqueId('team-home');
+  const awayTeamId = uniqueId('team-away');
+  const matchId = await seedMatch({ homeTeamId, awayTeamId, homeIds: [], awayIds: [], status: 'confirmed' });
+  await db.doc(`matches/${matchId}`).update({ games: [] });
+
+  await assertRejectsWithCode(() => performAdminResetMatchResult(matchId, undefined), 'unauthenticated');
+
+  const match = await getMatch(matchId);
+  assert.equal(match.status, 'confirmed');
+});
+
+test('performAdminResetMatchResult: resetting an already-scheduled (no-result) match is refused safely, not a silent no-op success', async () => {
+  const homeTeamId = uniqueId('team-home');
+  const awayTeamId = uniqueId('team-away');
+  const adminUid = uniqueId('admin');
+  const matchId = await seedMatch({ homeTeamId, awayTeamId, homeIds: [], awayIds: [], status: 'scheduled' });
+  await seedUser(adminUid, { isLeagueAdmin: true, isGlobalAdmin: false, leagueId: 'test-league' });
+
+  await assertRejectsWithCode(() => performAdminResetMatchResult(matchId, adminUid), 'failed-precondition');
+});
+
+test('performAdminResetMatchResult: refuses to reset a confirmed match whose games are invalid, rather than reversing an unsafe/unknown contribution', async () => {
+  const homeIds = uniqueIds('h', 6);
+  const awayIds = uniqueIds('a', 6);
+  const homeTeamId = uniqueId('team-home');
+  const awayTeamId = uniqueId('team-away');
+  const adminUid = uniqueId('admin');
+  const matchId = await seedMatch({ homeTeamId, awayTeamId, homeIds, awayIds, status: 'confirmed' });
+  await seedUser(adminUid, { isLeagueAdmin: true, isGlobalAdmin: false, leagueId: 'test-league' });
+
+  // A ghost player who was never registered on either team — same tamper
+  // scenario as handleMatchConfirmed's own defense-in-depth test above.
+  const ghostId = uniqueId('ghost-player');
+  const bogusGames = sevenGames({ homeIds: [ghostId, ...homeIds.slice(1)], awayIds });
+  await db.doc(`matches/${matchId}`).update({ games: bogusGames });
+
+  await assertRejectsWithCode(() => performAdminResetMatchResult(matchId, adminUid), 'failed-precondition');
+
+  const match = await getMatch(matchId);
+  assert.equal(match.status, 'confirmed', 'refusing to reset must leave the match exactly as it was');
+  const tableSnap = await db.doc(`divisionTables/test-season_test-division_${homeTeamId}`).get();
+  assert.equal(tableSnap.exists, false, 'no reversal (or anything else) should have been attempted');
+});
+
+test('performAdminResetMatchResult: resetting a disputed match (never confirmed, no stats to reverse) still clears submissions/confirmations and returns it to scheduled', async () => {
+  const homeTeamId = uniqueId('team-home');
+  const awayTeamId = uniqueId('team-away');
+  const adminUid = uniqueId('admin');
+  const matchId = await seedMatch({ homeTeamId, awayTeamId, homeIds: [], awayIds: [], status: 'disputed' });
+  await seedUser(adminUid, { isLeagueAdmin: true, isGlobalAdmin: false, leagueId: 'test-league' });
+  await db.doc(`matches/${matchId}/submissions/${homeTeamId}`).set({ submittedByTeamId: homeTeamId, games: [] });
+  await db.doc(`matches/${matchId}/submissions/${awayTeamId}`).set({ submittedByTeamId: awayTeamId, games: [] });
+
+  await performAdminResetMatchResult(matchId, adminUid);
+
+  const match = await getMatch(matchId);
+  assert.equal(match.status, 'scheduled');
+  const [homeSub, awaySub] = await Promise.all([
+    db.doc(`matches/${matchId}/submissions/${homeTeamId}`).get(),
+    db.doc(`matches/${matchId}/submissions/${awayTeamId}`).get(),
+  ]);
+  assert.equal(homeSub.exists, false);
+  assert.equal(awaySub.exists, false);
+  // No divisionTables row should ever have been created for this team by
+  // this reset — a disputed match was never confirmed, so there was nothing
+  // to reverse, and the code path that would reverse it must never run here.
+  const tableSnap = await db.doc(`divisionTables/test-season_test-division_${homeTeamId}`).get();
+  assert.equal(tableSnap.exists, false);
+});
+
+test('performAdminResetMatchResult: calling it again on an already-reset match is refused, not a silent double-apply', async () => {
+  const homeIds = uniqueIds('h', 6);
+  const awayIds = uniqueIds('a', 6);
+  const homeTeamId = uniqueId('team-home');
+  const awayTeamId = uniqueId('team-away');
+  const adminUid = uniqueId('admin');
+  const matchId = await seedMatch({ homeTeamId, awayTeamId, homeIds, awayIds, status: 'pending_confirmation' });
+  await seedUser(adminUid, { isLeagueAdmin: true, isGlobalAdmin: false, leagueId: 'test-league' });
+  const games = sevenGames({ homeIds, awayIds });
+  await confirmWithRealResult(matchId, homeTeamId, awayTeamId, games);
+
+  await performAdminResetMatchResult(matchId, adminUid); // first reset — succeeds
+  const tableAfterFirst = (await db.doc(`divisionTables/test-season_test-division_${homeTeamId}`).get()).data()!;
+  assert.equal(tableAfterFirst.played, 0);
+
+  // Second call on the now-scheduled match — must be refused, and must NOT
+  // touch divisionTables/playerSeasonStats a second time (there is nothing
+  // left to reverse; a bug here would show up as a negative `played` count).
+  await assertRejectsWithCode(() => performAdminResetMatchResult(matchId, adminUid), 'failed-precondition');
+
+  const tableAfterSecond = (await db.doc(`divisionTables/test-season_test-division_${homeTeamId}`).get()).data()!;
+  assert.equal(tableAfterSecond.played, 0, 'a refused second reset must not further modify divisionTables');
 });
