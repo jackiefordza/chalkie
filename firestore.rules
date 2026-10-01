@@ -149,8 +149,17 @@ service cloud.firestore {
       // admin reading their own league's players already satisfies the first
       // branch below, so dropping the branch is both the fix and the smaller
       // diff. The pending-user and same-team branches are unchanged.
+      // `resource == null` (the doc doesn't exist) is allowed outright: there's
+      // no data to protect, and Add Player's duplicate-name check (see
+      // mobile/src/lib/players.ts' createPlayerIfNameAvailable-style
+      // transactions) needs to `get()` a deterministic, name-derived ID to
+      // find out it DOESN'T exist before creating it — without this, that
+      // read would evaluate `resource.data.leagueId` against a null
+      // resource and deny, breaking the one case the uniqueness check
+      // exists to handle.
       allow read: if isSignedIn() && (
-        me().leagueId == resource.data.leagueId
+        resource == null
+        || me().leagueId == resource.data.leagueId
         || me().teamId == resource.data.teamId
         || (me().leagueId == null && me().role == 'pending')
         || isGlobalAdmin()

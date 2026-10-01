@@ -10,7 +10,7 @@ import {
 import { db } from '@/config/firebase';
 import { useAuthStore } from '@/stores/authStore';
 import { RAW } from '@/lib/theme';
-import { Screen, Heading, Body, Button, Card, ListRow, AppBar, AppIcon } from '@/components/ui';
+import { Screen, Heading, Body, Button, Card, ListRow, AppBar, AppIcon, ConfirmDialog } from '@/components/ui';
 import { AdminShell } from '@/components/admin/AdminShell';
 import type { JoinRequest } from '@/types';
 
@@ -36,6 +36,7 @@ export default function AdminInboxScreen() {
   const [disputes, setDisputes] = useState<DisputedMatch[]>([]);
   const [teams, setTeams] = useState<Record<string, TeamInfo>>({});
   const [approvingId, setApprovingId] = useState<string | null>(null);
+  const [rejectTarget, setRejectTarget] = useState<JoinRequest | null>(null);
 
   useEffect(() => {
     if (!leagueId) return;
@@ -143,23 +144,12 @@ export default function AdminInboxScreen() {
     }
   }
 
-  async function rejectRequest(req: JoinRequest) {
-    Alert.alert(
-      'Reject request',
-      `Reject ${req.displayName}'s request to join ${req.teamName} as ${req.requestedRole ? ROLE_LABEL[req.requestedRole] : 'captain/VC'}?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Reject', style: 'destructive',
-          onPress: async () => {
-            const batch = writeBatch(db);
-            batch.update(doc(db, 'joinRequests', req.id), { status: 'rejected', rejectedAt: serverTimestamp() });
-            batch.update(doc(db, 'users', req.userId), { pendingRequestType: null, pendingRequestId: null });
-            await batch.commit();
-          },
-        },
-      ],
-    );
+  async function performReject() {
+    if (!rejectTarget) return;
+    const batch = writeBatch(db);
+    batch.update(doc(db, 'joinRequests', rejectTarget.id), { status: 'rejected', rejectedAt: serverTimestamp() });
+    batch.update(doc(db, 'users', rejectTarget.userId), { pendingRequestType: null, pendingRequestId: null });
+    await batch.commit();
   }
 
   const body = (
@@ -190,7 +180,7 @@ export default function AdminInboxScreen() {
                     >
                       Approve
                     </Button>
-                    <Button variant="danger" className="flex-1" disabled={approvingId === req.id} onPress={() => rejectRequest(req)}>
+                    <Button variant="danger" className="flex-1" disabled={approvingId === req.id} onPress={() => setRejectTarget(req)}>
                       Reject
                     </Button>
                   </View>
@@ -219,6 +209,19 @@ export default function AdminInboxScreen() {
           )}
         </>
       )}
+
+      <ConfirmDialog
+        visible={!!rejectTarget}
+        title="Reject request"
+        message={rejectTarget
+          ? `Reject ${rejectTarget.displayName}'s request to join ${rejectTarget.teamName} as ${rejectTarget.requestedRole ? ROLE_LABEL[rejectTarget.requestedRole] : 'captain/VC'}?`
+          : ''}
+        confirmLabel="Yes, Reject"
+        confirmVariant="danger"
+        onConfirm={performReject}
+        onCancel={() => setRejectTarget(null)}
+        onSuccess={() => setRejectTarget(null)}
+      />
     </>
   );
 

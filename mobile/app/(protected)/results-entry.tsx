@@ -3,16 +3,17 @@ import { View, TouchableOpacity, ScrollView, ActivityIndicator, Alert, Platform,
 import * as Haptics from 'expo-haptics';
 import { Stack, useLocalSearchParams, router } from 'expo-router';
 import {
-  collection, doc, onSnapshot, query, where, getDoc, setDoc, updateDoc, deleteDoc, addDoc, serverTimestamp,
+  collection, doc, onSnapshot, query, where, getDoc, setDoc, updateDoc, deleteDoc, serverTimestamp, runTransaction,
 } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { db, functions } from '@/config/firebase';
 import { useAuthStore } from '@/stores/authStore';
 import { goBack } from '@/lib/navigation';
 import { canSignOffMatch, canResetMatch, canActOnPendingConfirmation } from '@/lib/matchPermissions';
+import { DuplicatePlayerNameError, playerDocId } from '@/lib/players';
 import { RAW } from '@/lib/theme';
 import {
-  Screen, Heading, Body, Caption, Stat, Badge, Button, Card, Chip, Input, Label, Sheet, AppBar,
+  Screen, Heading, Body, Caption, Stat, Badge, Button, Card, Chip, Input, Label, Sheet, AppBar, ConfirmDialog,
 } from '@/components/ui';
 import { AdminShell } from '@/components/admin/AdminShell';
 import { MatchHeader, MatchSummary, GameRow, ActionBanner } from '@/components/MatchCentre';
@@ -67,6 +68,7 @@ export default function ResultsEntryScreen() {
   const [showAddPlayerInPicker, setShowAddPlayerInPicker] = useState(false);
   const [newPlayerName, setNewPlayerName] = useState('');
   const [isAddingPlayer, setIsAddingPlayer] = useState(false);
+  const [addPlayerError, setAddPlayerError] = useState<string | null>(null);
 
   // high-checkout modal (add new, or edit an existing entry) for a given game
   const [checkoutModal, setCheckoutModal] = useState<{ gameIndex: number; editIndex: number | null } | null>(null);
@@ -76,6 +78,19 @@ export default function ResultsEntryScreen() {
   // Per-team confirmation state, once pending_confirmation.
   const [homeConfirmed, setHomeConfirmed] = useState(false);
   const [awayConfirmed, setAwayConfirmed] = useState(false);
+
+  // Confirmation-dialog visibility for the three Alert.alert-based confirm
+  // flows on this screen (Dispute, Admin Override, Reset Result) — see
+  // ConfirmDialog for why these can no longer be plain Alert.alert calls.
+  const [disputeDialogOpen, setDisputeDialogOpen] = useState(false);
+  const [overrideDialogOpen, setOverrideDialogOpen] = useState(false);
+  const [resetDialogOpen, setResetDialogOpen] = useState(false);
+  // Captured when the Admin Override dialog opens, rather than read live from
+  // awaitingSubmission/match at render time — a successful override write
+  // flips match.status away from awaiting_confirmation almost immediately
+  // (live onSnapshot), which clears awaitingSubmission while the dialog's own
+  // success screen is still meant to be showing.
+  const [overrideMissingTeamName, setOverrideMissingTeamName] = useState('');
 
   const teamId = appUser?.teamId ?? null;
   const isHome = match ? teamId === match.homeTeamId : false;
@@ -321,28 +336,40 @@ export default function ResultsEntryScreen() {
   // permits this exact write for a captain/VC on their OWN team only — see
   // the picker Sheet's own myTeamSide gate above for the client-side half.
   async function addPlayerFromPicker() {
-    if (!newPlayerName.trim() || !myTeamId || !appUser?.leagueId || !picker) return;
+    const trimmedName = newPlayerName.trim();
+    if (!trimmedName || !myTeamId || !appUser?.leagueId || !picker) return;
     setIsAddingPlayer(true);
+    setAddPlayerError(null);
     try {
-      const ref = await addDoc(collection(db, 'players'), {
-        name: newPlayerName.trim(),
-        leagueId: appUser.leagueId,
-        teamId: myTeamId,
-        claimedByUserId: null,
-        claimedAt: null,
-        createdAt: serverTimestamp(),
-        createdByUserId: appUser.uid,
+      const ref = doc(db, 'players', playerDocId(myTeamId, trimmedName));
+      // Transaction (not a plain create) so the same-name check and the
+      // write are atomic — see players.ts: two concurrent adds for the same
+      // normalized name resolve to the identical document, so Firestore
+      // itself rejects whichever transaction loses the race, rather than a
+      // separate query-then-write that both could pass.
+      await runTransaction(db, async (tx) => {
+        const existing = await tx.get(ref);
+        if (existing.exists()) throw new DuplicatePlayerNameError(trimmedName);
+        tx.set(ref, {
+          name: trimmedName,
+          leagueId: appUser.leagueId,
+          teamId: myTeamId,
+          claimedByUserId: null,
+          claimedAt: null,
+          createdAt: serverTimestamp(),
+          createdByUserId: appUser.uid,
+        });
       });
       // Optimistic insert so the new player is selectable immediately,
       // without waiting on the players onSnapshot round-trip — it gets
       // superseded by that listener's next (identical) update regardless.
-      setPlayers((prev) => [...prev, { id: ref.id, name: newPlayerName.trim(), teamId: myTeamId }]
+      setPlayers((prev) => [...prev, { id: ref.id, name: trimmedName, teamId: myTeamId }]
         .sort((a, b) => a.name.localeCompare(b.name)));
       togglePlayer(picker.gameIndex, picker.side, ref.id);
       setNewPlayerName('');
       setShowAddPlayerInPicker(false);
     } catch (e: unknown) {
-      Alert.alert('Error', (e as Error).message ?? 'Something went wrong');
+      setAddPlayerError(e instanceof DuplicatePlayerNameError ? e.message : (e as Error).message ?? 'Something went wrong');
     } finally {
       setIsAddingPlayer(false);
     }
@@ -478,19 +505,6 @@ export default function ResultsEntryScreen() {
   // exact same write (status → 'confirmed') the two-captain path makes, so
   // onMatchConfirmed picks it up and recalculates standings/stats through
   // the normal pipeline — no separate stats path, nothing duplicated here.
-  function confirmSignOff() {
-    if (!awaitingSubmission || !match) return;
-    const missingTeamName = awaitingSubmission.teamId === match.homeTeamId ? awayTeamName : homeTeamName;
-    Alert.alert(
-      'Admin Override — confirm this result?',
-      `This confirms the result on ${missingTeamName}'s behalf, without their own submission. Standings will update immediately, but any 180s or checkouts by ${missingTeamName}'s players won't be recorded, since only the other team ever submitted a sheet.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Confirm (Admin Override)', onPress: signOffMatch },
-      ],
-    );
-  }
-
   async function signOffMatch() {
     if (!matchId || !awaitingSubmission) return;
     setIsSubmitting(true);
@@ -498,10 +512,6 @@ export default function ResultsEntryScreen() {
       await updateDoc(doc(db, 'matches', matchId), {
         status: 'confirmed', games: awaitingSubmission.games, confirmedVia: 'adminOverride',
       });
-      Alert.alert('Result confirmed', 'Standings and player stats have been updated.');
-      goBack();
-    } catch (e: unknown) {
-      Alert.alert('Error', (e as Error).message ?? 'Something went wrong');
     } finally {
       setIsSubmitting(false);
     }
@@ -514,26 +524,11 @@ export default function ResultsEntryScreen() {
   // through the adminResetMatchResult callable rather than a plain client
   // write, since only that callable actually reverses the derived stats —
   // see functions/src/index.ts for why a raw status flip can't safely do it.
-  function confirmResetMatch() {
-    Alert.alert(
-      'Reset this result?',
-      "This clears the submitted or confirmed result and any 180/checkout data, reverses its contribution to standings and player stats, and returns the fixture to scheduled with no result. The fixture itself — teams, date, venue — stays exactly as it is. This can't be undone.",
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Reset Result', style: 'destructive', onPress: resetMatch },
-      ],
-    );
-  }
-
   async function resetMatch() {
     if (!matchId) return;
     setIsSubmitting(true);
     try {
       await httpsCallable(functions, 'adminResetMatchResult')({ matchId });
-      Alert.alert('Result reset', 'This fixture is back to scheduled with no result.');
-      goBack();
-    } catch (e: unknown) {
-      Alert.alert('Error', (e as Error).message ?? 'Something went wrong');
     } finally {
       setIsSubmitting(false);
     }
@@ -577,24 +572,11 @@ export default function ResultsEntryScreen() {
     }
   }
 
-  function confirmDisputeMatch() {
-    Alert.alert(
-      'Dispute this result?',
-      "This flags the match as disputed for a league admin to resolve. Use this if something on the reconciled sheet below doesn't look right.",
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Dispute', style: 'destructive', onPress: disputeMatchNow },
-      ],
-    );
-  }
-
   async function disputeMatchNow() {
     if (!matchId) return;
     setIsSubmitting(true);
     try {
       await httpsCallable(functions, 'disputeMatch')({ matchId });
-    } catch (e: unknown) {
-      Alert.alert('Error', (e as Error).message ?? 'Something went wrong');
     } finally {
       setIsSubmitting(false);
     }
@@ -714,7 +696,7 @@ export default function ResultsEntryScreen() {
             <View className="flex-row flex-wrap gap-2.5 mb-4">
               <Button variant="secondary" size="sm" onPress={openAdminCorrection}>Edit Result</Button>
               {canResetMatch(appUser, match) && (
-                <Button variant="secondary" size="sm" disabled={isSubmitting} onPress={confirmResetMatch}>Reset Result</Button>
+                <Button variant="secondary" size="sm" disabled={isSubmitting} onPress={() => setResetDialogOpen(true)}>Reset Result</Button>
               )}
               <Button variant="danger" size="sm" onPress={confirmDeleteMatch}>Delete Fixture</Button>
             </View>
@@ -767,7 +749,7 @@ export default function ResultsEntryScreen() {
           </Card>
 
           {canActOnPendingConfirmation(appUser, match) && !myConfirmed && (
-            <Button variant="ghost" size="sm" disabled={isSubmitting} onPress={confirmDisputeMatch}>
+            <Button variant="ghost" size="sm" disabled={isSubmitting} onPress={() => setDisputeDialogOpen(true)}>
               Something's not right — Dispute
             </Button>
           )}
@@ -829,13 +811,16 @@ export default function ResultsEntryScreen() {
                   className="mb-2"
                   disabled={isSubmitting}
                   loading={isSubmitting}
-                  onPress={confirmSignOff}
+                  onPress={() => {
+                    setOverrideMissingTeamName(awaitingSubmission.teamId === match!.homeTeamId ? awayTeamName : homeTeamName);
+                    setOverrideDialogOpen(true);
+                  }}
                 >
                   Confirm (Admin Override)
                 </Button>
                 {/* Covers the common real case behind Issue 5: a captain
                     submitted this result against the WRONG fixture. */}
-                <Button variant="ghost" size="sm" disabled={isSubmitting} onPress={confirmResetMatch}>
+                <Button variant="ghost" size="sm" disabled={isSubmitting} onPress={() => setResetDialogOpen(true)}>
                   Reset Result Instead
                 </Button>
               </>
@@ -850,7 +835,7 @@ export default function ResultsEntryScreen() {
                 tone="coral"
               />
               {canResetMatch(appUser, match) && (
-                <Button variant="ghost" size="sm" disabled={isSubmitting} onPress={confirmResetMatch}>
+                <Button variant="ghost" size="sm" disabled={isSubmitting} onPress={() => setResetDialogOpen(true)}>
                   Reset Result Instead
                 </Button>
               )}
@@ -1012,7 +997,7 @@ export default function ResultsEntryScreen() {
       )}
 
       {/* Player picker modal */}
-      <Sheet visible={!!picker} onClose={() => setPicker(null)}>
+      <Sheet visible={!!picker} onClose={() => { setPicker(null); setAddPlayerError(null); }}>
         <Heading className="mb-1">{picker?.side === 'home' ? homeTeamName : awayTeamName}</Heading>
         <Body size="sm" className="mb-4">
           {picker && games[picker.gameIndex].type === 'singles' ? 'Pick 1 player' : 'Pick 2 players'}
@@ -1056,17 +1041,22 @@ export default function ResultsEntryScreen() {
               <Label>New player name</Label>
               <Input
                 value={newPlayerName}
-                onChangeText={setNewPlayerName}
+                onChangeText={(text) => { setNewPlayerName(text); setAddPlayerError(null); }}
                 placeholder="e.g. Alex Turner"
                 autoCapitalize="words"
                 autoFocus
                 className="mb-3"
               />
+              {addPlayerError && (
+                <Card tone="coral" className="mb-3">
+                  <Body size="sm" tone="coral">{addPlayerError}</Body>
+                </Card>
+              )}
               <View className="flex-row gap-2.5">
                 <Button
                   variant="ghost" className="flex-1"
                   disabled={isAddingPlayer}
-                  onPress={() => { setShowAddPlayerInPicker(false); setNewPlayerName(''); }}
+                  onPress={() => { setShowAddPlayerInPicker(false); setNewPlayerName(''); setAddPlayerError(null); }}
                 >
                   Cancel
                 </Button>
@@ -1087,7 +1077,7 @@ export default function ResultsEntryScreen() {
           )
         )}
 
-        <Button className="mt-4" onPress={() => { setPicker(null); setShowAddPlayerInPicker(false); setNewPlayerName(''); }}>Done</Button>
+        <Button className="mt-4" onPress={() => { setPicker(null); setShowAddPlayerInPicker(false); setNewPlayerName(''); setAddPlayerError(null); }}>Done</Button>
       </Sheet>
 
       {/* High checkout modal */}
@@ -1128,6 +1118,40 @@ export default function ResultsEntryScreen() {
           <Button className="flex-1" disabled={!checkoutPlayerId || !checkoutValue.trim()} onPress={saveCheckout}>Save</Button>
         </View>
       </Sheet>
+
+      <ConfirmDialog
+        visible={disputeDialogOpen}
+        title="Dispute this result?"
+        message="This flags the match as disputed for a league admin to resolve. Use this if something on the reconciled sheet below doesn't look right."
+        confirmLabel="Dispute"
+        confirmVariant="danger"
+        onConfirm={disputeMatchNow}
+        onCancel={() => setDisputeDialogOpen(false)}
+        onSuccess={() => setDisputeDialogOpen(false)}
+      />
+
+      <ConfirmDialog
+        visible={overrideDialogOpen}
+        title="Admin Override — confirm this result?"
+        message={`This confirms the result on ${overrideMissingTeamName}'s behalf, without their own submission. Standings will update immediately, but any 180s or checkouts by ${overrideMissingTeamName}'s players won't be recorded, since only the other team ever submitted a sheet.`}
+        confirmLabel="Yes, Confirm Override"
+        successMessage="Standings and player stats have been updated."
+        onConfirm={signOffMatch}
+        onCancel={() => setOverrideDialogOpen(false)}
+        onSuccess={() => { setOverrideDialogOpen(false); goBack(); }}
+      />
+
+      <ConfirmDialog
+        visible={resetDialogOpen}
+        title="Reset this result?"
+        message="This clears the submitted or confirmed result and any 180/checkout data, reverses its contribution to standings and player stats, and returns the fixture to scheduled with no result. The fixture itself — teams, date, venue — stays exactly as it is. This can't be undone."
+        confirmLabel="Yes, Reset Result"
+        confirmVariant="danger"
+        successMessage="This fixture is back to scheduled with no result."
+        onConfirm={resetMatch}
+        onCancel={() => setResetDialogOpen(false)}
+        onSuccess={() => { setResetDialogOpen(false); goBack(); }}
+      />
     </>
   );
 

@@ -2,13 +2,14 @@ import { useState, useEffect } from 'react';
 import { View, TouchableOpacity, ActivityIndicator, Alert, useWindowDimensions } from 'react-native';
 import { Stack, useLocalSearchParams } from 'expo-router';
 import {
-  collection, doc, onSnapshot, query, where, updateDoc, getDoc, addDoc, writeBatch,
+  collection, doc, onSnapshot, query, where, updateDoc, getDoc, writeBatch, runTransaction,
 } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { db, functions } from '@/config/firebase';
 import { useAuthStore } from '@/stores/authStore';
 import { goBack } from '@/lib/navigation';
 import { RAW } from '@/lib/theme';
+import { DuplicatePlayerNameError, playerDocId } from '@/lib/players';
 import { Screen, Heading, Body, Caption, Button, Card, Avatar, ListRow, Input, Label, Badge, Sheet } from '@/components/ui';
 import { AdminShell } from '@/components/admin/AdminShell';
 
@@ -61,6 +62,7 @@ export default function AdminTeamScreen() {
   const [showAddPlayer, setShowAddPlayer] = useState(false);
   const [newPlayerName, setNewPlayerName] = useState('');
   const [isAddingPlayer, setIsAddingPlayer] = useState(false);
+  const [addPlayerError, setAddPlayerError] = useState<string | null>(null);
 
   const [moveTarget, setMoveTarget] = useState<Player | null>(null);
   const [isMoving, setIsMoving] = useState(false);
@@ -195,19 +197,31 @@ export default function AdminTeamScreen() {
   }
 
   async function addPlayer() {
-    if (!newPlayerName.trim() || !teamId || !appUser?.leagueId) return;
+    const trimmedName = newPlayerName.trim();
+    if (!trimmedName || !teamId || !appUser?.leagueId) return;
     setIsAddingPlayer(true);
+    setAddPlayerError(null);
     try {
-      await addDoc(collection(db, 'players'), {
-        leagueId: appUser.leagueId,
-        teamId,
-        name: newPlayerName.trim(),
-        claimedByUserId: null,
+      const ref = doc(db, 'players', playerDocId(teamId, trimmedName));
+      // Transaction (not a plain create) so the same-name check and the
+      // write are atomic — see players.ts: two concurrent adds for the same
+      // normalized name resolve to the identical document, so Firestore
+      // itself rejects whichever transaction loses the race, rather than a
+      // separate query-then-write that both could pass.
+      await runTransaction(db, async (tx) => {
+        const existing = await tx.get(ref);
+        if (existing.exists()) throw new DuplicatePlayerNameError(trimmedName);
+        tx.set(ref, {
+          leagueId: appUser.leagueId,
+          teamId,
+          name: trimmedName,
+          claimedByUserId: null,
+        });
       });
       setNewPlayerName('');
       setShowAddPlayer(false);
     } catch (e: unknown) {
-      Alert.alert('Error', (e as Error).message ?? 'Something went wrong');
+      setAddPlayerError(e instanceof DuplicatePlayerNameError ? e.message : (e as Error).message ?? 'Something went wrong');
     } finally {
       setIsAddingPlayer(false);
     }
@@ -454,12 +468,24 @@ export default function AdminTeamScreen() {
         )}
       </Sheet>
 
-      <Sheet visible={showAddPlayer} onClose={() => setShowAddPlayer(false)}>
+      <Sheet visible={showAddPlayer} onClose={() => { setShowAddPlayer(false); setAddPlayerError(null); }}>
         <Heading size="lg" className="mb-4">Add Player</Heading>
         <Label>Name</Label>
-        <Input value={newPlayerName} onChangeText={setNewPlayerName} placeholder="e.g. Alex Turner" autoCapitalize="words" autoFocus className="mb-6" />
+        <Input
+          value={newPlayerName}
+          onChangeText={(text) => { setNewPlayerName(text); setAddPlayerError(null); }}
+          placeholder="e.g. Alex Turner"
+          autoCapitalize="words"
+          autoFocus
+          className="mb-3"
+        />
+        {addPlayerError && (
+          <Card tone="coral" className="mb-3">
+            <Body size="sm" tone="coral">{addPlayerError}</Body>
+          </Card>
+        )}
         <View className="flex-row gap-2.5">
-          <Button variant="ghost" className="flex-1" onPress={() => setShowAddPlayer(false)}>Cancel</Button>
+          <Button variant="ghost" className="flex-1" onPress={() => { setShowAddPlayer(false); setAddPlayerError(null); }}>Cancel</Button>
           <Button className="flex-1" disabled={isAddingPlayer || !newPlayerName.trim()} loading={isAddingPlayer} onPress={addPlayer}>
             Add
           </Button>

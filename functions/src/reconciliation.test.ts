@@ -26,7 +26,7 @@ import * as admin from 'firebase-admin';
 import { getFirestore } from 'firebase-admin/firestore';
 import {
   pairingsAndScoreAgree, mergeSubmissionGames, isValidGamesShape, isValidSubmission, computeTotals,
-  handleSubmissionWrite, handleConfirmationWrite, performDisputeMatch,
+  handleSubmissionWrite, handleConfirmationWrite, performDisputeMatch, handleMatchConfirmed,
 } from './index'; // also runs index.ts's own initializeApp()
 
 // A second, differently-named app pointed at the same emulator, purely so
@@ -132,6 +132,18 @@ async function confirm(matchId: string, teamId: string): Promise<void> {
 async function getMatch(matchId: string): Promise<FirebaseFirestore.DocumentData> {
   const snap = await db.doc(`matches/${matchId}`).get();
   return snap.data()!;
+}
+
+// handleMatchConfirmed (unlike handleSubmissionWrite/handleConfirmationWrite
+// above) takes before/after DocumentData directly rather than re-reading the
+// match itself — matching what the real onDocumentUpdated trigger hands it.
+// Reading it back from Firestore (rather than hand-constructing the object)
+// is what gives scheduledDate a genuine Timestamp, since the function calls
+// .toDate() on it exactly as the real trigger's event.data would provide.
+const getMatchSnapshotData = getMatch;
+
+function uniqueIds(prefix: string, n: number): string[] {
+  return Array.from({ length: n }, () => uniqueId(prefix));
 }
 
 // ── PURE tests ──────────────────────────────────────────────────────────
@@ -409,6 +421,128 @@ test('performDisputeMatch: cannot dispute a match that is not pending_confirmati
   await db.doc(`users/${uid}`).set({ role: 'captain', teamId: homeTeamId });
 
   await assert.rejects(() => performDisputeMatch(matchId, uid), /failed-precondition|awaiting confirmation/);
+});
+
+// handleMatchConfirmed is the extracted body of the onMatchConfirmed trigger
+// (functions/src/index.ts) — pulled out specifically so the standings/
+// player-stats pipeline a confirmed result feeds into could be exercised
+// directly against a real Firestore emulator, the same way the three
+// reconciliation triggers above already are. Previously nothing in this
+// suite touched it at all, despite a comment beside the extraction claiming
+// it did — these tests close that gap for real.
+
+test('handleMatchConfirmed: a first confirmation updates divisionTables and playerSeasonStats for both teams (test spec #17)', async () => {
+  const homeIds = uniqueIds('h', 6);
+  const awayIds = uniqueIds('a', 6);
+  const homeTeamId = uniqueId('team-home');
+  const awayTeamId = uniqueId('team-away');
+  const matchId = await seedMatch({ homeTeamId, awayTeamId, homeIds, awayIds, status: 'pending_confirmation' });
+  const before = await getMatchSnapshotData(matchId);
+
+  const games = sevenGames({
+    homeIds, awayIds,
+    overrides: {
+      1: {
+        legs: [
+          { winner: 'home', oneEighties: [homeIds[0]], highCheckout: null },
+          { winner: 'home', oneEighties: [], highCheckout: { playerId: homeIds[0], value: '140' } },
+          { winner: 'away', oneEighties: [awayIds[0]], highCheckout: null },
+        ],
+      },
+    },
+  });
+  await db.doc(`matches/${matchId}`).update({ status: 'confirmed', games, confirmedVia: 'captains' });
+  const after = await getMatchSnapshotData(matchId);
+
+  await handleMatchConfirmed(matchId, before, after);
+
+  const match = await getMatch(matchId);
+  assert.equal(match.homeGamesWon + match.awayGamesWon, 7);
+
+  const homeTable = (await db.doc(`divisionTables/test-season_test-division_${homeTeamId}`).get()).data()!;
+  const awayTable = (await db.doc(`divisionTables/test-season_test-division_${awayTeamId}`).get()).data()!;
+  assert.equal(homeTable.played, 1);
+  assert.equal(awayTable.played, 1);
+  assert.equal(homeTable.won + awayTable.won, 1); // exactly one side won the match
+
+  // sevenGames() (the shared fixture helper above) always slices each
+  // game's lineup from the START of homeIds/awayIds rather than rotating
+  // through them, so homeIds[0]/awayIds[0] are the one player on each side
+  // who appears in every one of the 7 games (5 singles + both pairs) —
+  // played: 7, not 1. That's a fixture-helper quirk (it exists for the
+  // reconciliation tests above, which don't care which specific players are
+  // involved), not anything handleMatchConfirmed itself does.
+  const h0Stats = (await db.doc(`playerSeasonStats/test-season_${homeIds[0]}`).get()).data()!;
+  assert.equal(h0Stats.played, 7);
+  assert.equal(h0Stats.oneEighties, 1);
+  const a0Stats = (await db.doc(`playerSeasonStats/test-season_${awayIds[0]}`).get()).data()!;
+  assert.equal(a0Stats.played, 7);
+  assert.equal(a0Stats.oneEighties, 1);
+});
+
+test('handleMatchConfirmed: does nothing when after.status is not \'confirmed\'', async () => {
+  const homeTeamId = uniqueId('team-home');
+  const awayTeamId = uniqueId('team-away');
+  const matchId = await seedMatch({ homeTeamId, awayTeamId, homeIds: [], awayIds: [], status: 'pending_confirmation' });
+  const before = await getMatchSnapshotData(matchId);
+
+  await handleMatchConfirmed(matchId, before, before); // after.status is still 'pending_confirmation'
+
+  const match = await getMatch(matchId);
+  assert.equal(match.homeGamesWon, null);
+  const tableSnap = await db.doc(`divisionTables/test-season_test-division_${homeTeamId}`).get();
+  assert.equal(tableSnap.exists, false);
+});
+
+test('handleMatchConfirmed: refuses to touch statistics when a confirmed match\'s games reference a player not on that team (defense in depth)', async () => {
+  const homeIds = uniqueIds('h', 6);
+  const awayIds = uniqueIds('a', 6);
+  const homeTeamId = uniqueId('team-home');
+  const awayTeamId = uniqueId('team-away');
+  const matchId = await seedMatch({ homeTeamId, awayTeamId, homeIds, awayIds, status: 'pending_confirmation' });
+  const before = await getMatchSnapshotData(matchId);
+
+  // Tamper: game 1's home slot is a player who was never registered on
+  // EITHER team — simulating a manual Console edit, or any path other than
+  // the validated submission/dispute-resolution flows that would normally
+  // reach 'confirmed'. allPlayersLegitimate must reject this.
+  const ghostId = uniqueId('ghost-player');
+  const bogusGames = sevenGames({ homeIds: [ghostId, ...homeIds.slice(1)], awayIds });
+  await db.doc(`matches/${matchId}`).update({ status: 'confirmed', games: bogusGames, confirmedVia: 'adminOverride' });
+  const after = await getMatchSnapshotData(matchId);
+
+  await handleMatchConfirmed(matchId, before, after);
+
+  const match = await getMatch(matchId);
+  assert.equal(match.homeGamesWon, null, 'computeTotals must never be written for invalid games');
+  const tableSnap = await db.doc(`divisionTables/test-season_test-division_${homeTeamId}`).get();
+  assert.equal(tableSnap.exists, false, 'no statistics should be created from an invalid confirmed result');
+});
+
+test('handleMatchConfirmed: re-invoking with no actual games change makes no further stat changes (idempotent)', async () => {
+  const homeIds = uniqueIds('h', 6);
+  const awayIds = uniqueIds('a', 6);
+  const homeTeamId = uniqueId('team-home');
+  const awayTeamId = uniqueId('team-away');
+  const matchId = await seedMatch({ homeTeamId, awayTeamId, homeIds, awayIds, status: 'pending_confirmation' });
+  const before = await getMatchSnapshotData(matchId);
+  const games = sevenGames({ homeIds, awayIds });
+  await db.doc(`matches/${matchId}`).update({ status: 'confirmed', games, confirmedVia: 'captains' });
+  const afterFirst = await getMatchSnapshotData(matchId);
+
+  await handleMatchConfirmed(matchId, before, afterFirst);
+  const tableAfterFirst = (await db.doc(`divisionTables/test-season_test-division_${homeTeamId}`).get()).data()!;
+  assert.equal(tableAfterFirst.played, 1);
+
+  // Simulate the trigger firing again for the same already-confirmed match
+  // with unchanged games (e.g. a retry, or an unrelated field edit that
+  // still matches onDocumentUpdated) — beforeGames and afterGames are
+  // identical, so this must be a no-op rather than double-counting.
+  const afterSecond = await getMatchSnapshotData(matchId);
+  await handleMatchConfirmed(matchId, afterFirst, afterSecond);
+
+  const tableAfterSecond = (await db.doc(`divisionTables/test-season_test-division_${homeTeamId}`).get()).data()!;
+  assert.equal(tableAfterSecond.played, 1, 'calling handleMatchConfirmed again with unchanged games must not double-count');
 });
 
 // isValidSubmission (item #1 — a real, fully valid own-team submission is

@@ -4,11 +4,12 @@ import { router } from 'expo-router';
 import { useColorScheme } from 'nativewind';
 import {
   collection, doc, onSnapshot, query, where, and, or, orderBy,
-  writeBatch, addDoc, getDoc, getDocs, serverTimestamp, updateDoc,
+  writeBatch, getDoc, getDocs, serverTimestamp, updateDoc, runTransaction,
 } from 'firebase/firestore';
 import { db } from '@/config/firebase';
 import { useAuthStore } from '@/stores/authStore';
 import { RAW } from '@/lib/theme';
+import { DuplicatePlayerNameError, playerDocId } from '@/lib/players';
 import {
   Screen, Heading, Body, Chip, Button, Card, Badge, Avatar, Input, Label, Sheet, VisibilityPicker, AppIcon, ListRow,
 } from '@/components/ui';
@@ -76,6 +77,7 @@ export default function CaptainsScreen() {
   const [newPlayerName, setNewPlayerName] = useState('');
   const [addedPlayerName, setAddedPlayerName] = useState('');
   const [isAdding, setIsAdding] = useState(false);
+  const [addPlayerError, setAddPlayerError] = useState<string | null>(null);
 
   const [respondingId, setRespondingId] = useState<string | null>(null);
 
@@ -200,27 +202,39 @@ export default function CaptainsScreen() {
   }
 
   async function addPlayer() {
-    if (!newPlayerName.trim()) return;
+    const trimmedName = newPlayerName.trim();
+    if (!trimmedName) return;
     if (!appUser?.teamId) {
-      Alert.alert('Error', 'Team not loaded yet — please wait a moment and try again.');
+      setAddPlayerError('Team not loaded yet — please wait a moment and try again.');
       return;
     }
     setIsAdding(true);
+    setAddPlayerError(null);
     try {
-      await addDoc(collection(db, 'players'), {
-        name: newPlayerName.trim(),
-        leagueId: appUser.leagueId,
-        teamId: appUser.teamId,
-        claimedByUserId: null,
-        claimedAt: null,
-        createdAt: serverTimestamp(),
-        createdByUserId: appUser.uid,
+      const ref = doc(db, 'players', playerDocId(appUser.teamId, trimmedName));
+      // Transaction (not a plain create) so the same-name check and the
+      // write are atomic — see players.ts: two concurrent adds for the same
+      // normalized name resolve to the identical document, so Firestore
+      // itself rejects whichever transaction loses the race, rather than a
+      // separate query-then-write that both could pass.
+      await runTransaction(db, async (tx) => {
+        const existing = await tx.get(ref);
+        if (existing.exists()) throw new DuplicatePlayerNameError(trimmedName);
+        tx.set(ref, {
+          name: trimmedName,
+          leagueId: appUser.leagueId,
+          teamId: appUser.teamId,
+          claimedByUserId: null,
+          claimedAt: null,
+          createdAt: serverTimestamp(),
+          createdByUserId: appUser.uid,
+        });
       });
-      setAddedPlayerName(newPlayerName.trim());
+      setAddedPlayerName(trimmedName);
       setNewPlayerName('');
       setModalPhase('added');
     } catch (e: unknown) {
-      Alert.alert('Error', (e as Error).message ?? 'Something went wrong');
+      setAddPlayerError(e instanceof DuplicatePlayerNameError ? e.message : (e as Error).message ?? 'Something went wrong');
     } finally {
       setIsAdding(false);
     }
@@ -551,23 +565,28 @@ export default function CaptainsScreen() {
             + Add Player
           </Button>
 
-          <Sheet visible={modalPhase !== 'closed'} onClose={() => setModalPhase('closed')}>
+          <Sheet visible={modalPhase !== 'closed'} onClose={() => { setModalPhase('closed'); setAddPlayerError(null); }}>
             {modalPhase === 'input' ? (
               <>
                 <Heading size="lg" className="mb-5">Add Player</Heading>
                 <Label>Player name</Label>
                 <Input
                   value={newPlayerName}
-                  onChangeText={setNewPlayerName}
+                  onChangeText={(text) => { setNewPlayerName(text); setAddPlayerError(null); }}
                   placeholder="e.g. Jake Smith"
                   autoCapitalize="words"
                   autoFocus
                   returnKeyType="done"
                   onSubmitEditing={addPlayer}
-                  className="mb-5"
+                  className="mb-3"
                 />
+                {addPlayerError && (
+                  <Card tone="coral" className="mb-3">
+                    <Body size="sm" tone="coral">{addPlayerError}</Body>
+                  </Card>
+                )}
                 <View className="flex-row gap-2.5">
-                  <Button variant="ghost" className="flex-1" onPress={() => setModalPhase('closed')}>Cancel</Button>
+                  <Button variant="ghost" className="flex-1" onPress={() => { setModalPhase('closed'); setAddPlayerError(null); }}>Cancel</Button>
                   <Button className="flex-1" disabled={isAdding || !newPlayerName.trim()} loading={isAdding} onPress={addPlayer}>
                     Add
                   </Button>
