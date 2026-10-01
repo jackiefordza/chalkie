@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { View, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
+import { View, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { router } from 'expo-router';
 import { useColorScheme } from 'nativewind';
 import {
@@ -11,7 +11,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { RAW } from '@/lib/theme';
 import { DuplicatePlayerNameError, playerDocId } from '@/lib/players';
 import {
-  Screen, Heading, Body, Chip, Button, Card, Badge, Avatar, Input, Label, Sheet, VisibilityPicker, AppIcon, ListRow,
+  Screen, Heading, Body, Chip, Button, Card, Badge, Avatar, Input, Label, Sheet, VisibilityPicker, AppIcon, ListRow, ConfirmDialog,
 } from '@/components/ui';
 import type { Match, MatchStatus, PhoneVisibility, JoinRequest } from '@/types';
 
@@ -80,6 +80,9 @@ export default function CaptainsScreen() {
   const [addPlayerError, setAddPlayerError] = useState<string | null>(null);
 
   const [respondingId, setRespondingId] = useState<string | null>(null);
+  const [approveError, setApproveError] = useState<{ id: string; message: string } | null>(null);
+  const [removePlayerTarget, setRemovePlayerTarget] = useState<Player | null>(null);
+  const [rejectTarget, setRejectTarget] = useState<JoinRequest | null>(null);
 
   useEffect(() => {
     if (!teamId) return;
@@ -240,14 +243,8 @@ export default function CaptainsScreen() {
     }
   }
 
-  async function removePlayer(playerId: string, name: string) {
-    Alert.alert('Remove player', `Remove "${name}" from the squad?`, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Remove', style: 'destructive',
-        onPress: async () => { await writeBatch(db).delete(doc(db, 'players', playerId)).commit(); },
-      },
-    ]);
+  async function removePlayer(playerId: string) {
+    await writeBatch(db).delete(doc(db, 'players', playerId)).commit();
   }
 
   // Covers all three request kinds this team's captain/VC can act on: a plain
@@ -256,6 +253,7 @@ export default function CaptainsScreen() {
   async function approveJoinRequest(req: JoinRequest) {
     if (!appUser?.teamId || !appUser.leagueId) return;
     setRespondingId(req.id);
+    setApproveError(null);
     try {
       const batch = writeBatch(db);
 
@@ -311,31 +309,24 @@ export default function CaptainsScreen() {
 
       await batch.commit();
     } catch (e: unknown) {
-      Alert.alert('Error', (e as Error).message ?? 'Something went wrong');
+      setApproveError({ id: req.id, message: (e as Error).message ?? 'Something went wrong' });
     } finally {
       setRespondingId(null);
     }
   }
 
-  async function rejectJoinRequest(req: JoinRequest) {
-    Alert.alert('Reject request', `Reject ${req.displayName}'s request?`, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Reject', style: 'destructive',
-        onPress: async () => {
-          const batch = writeBatch(db);
-          batch.update(doc(db, 'joinRequests', req.id), {
-            status: 'rejected',
-            rejectedAt: serverTimestamp(),
-          });
-          batch.update(doc(db, 'users', req.userId), {
-            pendingRequestType: null,
-            pendingRequestId: null,
-          });
-          await batch.commit();
-        },
-      },
-    ]);
+  async function performRejectJoinRequest() {
+    if (!rejectTarget) return;
+    const batch = writeBatch(db);
+    batch.update(doc(db, 'joinRequests', rejectTarget.id), {
+      status: 'rejected',
+      rejectedAt: serverTimestamp(),
+    });
+    batch.update(doc(db, 'users', rejectTarget.userId), {
+      pendingRequestType: null,
+      pendingRequestId: null,
+    });
+    await batch.commit();
   }
 
   function roleOf(player: Player): TeamRole | null {
@@ -548,7 +539,7 @@ export default function CaptainsScreen() {
                     </Badge>
                     {!isClaimed && (
                       <TouchableOpacity activeOpacity={0.7}
-                        onPress={() => removePlayer(player.id, player.name)}
+                        onPress={() => setRemovePlayerTarget(player)}
                         hitSlop={8}
                         className="w-8 h-8 rounded-full items-center justify-center bg-coral-fill dark:bg-coral-fill-dark"
                       >
@@ -650,6 +641,11 @@ export default function CaptainsScreen() {
                 <Card key={req.id} tone="coral" className="mb-2.5">
                   <Body tone="strong" weight="semibold" className="mb-1">{req.displayName}</Body>
                   <Body size="sm" className="mb-3">{subtitle}</Body>
+                  {approveError?.id === req.id && (
+                    <Card tone="coral" className="mb-3" padded={false}>
+                      <Body tone="coral" size="sm" className="p-3">{approveError.message}</Body>
+                    </Card>
+                  )}
                   <View className="flex-row gap-2.5">
                     <Button
                       variant="good"
@@ -660,7 +656,7 @@ export default function CaptainsScreen() {
                     >
                       Approve
                     </Button>
-                    <Button variant="danger" className="flex-1" disabled={isResponding} onPress={() => rejectJoinRequest(req)}>
+                    <Button variant="danger" className="flex-1" disabled={isResponding} onPress={() => setRejectTarget(req)}>
                       Reject
                     </Button>
                   </View>
@@ -670,6 +666,28 @@ export default function CaptainsScreen() {
           )}
         </>
       )}
+
+      <ConfirmDialog
+        visible={!!removePlayerTarget}
+        title="Remove this player"
+        message={`Remove "${removePlayerTarget?.name}" from the squad?`}
+        confirmLabel="Yes, Remove"
+        confirmVariant="danger"
+        onConfirm={() => { if (removePlayerTarget) return removePlayer(removePlayerTarget.id); }}
+        onCancel={() => setRemovePlayerTarget(null)}
+        onSuccess={() => setRemovePlayerTarget(null)}
+      />
+
+      <ConfirmDialog
+        visible={!!rejectTarget}
+        title="Reject request"
+        message={`Reject ${rejectTarget?.displayName}'s request?`}
+        confirmLabel="Yes, Reject"
+        confirmVariant="danger"
+        onConfirm={performRejectJoinRequest}
+        onCancel={() => setRejectTarget(null)}
+        onSuccess={() => setRejectTarget(null)}
+      />
     </Screen>
   );
 }

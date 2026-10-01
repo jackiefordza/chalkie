@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { View, ScrollView, TouchableOpacity, ActivityIndicator, Alert, Platform, useWindowDimensions } from 'react-native';
+import { View, ScrollView, TouchableOpacity, ActivityIndicator, Platform, useWindowDimensions } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { Stack, useLocalSearchParams } from 'expo-router';
 import { useColorScheme } from 'nativewind';
@@ -51,6 +51,14 @@ export default function AdminDisputeScreen() {
 
   const [resolved, setResolved] = useState<Record<number, MatchGame>>({});
   const [isConfirming, setIsConfirming] = useState(false);
+  // Alert.alert's success/error feedback for this action was a documented
+  // no-op on web (see ConfirmDialog's own comment on this) — confirmResult
+  // doesn't gate behind a confirmation prompt (the admin has already picked
+  // a version for every conflicting game, so pressing Confirm Result IS the
+  // confirmation), but its outcome still needs to be visible on web, so it's
+  // shown inline instead.
+  const [confirmError, setConfirmError] = useState<string | null>(null);
+  const [confirmedSuccessfully, setConfirmedSuccessfully] = useState(false);
 
   useEffect(() => {
     if (!matchId || !appUser?.leagueId) return;
@@ -131,14 +139,14 @@ export default function AdminDisputeScreen() {
   async function confirmResult() {
     if (!matchId || !allResolved) return;
     setIsConfirming(true);
+    setConfirmError(null);
     try {
       const finalGames = gameOrders.map((o) => resolved[o]).sort((a, b) => a.order - b.order);
       await updateDoc(doc(db, 'matches', matchId), { status: 'confirmed', games: finalGames, confirmedVia: 'adminOverride' });
       if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      Alert.alert('Result confirmed', 'Standings and stats will update shortly.');
-      goBack();
+      setConfirmedSuccessfully(true);
     } catch (e: unknown) {
-      Alert.alert('Error', (e as Error).message ?? 'Something went wrong');
+      setConfirmError((e as Error).message ?? 'Something went wrong');
     } finally {
       setIsConfirming(false);
     }
@@ -261,9 +269,26 @@ export default function AdminDisputeScreen() {
           </ScrollView>
 
           <View className="p-5 pt-2">
-            <Button disabled={!allResolved || isConfirming} loading={isConfirming} onPress={confirmResult}>
-              Confirm Result
-            </Button>
+            {confirmedSuccessfully ? (
+              <>
+                <Card tone="sage" className="mb-3">
+                  <Body tone="sage" weight="semibold">Result confirmed</Body>
+                  <Body size="sm" tone="sage">Standings and stats will update shortly.</Body>
+                </Card>
+                <Button onPress={() => goBack()}>Done</Button>
+              </>
+            ) : (
+              <>
+                {confirmError && (
+                  <Card tone="coral" className="mb-3">
+                    <Body size="sm" tone="coral">{confirmError}</Body>
+                  </Card>
+                )}
+                <Button disabled={!allResolved || isConfirming} loading={isConfirming} onPress={confirmResult}>
+                  {confirmError ? 'Try Again' : 'Confirm Result'}
+                </Button>
+              </>
+            )}
           </View>
         </>
       )}

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { View, Alert, Platform, useWindowDimensions } from 'react-native';
+import { View, Platform, useWindowDimensions } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { router, Stack } from 'expo-router';
 import { useColorScheme } from 'nativewind';
@@ -36,6 +36,7 @@ export default function AdminInboxScreen() {
   const [disputes, setDisputes] = useState<DisputedMatch[]>([]);
   const [teams, setTeams] = useState<Record<string, TeamInfo>>({});
   const [approvingId, setApprovingId] = useState<string | null>(null);
+  const [approveError, setApproveError] = useState<{ id: string; message: string } | null>(null);
   const [rejectTarget, setRejectTarget] = useState<JoinRequest | null>(null);
 
   useEffect(() => {
@@ -91,6 +92,7 @@ export default function AdminInboxScreen() {
     if (!team) return;
 
     setApprovingId(req.id);
+    setApproveError(null);
     try {
       const batch = writeBatch(db);
 
@@ -138,7 +140,7 @@ export default function AdminInboxScreen() {
       await batch.commit();
       if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (e: unknown) {
-      Alert.alert('Error', (e as Error).message ?? 'Something went wrong');
+      setApproveError({ id: req.id, message: (e as Error).message ?? 'Something went wrong' });
     } finally {
       setApprovingId(null);
     }
@@ -170,6 +172,11 @@ export default function AdminInboxScreen() {
                   <Body size="sm" className="mb-3.5">
                     Wants to be {req.requestedRole ? ROLE_LABEL[req.requestedRole] : '…'} of {req.teamName}
                   </Body>
+                  {approveError?.id === req.id && (
+                    <Card tone="coral" className="mb-3.5" padded={false}>
+                      <Body tone="coral" size="sm" className="p-3">{approveError.message}</Body>
+                    </Card>
+                  )}
                   <View className="flex-row gap-2.5">
                     <Button
                       variant="good"

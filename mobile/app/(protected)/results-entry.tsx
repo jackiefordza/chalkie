@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { View, TouchableOpacity, ScrollView, ActivityIndicator, Alert, Platform, useWindowDimensions } from 'react-native';
+import { View, TouchableOpacity, ScrollView, ActivityIndicator, Platform, useWindowDimensions } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { Stack, useLocalSearchParams, router } from 'expo-router';
 import {
@@ -58,6 +58,17 @@ export default function ResultsEntryScreen() {
   // Review mode: games flagged as "not right, let me fix this" — everything else
   // is treated as agreed-with, copied straight from the other team's submission.
   const [editedGameIndexes, setEditedGameIndexes] = useState<Set<number>>(new Set());
+  // Inline error for Submit Result / Save Correction (shown in the bottom
+  // bar) — these share one state since only one of the two is ever active
+  // at a time (adminCorrecting gates which).
+  const [editingError, setEditingError] = useState<string | null>(null);
+  // Post-submit acknowledgment: Alert.alert's success message was a no-op on
+  // web (and raced with the goBack() that followed it even on native) — this
+  // Sheet replaces both, waiting for the user to tap Done before navigating
+  // away.
+  const [postSubmitSuccess, setPostSubmitSuccess] = useState<{ title: string; message: string } | null>(null);
+  const [confirmError, setConfirmError] = useState<string | null>(null);
+  const [adoptError, setAdoptError] = useState<{ gameIndex: number; message: string } | null>(null);
 
   // player-picker modal
   const [picker, setPicker] = useState<{ gameIndex: number; side: MatchSide } | null>(null);
@@ -79,12 +90,14 @@ export default function ResultsEntryScreen() {
   const [homeConfirmed, setHomeConfirmed] = useState(false);
   const [awayConfirmed, setAwayConfirmed] = useState(false);
 
-  // Confirmation-dialog visibility for the three Alert.alert-based confirm
-  // flows on this screen (Dispute, Admin Override, Reset Result) — see
-  // ConfirmDialog for why these can no longer be plain Alert.alert calls.
+  // Confirmation-dialog visibility for the four Alert.alert-based confirm
+  // flows on this screen (Dispute, Admin Override, Reset Result, Delete
+  // Fixture) — see ConfirmDialog for why these can no longer be plain
+  // Alert.alert calls.
   const [disputeDialogOpen, setDisputeDialogOpen] = useState(false);
   const [overrideDialogOpen, setOverrideDialogOpen] = useState(false);
   const [resetDialogOpen, setResetDialogOpen] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   // Captured when the Admin Override dialog opens, rather than read live from
   // awaitingSubmission/match at render time — a successful override write
   // flips match.status away from awaiting_confirmation almost immediately
@@ -256,6 +269,7 @@ export default function ResultsEntryScreen() {
     // only fixes what's ATTRIBUTED, not whether an override happens.
     const adopted = keepOnlyOwnTeamStats(otherSubmission[gameIndex], myTeamId, match.homeTeamId);
     const updated = mySubmission.map((g, i) => (i === gameIndex ? adopted : g));
+    setAdoptError(null);
     try {
       await setDoc(doc(db, 'matches', matchId, 'submissions', myTeamId), {
         submittedByTeamId: myTeamId,
@@ -265,7 +279,7 @@ export default function ResultsEntryScreen() {
       });
       setMySubmission(updated);
     } catch (e: unknown) {
-      Alert.alert('Error', (e as Error).message ?? 'Something went wrong');
+      setAdoptError({ gameIndex, message: (e as Error).message ?? 'Something went wrong' });
     }
   }
 
@@ -442,6 +456,7 @@ export default function ResultsEntryScreen() {
   async function submit() {
     if (!matchId || !myTeamId || !appUser || !allComplete) return;
     setIsSubmitting(true);
+    setEditingError(null);
     try {
       const finalGames: MatchGame[] = games.map(toMatchGame);
       await setDoc(doc(db, 'matches', matchId, 'submissions', myTeamId), {
@@ -452,15 +467,14 @@ export default function ResultsEntryScreen() {
       });
       setEditing(false);
       if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      Alert.alert(
-        'Result submitted',
-        otherSubmission
+      setPostSubmitSuccess({
+        title: 'Result submitted',
+        message: otherSubmission
           ? "Both teams have now submitted — if the pairings and scores match, you'll both be asked to confirm the reconciled sheet. If they don't match, it'll be flagged for the admin."
           : 'Waiting on the other team to submit their result too.',
-      );
-      goBack();
+      });
     } catch (e: unknown) {
-      Alert.alert('Error', (e as Error).message ?? 'Something went wrong');
+      setEditingError((e as Error).message ?? 'Something went wrong');
     } finally {
       setIsSubmitting(false);
     }
@@ -476,15 +490,15 @@ export default function ResultsEntryScreen() {
   async function saveAdminCorrection() {
     if (!matchId || !allComplete) return;
     setIsSubmitting(true);
+    setEditingError(null);
     try {
       const finalGames: MatchGame[] = games.map(toMatchGame);
       await updateDoc(doc(db, 'matches', matchId), { games: finalGames, confirmedVia: 'adminOverride' });
       setAdminCorrecting(false);
       setEditing(false);
-      Alert.alert('Result updated', 'Standings and player stats have been recalculated.');
-      goBack();
+      setPostSubmitSuccess({ title: 'Result updated', message: 'Standings and player stats have been recalculated.' });
     } catch (e: unknown) {
-      Alert.alert('Error', (e as Error).message ?? 'Something went wrong');
+      setEditingError((e as Error).message ?? 'Something went wrong');
     } finally {
       setIsSubmitting(false);
     }
@@ -518,7 +532,7 @@ export default function ResultsEntryScreen() {
   }
 
   // Returns a fixture to its original unplayed state — distinct from
-  // deleting it (confirmDeleteMatch/deleteMatch below): the fixture itself
+  // deleting it (deleteMatch below): the fixture itself
   // (teams, date, venue, league/season/division) stays, only the result/
   // submission state and its stats/standings contribution are cleared. Goes
   // through the adminResetMatchResult callable rather than a plain client
@@ -534,30 +548,15 @@ export default function ResultsEntryScreen() {
     }
   }
 
-  function confirmDeleteMatch() {
-    Alert.alert(
-      'Delete this fixture',
-      "This removes the fixture and its result completely, and reverses its contribution to standings and player stats. This can't be undone.",
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Delete', style: 'destructive', onPress: deleteMatch },
-      ],
-    );
-  }
-
   async function deleteMatch() {
     if (!matchId) return;
-    try {
-      await deleteDoc(doc(db, 'matches', matchId));
-      goBack();
-    } catch (e: unknown) {
-      Alert.alert('Error', (e as Error).message ?? 'Something went wrong');
-    }
+    await deleteDoc(doc(db, 'matches', matchId));
   }
 
   async function confirmMyTeam() {
     if (!matchId || !myTeamId || !appUser) return;
     setIsSubmitting(true);
+    setConfirmError(null);
     try {
       await setDoc(doc(db, 'matches', matchId, 'confirmations', myTeamId), {
         confirmedByTeamId: myTeamId,
@@ -566,7 +565,7 @@ export default function ResultsEntryScreen() {
       });
       if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (e: unknown) {
-      Alert.alert('Error', (e as Error).message ?? 'Something went wrong');
+      setConfirmError((e as Error).message ?? 'Something went wrong');
     } finally {
       setIsSubmitting(false);
     }
@@ -698,7 +697,7 @@ export default function ResultsEntryScreen() {
               {canResetMatch(appUser, match) && (
                 <Button variant="secondary" size="sm" disabled={isSubmitting} onPress={() => setResetDialogOpen(true)}>Reset Result</Button>
               )}
-              <Button variant="danger" size="sm" onPress={confirmDeleteMatch}>Delete Fixture</Button>
+              <Button variant="danger" size="sm" onPress={() => setDeleteDialogOpen(true)}>Delete Fixture</Button>
             </View>
           )}
           {(match!.games ?? []).map((game, gameIndex) => (
@@ -746,6 +745,11 @@ export default function ResultsEntryScreen() {
                 </View>
               ))}
             </View>
+            {confirmError && (
+              <Card tone="coral" className="mt-3" padded={false}>
+                <Body tone="coral" size="sm" className="p-3">{confirmError}</Body>
+              </Card>
+            )}
           </Card>
 
           {canActOnPendingConfirmation(appUser, match) && !myConfirmed && (
@@ -866,6 +870,11 @@ export default function ResultsEntryScreen() {
               <View key={gameIndex} className="mb-2">
                 <GameRow game={mySubmission![gameIndex]} gameIndex={gameIndex} playerName={playerName} label={`Game ${gameIndex + 1} · Your version`} tone="coral" />
                 <GameRow game={otherSubmission![gameIndex]} gameIndex={gameIndex} playerName={playerName} label={`Game ${gameIndex + 1} · Their version`} tone="coral" />
+                {adoptError?.gameIndex === gameIndex && (
+                  <Card tone="coral" className="mb-2.5" padded={false}>
+                    <Body tone="coral" size="sm" className="p-3">{adoptError.message}</Body>
+                  </Card>
+                )}
                 <Button variant="good" size="sm" className="-mt-1 mb-3.5" onPress={() => adoptTheirVersion(gameIndex)}>Adopt Their Version</Button>
               </View>
             ))
@@ -982,8 +991,15 @@ export default function ResultsEntryScreen() {
           </ScrollView>
 
           {/* Bottom bar */}
+          {editingError && (
+            <View className="px-5">
+              <Card tone="coral" padded={false}>
+                <Body tone="coral" size="sm" className="p-3">{editingError}</Body>
+              </Card>
+            </View>
+          )}
           <View className="flex-row gap-2.5 p-5 pt-2">
-            <Button variant="ghost" className="flex-1" onPress={() => { setEditing(false); setAdminCorrecting(false); }}>Cancel</Button>
+            <Button variant="ghost" className="flex-1" onPress={() => { setEditing(false); setAdminCorrecting(false); setEditingError(null); }}>Cancel</Button>
             <Button
               className="flex-1"
               disabled={!allComplete || isSubmitting}
@@ -1152,6 +1168,23 @@ export default function ResultsEntryScreen() {
         onCancel={() => setResetDialogOpen(false)}
         onSuccess={() => { setResetDialogOpen(false); goBack(); }}
       />
+
+      <ConfirmDialog
+        visible={deleteDialogOpen}
+        title="Delete this fixture"
+        message="This removes the fixture and its result completely, and reverses its contribution to standings and player stats. This can't be undone."
+        confirmLabel="Yes, Delete Fixture"
+        confirmVariant="danger"
+        onConfirm={deleteMatch}
+        onCancel={() => setDeleteDialogOpen(false)}
+        onSuccess={() => { setDeleteDialogOpen(false); goBack(); }}
+      />
+
+      <Sheet visible={!!postSubmitSuccess} onClose={() => { setPostSubmitSuccess(null); goBack(); }}>
+        <Heading size="lg" className="mb-2">{postSubmitSuccess?.title}</Heading>
+        <Body size="sm" className="mb-5">{postSubmitSuccess?.message}</Body>
+        <Button className="w-full" onPress={() => { setPostSubmitSuccess(null); goBack(); }}>Done</Button>
+      </Sheet>
     </>
   );
 

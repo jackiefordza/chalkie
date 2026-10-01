@@ -1,16 +1,21 @@
-import { useEffect } from 'react';
-import { View, Text, ActivityIndicator, Alert } from 'react-native';
+import { useEffect, useState } from 'react';
+import { View, Text, ActivityIndicator } from 'react-native';
 import { router } from 'expo-router';
 import { useColorScheme } from 'nativewind';
 import { useAuthStore } from '@/stores/authStore';
 import { RAW } from '@/lib/theme';
 import { FONT_DISPLAY } from '@/styles/typography';
-import { Body, AppIcon } from '@/components/ui';
+import { Body, AppIcon, Button } from '@/components/ui';
 
 export default function IndexScreen() {
   const { firebaseUser, appUser, isLoading, logOut } = useAuthStore();
   const { colorScheme } = useColorScheme();
   const isDark = colorScheme === 'dark';
+  // Alert.alert is a no-op on web — without this, a signed-in user with no
+  // Firestore profile was previously stuck on the loading spinner forever
+  // with no explanation and no way out (the Sign Out it offered lived only
+  // inside the alert that never appeared).
+  const [accountNotSetUp, setAccountNotSetUp] = useState(false);
 
   useEffect(() => {
     if (isLoading) return;
@@ -24,11 +29,7 @@ export default function IndexScreen() {
     // nothing this screen can wait for, and looping here forever with no
     // explanation is worse than signing out with a clear reason.
     if (!appUser) {
-      Alert.alert(
-        'Account not set up',
-        "We couldn't find your profile. Please sign in again, or contact your league admin if this keeps happening.",
-        [{ text: 'OK', onPress: () => logOut() }],
-      );
+      setAccountNotSetUp(true);
       return;
     }
 
@@ -61,6 +62,21 @@ export default function IndexScreen() {
         break;
     }
   }, [firebaseUser, appUser, isLoading]);
+
+  if (accountNotSetUp) {
+    return (
+      <View className="flex-1 bg-bg dark:bg-bg-dark items-center justify-center p-6">
+        <View className="w-20 h-20 rounded-full items-center justify-center bg-coral-fill dark:bg-coral-fill-dark mb-4">
+          <AppIcon name="warning" size={40} color={isDark ? RAW.coralInkDark : RAW.coralInk} />
+        </View>
+        <Body tone="strong" weight="semibold" className="mb-2 text-center">Account not set up</Body>
+        <Body className="text-center mb-6">
+          We couldn't find your profile. Please sign in again, or contact your league admin if this keeps happening.
+        </Body>
+        <Button onPress={() => logOut()}>Sign Out</Button>
+      </View>
+    );
+  }
 
   return (
     <View className="flex-1 bg-bg dark:bg-bg-dark items-center justify-center">
