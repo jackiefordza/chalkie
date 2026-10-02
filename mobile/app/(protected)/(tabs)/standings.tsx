@@ -6,8 +6,8 @@ import { collection, doc, getDoc, onSnapshot, query, where, orderBy } from 'fire
 import { db } from '@/config/firebase';
 import { useAuthStore } from '@/stores/authStore';
 import { RAW } from '@/lib/theme';
-import { Screen, Heading, Body, Caption, Stat, Chip, Card, AppIcon } from '@/components/ui';
-import type { DivisionTable, Season } from '@/types';
+import { Screen, Heading, Body, Caption, Stat, Chip, Card, AppIcon, SponsorBanner } from '@/components/ui';
+import type { DivisionTable, Season, LeagueSponsor } from '@/types';
 
 interface Division { id: string; name: string; order: number; seasonId: string }
 interface TeamInfo { id: string; name: string; divisionId: string }
@@ -30,6 +30,7 @@ export default function StandingsScreen() {
   const isDark = colorScheme === 'dark';
 
   const [leagueName, setLeagueName] = useState<string | null>(null);
+  const [sponsor, setSponsor] = useState<LeagueSponsor | null>(null);
   const [seasons, setSeasons] = useState<Season[]>([]);
   const [selectedSeasonId, setSelectedSeasonId] = useState<string | null>(null);
   const [divisions, setDivisions] = useState<Division[]>([]);
@@ -44,7 +45,10 @@ export default function StandingsScreen() {
   // Profile (this data essentially never changes).
   useEffect(() => {
     if (!appUser?.leagueId) return;
-    getDoc(doc(db, 'leagues', appUser.leagueId)).then((s) => setLeagueName(s.exists() ? s.data().name : null));
+    getDoc(doc(db, 'leagues', appUser.leagueId)).then((s) => {
+      setLeagueName(s.exists() ? s.data().name : null);
+      setSponsor(s.exists() ? s.data().sponsor ?? null : null);
+    });
   }, [appUser?.leagueId]);
 
   // League-wide team names (+ divisionId, for the "teams in this division"
@@ -154,6 +158,8 @@ export default function StandingsScreen() {
         <Heading size="lg">{leagueName ?? '…'}</Heading>
         {contextLine ? <Body size="sm" className="mt-1">{contextLine}</Body> : null}
       </View>
+
+      <SponsorBanner sponsor={sponsor} className="mb-4" />
 
       {divisions.length > 1 && (
         <ScrollView horizontal showsHorizontalScrollIndicator={false} className="mb-4" contentContainerStyle={{ gap: 8 }}>
