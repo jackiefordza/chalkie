@@ -1,0 +1,73 @@
+name: Deploy Firebase (staging)
+
+# Manual-only — unlike deploy-firebase.yml (which auto-deploys to
+# production on every push to main that touches functions/firestore.rules/
+# firestore.indexes.json), this never fires on its own. Staging deploys are
+# a deliberate action, not a side effect of merging to main.
+#
+# Builds whichever ref this run is dispatched against (same as
+# deploy-hosting-production.yml's approach, not deploy-hosting-preview.yml's
+# fixed-SHA pin) — there's no "accidentally deploy the wrong code to
+# production" risk here to guard against with a pin, since this can only
+# ever reach chalkie-app-staging.
+#
+# Scope mirrors deploy-firebase.yml exactly (functions + firestore rules +
+# firestore indexes, never hosting), just retargeted: --project is
+# hard-coded to chalkie-app-staging, never read from an input, branch, or
+# secret, and the credential is a separate secret
+# (FIREBASE_SERVICE_ACCOUNT_STAGING) scoped to the staging project only —
+# this workflow never touches the production FIREBASE_SERVICE_ACCOUNT
+# secret, so it is structurally incapable of writing to chalkie-app
+# regardless of what ref it's run against.
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install function dependencies
+        working-directory: functions
+        run: npm ci
+
+      - name: Typecheck functions
+        working-directory: functions
+        run: npx tsc --noEmit
+
+      - name: Build functions
+        working-directory: functions
+        run: npm run build
+
+      # Same write-to-temp-file pattern deploy-firebase.yml uses for the
+      # production secret, just with the staging-scoped one and $RUNNER_TEMP
+      # instead of a fixed /tmp path. Never printed, never passed as a
+      # command argument.
+      - name: Write staging Firebase service-account credential
+        env:
+          FIREBASE_SERVICE_ACCOUNT_STAGING: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_STAGING }}
+        run: printf '%s' "$FIREBASE_SERVICE_ACCOUNT_STAGING" > "$RUNNER_TEMP/service-account-staging.json"
+
+      # --project is hard-coded to chalkie-app-staging. Same --only scope as
+      # deploy-firebase.yml (functions, firestore:rules, firestore:indexes)
+      # — never hosting, and never chalkie-app.
+      - name: Deploy to Firebase (staging)
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/service-account-staging.json
+        run: npx firebase-tools deploy --only functions,firestore:rules,firestore:indexes --project chalkie-app-staging --non-interactive --force
+
+      - name: Print deployed commit
+        run: |
+          echo "Deployed commit SHA: $(git rev-parse HEAD) (ref: ${{ github.ref_name }}) to chalkie-app-staging — functions, firestore rules, firestore indexes only." | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove credential file
+        if: always()
+        run: rm -f "$RUNNER_TEMP/service-account-staging.json"

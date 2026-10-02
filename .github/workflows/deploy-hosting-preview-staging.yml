@@ -1,0 +1,111 @@
+name: Deploy Hosting Preview (staging)
+
+# Manual-only. Builds whichever ref this run is dispatched against — pick
+# the branch/tag from the "Run workflow" UI (e.g.
+# claude/matchday-reconciliation-model for PR #39's current state). Unlike
+# deploy-hosting-preview.yml (which pins a fixed SHA because it deploys to
+# PRODUCTION's own Firebase project even though only Hosting is touched),
+# there's no equivalent "wrong code against real data" risk here to guard
+# against with a pin: this workflow is structurally incapable of reaching
+# chalkie-app — --project is hard-coded to chalkie-app-staging, and the
+# only credential available to it (FIREBASE_SERVICE_ACCOUNT_STAGING) is
+# scoped to that project alone.
+#
+# Scope is the same as deploy-hosting-preview.yml: only
+# `firebase hosting:channel:deploy`, never `firebase deploy` — this cannot
+# touch Functions, Firestore rules/indexes, or any Firebase data. Deploying
+# those to staging (so the preview is actually functional, not just a
+# static page) is deploy-firebase-staging.yml's job, run separately.
+on:
+  workflow_dispatch:
+    inputs:
+      channel_name:
+        description: 'Hosting preview channel name (letters, numbers, hyphens only). Re-running with the same name updates that channel in place.'
+        required: false
+        default: 'pr39-matchday-model'
+
+permissions:
+  contents: read
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install mobile dependencies
+        working-directory: mobile
+        run: npm ci
+
+      # config/firebase.ts only throws its "missing required value" error at
+      # app *runtime* (when the bundle first executes in a browser) — Metro
+      # bundles the module without running it, so a build with these unset
+      # would otherwise succeed here and only fail once someone opens the
+      # deployed preview URL. Check explicitly so a missing secret fails
+      # this job, not a silent later page-load crash.
+      - name: Verify required staging secrets are set
+        run: |
+          missing=()
+          [ -z "${{ secrets.EXPO_PUBLIC_FIREBASE_STAGING_API_KEY }}" ] && missing+=("EXPO_PUBLIC_FIREBASE_STAGING_API_KEY")
+          [ -z "${{ secrets.EXPO_PUBLIC_FIREBASE_STAGING_APP_ID }}" ] && missing+=("EXPO_PUBLIC_FIREBASE_STAGING_APP_ID")
+          [ -z "${{ secrets.FIREBASE_SERVICE_ACCOUNT_STAGING }}" ] && missing+=("FIREBASE_SERVICE_ACCOUNT_STAGING")
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error::Missing required repo secret(s): ${missing[*]} — see mobile/.env.staging.example and this workflow's own comments for what each is."
+            exit 1
+          fi
+          echo "All required staging secrets are present."
+
+      # EXPO_PUBLIC_* vars are read at build time and inlined into the
+      # static JS bundle — this is what makes the exported build actually
+      # talk to chalkie-app-staging instead of production. See
+      # mobile/src/config/firebase.ts: a staging build refuses to start
+      # (throws at import time) if either required secret below is empty,
+      # rather than silently falling back to the production config.
+      - name: Build Expo web export (staging config)
+        working-directory: mobile
+        env:
+          EXPO_PUBLIC_FIREBASE_ENV: staging
+          EXPO_PUBLIC_FIREBASE_STAGING_API_KEY: ${{ secrets.EXPO_PUBLIC_FIREBASE_STAGING_API_KEY }}
+          EXPO_PUBLIC_FIREBASE_STAGING_APP_ID: ${{ secrets.EXPO_PUBLIC_FIREBASE_STAGING_APP_ID }}
+        run: npx expo export -p web
+
+      # Same write-to-temp-file pattern deploy-hosting-preview.yml uses for
+      # its own (production-scoped) secret, just with the staging one.
+      - name: Write staging Firebase service-account credential
+        env:
+          FIREBASE_SERVICE_ACCOUNT_STAGING: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_STAGING }}
+        run: printf '%s' "$FIREBASE_SERVICE_ACCOUNT_STAGING" > "$RUNNER_TEMP/service-account-staging.json"
+
+      # hosting:channel:deploy only — never `firebase deploy`. --project is
+      # hard-coded to chalkie-app-staging, never read from an input, branch,
+      # or secret.
+      - name: Deploy Hosting preview channel (staging)
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/service-account-staging.json
+        run: |
+          npx firebase-tools hosting:channel:deploy "${{ inputs.channel_name }}" \
+            --project chalkie-app-staging \
+            --expires 7d \
+            --json > "$RUNNER_TEMP/deploy-result.json"
+          cat "$RUNNER_TEMP/deploy-result.json"
+
+      - name: Print preview URL and deployed commit
+        run: |
+          echo "Deployed commit SHA: $(git rev-parse HEAD) (ref: ${{ github.ref_name }})"
+          echo "Firebase project: chalkie-app-staging"
+          node -e "
+            const fs = require('fs');
+            const out = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + '/deploy-result.json', 'utf8'));
+            const entries = Object.values(out.result || {});
+            const entry = entries[0] || {};
+            console.log('Preview URL:', entry.url || '(not found — see raw JSON in the previous step)');
+            console.log('Expires:', entry.expireTime || '(not found — see raw JSON in the previous step)');
+          " | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove credential file
+        if: always()
+        run: rm -f "$RUNNER_TEMP/service-account-staging.json"
