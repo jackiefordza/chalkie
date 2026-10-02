@@ -149,8 +149,17 @@ service cloud.firestore {
       // admin reading their own league's players already satisfies the first
       // branch below, so dropping the branch is both the fix and the smaller
       // diff. The pending-user and same-team branches are unchanged.
+      // `resource == null` (the doc doesn't exist) is allowed outright: there's
+      // no data to protect, and Add Player's duplicate-name check (see
+      // mobile/src/lib/players.ts' createPlayerIfNameAvailable-style
+      // transactions) needs to `get()` a deterministic, name-derived ID to
+      // find out it DOESN'T exist before creating it — without this, that
+      // read would evaluate `resource.data.leagueId` against a null
+      // resource and deny, breaking the one case the uniqueness check
+      // exists to handle.
       allow read: if isSignedIn() && (
-        me().leagueId == resource.data.leagueId
+        resource == null
+        || me().leagueId == resource.data.leagueId
         || me().teamId == resource.data.teamId
         || (me().leagueId == null && me().role == 'pending')
         || isGlobalAdmin()
@@ -362,16 +371,72 @@ service cloud.firestore {
         //    isValidSubmission in functions/src/index.ts) — this is the
         //    "Firestore rules alone are not sufficient" case in practice,
         //    not just in principle.
+        //  - own-team-only stat attribution (180s/checkouts can't name an
+        //    opponent's player) is ALSO not attempted here, for the same
+        //    complexity-budget reason — enforced authoritatively in
+        //    isValidGamesShape/isValidLeg (functions/src/index.ts).
+        //
+        // Resubmission window: only while 'scheduled', 'awaiting_confirmation'
+        // or 'disputed' — i.e. before the two sides have reconciled, or while
+        // a genuine pairing/score disagreement is still being sorted out
+        // (the existing "adopt their version" flow). Once 'pending_confirmation'
+        // (reconciled, awaiting explicit Confirm) a captain can no longer
+        // silently change their submission — a confirmation one team already
+        // gave must not be invalidated by an unseen edit. The only way
+        // forward from there is the disputeMatch callable, which a captain
+        // can call regardless of this rule (it doesn't touch this
+        // subcollection at all).
         allow create, update: if isCaptainOrVC()
           && me().teamId == request.resource.data.submittedByTeamId
           && submissionId == request.resource.data.submittedByTeamId
           && (request.resource.data.submittedByTeamId == matchData().homeTeamId
               || request.resource.data.submittedByTeamId == matchData().awayTeamId)
           && matchData().status != 'confirmed'
+          && matchData().status != 'pending_confirmation'
           && request.resource.data.games is list
           && request.resource.data.games.size() == 7;
 
         // Admin needs this to reset test-league submissions between QA runs
+        allow delete: if isAdminFor(matchData().leagueId);
+      }
+
+      // ── confirmations ──────────────────────────────────────────────────
+      // One doc per team (doc ID = confirmedByTeamId), mirroring submissions'
+      // own identity convention exactly. A match only becomes 'confirmed'
+      // once BOTH exist — enforced by onConfirmationWrite (functions/src/
+      // index.ts), never by a client write: this rule only ever lets a
+      // captain/VC create THEIR OWN team's confirmation doc, never touch
+      // match.status directly (matches/{matchId}'s update rule above stays
+      // admin-only).
+      match /confirmations/{teamId} {
+        function matchData() {
+          return get(/databases/$(database)/documents/matches/$(matchId)).data;
+        }
+
+        allow read: if isSignedIn() && (
+          isAdminFor(matchData().leagueId)
+          || me().teamId == matchData().homeTeamId
+          || me().teamId == matchData().awayTeamId
+        );
+
+        // Only while genuinely pending_confirmation — can't confirm a match
+        // that hasn't reconciled yet, or one already confirmed/disputed.
+        allow create: if isCaptainOrVC()
+          && me().teamId == request.resource.data.confirmedByTeamId
+          && teamId == request.resource.data.confirmedByTeamId
+          && (request.resource.data.confirmedByTeamId == matchData().homeTeamId
+              || request.resource.data.confirmedByTeamId == matchData().awayTeamId)
+          && matchData().status == 'pending_confirmation';
+
+        // Immutable once created — no un-confirming from the client. A team
+        // that changes its mind must dispute instead (disputeMatch callable),
+        // which moves the match to 'disputed' regardless of what this
+        // subcollection holds.
+        allow update: if false;
+
+        // Admin needs this for the same QA-reset reason submissions/ does;
+        // adminResetMatchResult (Admin SDK, bypasses rules) is the real path
+        // in production.
         allow delete: if isAdminFor(matchData().leagueId);
       }
     }

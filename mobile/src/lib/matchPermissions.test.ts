@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { canSignOffMatch, canResetMatch } from './matchPermissions';
+import { canSignOffMatch, canResetMatch, canActOnPendingConfirmation } from './matchPermissions';
 import type { AppUser, Match } from '@/types';
 
 function admin(overrides: Partial<AppUser> = {}): Pick<AppUser, 'isLeagueAdmin' | 'isGlobalAdmin' | 'leagueId'> {
@@ -9,6 +9,14 @@ function admin(overrides: Partial<AppUser> = {}): Pick<AppUser, 'isLeagueAdmin' 
 
 function match(overrides: Partial<Match> = {}): Pick<Match, 'leagueId' | 'status'> {
   return { leagueId: 'league-1', status: 'awaiting_confirmation', ...overrides };
+}
+
+function captain(overrides: Partial<AppUser> = {}): Pick<AppUser, 'role' | 'teamId'> {
+  return { role: 'captain', teamId: 'team-home', ...overrides };
+}
+
+function pendingMatch(overrides: Partial<Match> = {}): Pick<Match, 'homeTeamId' | 'awayTeamId' | 'status'> {
+  return { homeTeamId: 'team-home', awayTeamId: 'team-away', status: 'pending_confirmation', ...overrides };
 }
 
 test('a global admin may sign off a match in any league', () => {
@@ -112,4 +120,36 @@ test('canResetMatch: a league admin with a null leagueId may not reset any leagu
     canResetMatch(admin({ isLeagueAdmin: true, leagueId: null }), match({ leagueId: 'league-1', status: 'confirmed' })),
     false,
   );
+});
+
+test('canActOnPendingConfirmation: the home captain may act on their own pending_confirmation match', () => {
+  assert.equal(canActOnPendingConfirmation(captain({ teamId: 'team-home' }), pendingMatch()), true);
+});
+
+test('canActOnPendingConfirmation: the away vice-captain may act too', () => {
+  assert.equal(
+    canActOnPendingConfirmation(captain({ role: 'viceCaptain', teamId: 'team-away' }), pendingMatch()),
+    true,
+  );
+});
+
+test('canActOnPendingConfirmation: a captain of neither team may not act', () => {
+  assert.equal(canActOnPendingConfirmation(captain({ teamId: 'team-other' }), pendingMatch()), false);
+});
+
+test('canActOnPendingConfirmation: a plain player on the home team (not captain/VC) may not act', () => {
+  assert.equal(canActOnPendingConfirmation(captain({ role: 'player', teamId: 'team-home' }), pendingMatch()), false);
+});
+
+test('canActOnPendingConfirmation: the home captain may not act unless the match is genuinely pending_confirmation', () => {
+  assert.equal(canActOnPendingConfirmation(captain(), pendingMatch({ status: 'awaiting_confirmation' })), false);
+  assert.equal(canActOnPendingConfirmation(captain(), pendingMatch({ status: 'disputed' })), false);
+  assert.equal(canActOnPendingConfirmation(captain(), pendingMatch({ status: 'confirmed' })), false);
+});
+
+test('canActOnPendingConfirmation: null or undefined appUser/match is always rejected', () => {
+  assert.equal(canActOnPendingConfirmation(null, pendingMatch()), false);
+  assert.equal(canActOnPendingConfirmation(undefined, pendingMatch()), false);
+  assert.equal(canActOnPendingConfirmation(captain(), null), false);
+  assert.equal(canActOnPendingConfirmation(captain(), undefined), false);
 });

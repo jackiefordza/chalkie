@@ -4,6 +4,7 @@ import { router } from 'expo-router';
 import { useColorScheme } from 'nativewind';
 import { RAW, type SemanticTone } from '@/lib/theme';
 import { STATUS_LABEL, STATUS_TONE } from '@/lib/matchStatus';
+import { computeGamesTotals } from '@/lib/matchResultDraft';
 import {
   Heading, Body, Caption, Stat, Badge, Card, Button, AppIcon,
 } from '@/components/ui';
@@ -57,6 +58,7 @@ export function MatchHeader({ match, homeTeamName, awayTeamName }: { match: Matc
         <Body size="sm" className="mb-1">
           {match.status === 'scheduled' && 'This fixture hasn\'t been played yet.'}
           {match.status === 'awaiting_confirmation' && 'A result has been submitted and is waiting to be confirmed.'}
+          {match.status === 'pending_confirmation' && 'Both teams\' results match — review the sheet below and confirm.'}
           {/* Deliberately doesn't say "an admin needs to review this" — a
               captain of either team can resolve this themselves (see the
               reconcile flow below), admin review is the fallback, not the
@@ -77,13 +79,21 @@ export function MatchHeader({ match, homeTeamName, awayTeamName }: { match: Matc
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// MATCH SUMMARY — confirmed matches only. Games/legs won reuse the
-// backend-computed totals directly (never recomputed client-side); 180s and
-// highest checkout are derived from match.games, which is already fully
-// loaded once a match is confirmed — no extra reads.
+// MATCH SUMMARY — confirmed matches, and the reconciled-but-not-yet-
+// confirmed sheet shown at pending_confirmation. Games/legs won reuse the
+// backend-computed totals directly when they're already set (once
+// confirmed); before that, match.homeGamesWon etc are still null (only
+// onMatchConfirmed sets them), so they're computed client-side from
+// match.games instead — display only, never written anywhere. 180s and
+// highest checkout are always derived from match.games directly, which is
+// populated as soon as the match reaches pending_confirmation — no extra
+// reads either way.
 // ─────────────────────────────────────────────────────────────────────────
 export function MatchSummary({ match, playerName }: { match: Match; playerName: (id: string) => string }) {
   const games = match.games ?? [];
+  const totals = match.homeGamesWon != null && match.awayGamesWon != null && match.homeLegsWon != null && match.awayLegsWon != null
+    ? { homeGamesWon: match.homeGamesWon, awayGamesWon: match.awayGamesWon, homeLegsWon: match.homeLegsWon, awayLegsWon: match.awayLegsWon }
+    : computeGamesTotals(games);
   const oneEightyCount = games.reduce((n, g) => n + g.legs.reduce((m, l) => m + l.oneEighties.length, 0), 0);
   const highest = games
     .flatMap((g) => g.legs.map((l) => l.highCheckout))
@@ -101,11 +111,11 @@ export function MatchSummary({ match, playerName }: { match: Match; playerName: 
             useful but secondary, and always explicitly labeled "Games" so
             it's never mistaken for the match score. */}
         <View className="flex-1 rounded-2xl bg-surface-2 dark:bg-surface-2-dark p-3 items-center">
-          <Stat size="md" tone="sage">{match.homeLegsWon}-{match.awayLegsWon}</Stat>
+          <Stat size="md" tone="sage">{totals.homeLegsWon}-{totals.awayLegsWon}</Stat>
           <Caption className="mt-1">Legs</Caption>
         </View>
         <View className="flex-1 rounded-2xl bg-surface-2 dark:bg-surface-2-dark p-3 items-center">
-          <Stat size="md">{match.homeGamesWon}-{match.awayGamesWon}</Stat>
+          <Stat size="md">{totals.homeGamesWon}-{totals.awayGamesWon}</Stat>
           <Caption className="mt-1">Games</Caption>
         </View>
         <View className="flex-1 rounded-2xl bg-surface-2 dark:bg-surface-2-dark p-3 items-center">

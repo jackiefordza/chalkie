@@ -1,16 +1,17 @@
 import { useState, useEffect } from 'react';
-import { View, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
+import { View, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { router } from 'expo-router';
 import { useColorScheme } from 'nativewind';
 import {
   collection, doc, onSnapshot, query, where, and, or, orderBy,
-  writeBatch, addDoc, getDoc, getDocs, serverTimestamp, updateDoc,
+  writeBatch, getDoc, getDocs, serverTimestamp, updateDoc, runTransaction,
 } from 'firebase/firestore';
 import { db } from '@/config/firebase';
 import { useAuthStore } from '@/stores/authStore';
 import { RAW } from '@/lib/theme';
+import { DuplicatePlayerNameError, playerDocId } from '@/lib/players';
 import {
-  Screen, Heading, Body, Chip, Button, Card, Badge, Avatar, Input, Label, Sheet, VisibilityPicker, AppIcon, ListRow,
+  Screen, Heading, Body, Chip, Button, Card, Badge, Avatar, Input, Label, Sheet, VisibilityPicker, AppIcon, ListRow, ConfirmDialog,
 } from '@/components/ui';
 import type { Match, MatchStatus, PhoneVisibility, JoinRequest } from '@/types';
 
@@ -76,8 +77,12 @@ export default function CaptainsScreen() {
   const [newPlayerName, setNewPlayerName] = useState('');
   const [addedPlayerName, setAddedPlayerName] = useState('');
   const [isAdding, setIsAdding] = useState(false);
+  const [addPlayerError, setAddPlayerError] = useState<string | null>(null);
 
   const [respondingId, setRespondingId] = useState<string | null>(null);
+  const [approveError, setApproveError] = useState<{ id: string; message: string } | null>(null);
+  const [removePlayerTarget, setRemovePlayerTarget] = useState<Player | null>(null);
+  const [rejectTarget, setRejectTarget] = useState<JoinRequest | null>(null);
 
   useEffect(() => {
     if (!teamId) return;
@@ -200,40 +205,46 @@ export default function CaptainsScreen() {
   }
 
   async function addPlayer() {
-    if (!newPlayerName.trim()) return;
+    const trimmedName = newPlayerName.trim();
+    if (!trimmedName) return;
     if (!appUser?.teamId) {
-      Alert.alert('Error', 'Team not loaded yet — please wait a moment and try again.');
+      setAddPlayerError('Team not loaded yet — please wait a moment and try again.');
       return;
     }
     setIsAdding(true);
+    setAddPlayerError(null);
     try {
-      await addDoc(collection(db, 'players'), {
-        name: newPlayerName.trim(),
-        leagueId: appUser.leagueId,
-        teamId: appUser.teamId,
-        claimedByUserId: null,
-        claimedAt: null,
-        createdAt: serverTimestamp(),
-        createdByUserId: appUser.uid,
+      const ref = doc(db, 'players', playerDocId(appUser.teamId, trimmedName));
+      // Transaction (not a plain create) so the same-name check and the
+      // write are atomic — see players.ts: two concurrent adds for the same
+      // normalized name resolve to the identical document, so Firestore
+      // itself rejects whichever transaction loses the race, rather than a
+      // separate query-then-write that both could pass.
+      await runTransaction(db, async (tx) => {
+        const existing = await tx.get(ref);
+        if (existing.exists()) throw new DuplicatePlayerNameError(trimmedName);
+        tx.set(ref, {
+          name: trimmedName,
+          leagueId: appUser.leagueId,
+          teamId: appUser.teamId,
+          claimedByUserId: null,
+          claimedAt: null,
+          createdAt: serverTimestamp(),
+          createdByUserId: appUser.uid,
+        });
       });
-      setAddedPlayerName(newPlayerName.trim());
+      setAddedPlayerName(trimmedName);
       setNewPlayerName('');
       setModalPhase('added');
     } catch (e: unknown) {
-      Alert.alert('Error', (e as Error).message ?? 'Something went wrong');
+      setAddPlayerError(e instanceof DuplicatePlayerNameError ? e.message : (e as Error).message ?? 'Something went wrong');
     } finally {
       setIsAdding(false);
     }
   }
 
-  async function removePlayer(playerId: string, name: string) {
-    Alert.alert('Remove player', `Remove "${name}" from the squad?`, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Remove', style: 'destructive',
-        onPress: async () => { await writeBatch(db).delete(doc(db, 'players', playerId)).commit(); },
-      },
-    ]);
+  async function removePlayer(playerId: string) {
+    await writeBatch(db).delete(doc(db, 'players', playerId)).commit();
   }
 
   // Covers all three request kinds this team's captain/VC can act on: a plain
@@ -242,6 +253,7 @@ export default function CaptainsScreen() {
   async function approveJoinRequest(req: JoinRequest) {
     if (!appUser?.teamId || !appUser.leagueId) return;
     setRespondingId(req.id);
+    setApproveError(null);
     try {
       const batch = writeBatch(db);
 
@@ -297,31 +309,24 @@ export default function CaptainsScreen() {
 
       await batch.commit();
     } catch (e: unknown) {
-      Alert.alert('Error', (e as Error).message ?? 'Something went wrong');
+      setApproveError({ id: req.id, message: (e as Error).message ?? 'Something went wrong' });
     } finally {
       setRespondingId(null);
     }
   }
 
-  async function rejectJoinRequest(req: JoinRequest) {
-    Alert.alert('Reject request', `Reject ${req.displayName}'s request?`, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Reject', style: 'destructive',
-        onPress: async () => {
-          const batch = writeBatch(db);
-          batch.update(doc(db, 'joinRequests', req.id), {
-            status: 'rejected',
-            rejectedAt: serverTimestamp(),
-          });
-          batch.update(doc(db, 'users', req.userId), {
-            pendingRequestType: null,
-            pendingRequestId: null,
-          });
-          await batch.commit();
-        },
-      },
-    ]);
+  async function performRejectJoinRequest() {
+    if (!rejectTarget) return;
+    const batch = writeBatch(db);
+    batch.update(doc(db, 'joinRequests', rejectTarget.id), {
+      status: 'rejected',
+      rejectedAt: serverTimestamp(),
+    });
+    batch.update(doc(db, 'users', rejectTarget.userId), {
+      pendingRequestType: null,
+      pendingRequestId: null,
+    });
+    await batch.commit();
   }
 
   function roleOf(player: Player): TeamRole | null {
@@ -534,7 +539,7 @@ export default function CaptainsScreen() {
                     </Badge>
                     {!isClaimed && (
                       <TouchableOpacity activeOpacity={0.7}
-                        onPress={() => removePlayer(player.id, player.name)}
+                        onPress={() => setRemovePlayerTarget(player)}
                         hitSlop={8}
                         className="w-8 h-8 rounded-full items-center justify-center bg-coral-fill dark:bg-coral-fill-dark"
                       >
@@ -551,23 +556,28 @@ export default function CaptainsScreen() {
             + Add Player
           </Button>
 
-          <Sheet visible={modalPhase !== 'closed'} onClose={() => setModalPhase('closed')}>
+          <Sheet visible={modalPhase !== 'closed'} onClose={() => { setModalPhase('closed'); setAddPlayerError(null); }}>
             {modalPhase === 'input' ? (
               <>
                 <Heading size="lg" className="mb-5">Add Player</Heading>
                 <Label>Player name</Label>
                 <Input
                   value={newPlayerName}
-                  onChangeText={setNewPlayerName}
+                  onChangeText={(text) => { setNewPlayerName(text); setAddPlayerError(null); }}
                   placeholder="e.g. Jake Smith"
                   autoCapitalize="words"
                   autoFocus
                   returnKeyType="done"
                   onSubmitEditing={addPlayer}
-                  className="mb-5"
+                  className="mb-3"
                 />
+                {addPlayerError && (
+                  <Card tone="coral" className="mb-3">
+                    <Body size="sm" tone="coral">{addPlayerError}</Body>
+                  </Card>
+                )}
                 <View className="flex-row gap-2.5">
-                  <Button variant="ghost" className="flex-1" onPress={() => setModalPhase('closed')}>Cancel</Button>
+                  <Button variant="ghost" className="flex-1" onPress={() => { setModalPhase('closed'); setAddPlayerError(null); }}>Cancel</Button>
                   <Button className="flex-1" disabled={isAdding || !newPlayerName.trim()} loading={isAdding} onPress={addPlayer}>
                     Add
                   </Button>
@@ -631,6 +641,11 @@ export default function CaptainsScreen() {
                 <Card key={req.id} tone="coral" className="mb-2.5">
                   <Body tone="strong" weight="semibold" className="mb-1">{req.displayName}</Body>
                   <Body size="sm" className="mb-3">{subtitle}</Body>
+                  {approveError?.id === req.id && (
+                    <Card tone="coral" className="mb-3" padded={false}>
+                      <Body tone="coral" size="sm" className="p-3">{approveError.message}</Body>
+                    </Card>
+                  )}
                   <View className="flex-row gap-2.5">
                     <Button
                       variant="good"
@@ -641,7 +656,7 @@ export default function CaptainsScreen() {
                     >
                       Approve
                     </Button>
-                    <Button variant="danger" className="flex-1" disabled={isResponding} onPress={() => rejectJoinRequest(req)}>
+                    <Button variant="danger" className="flex-1" disabled={isResponding} onPress={() => setRejectTarget(req)}>
                       Reject
                     </Button>
                   </View>
@@ -651,6 +666,28 @@ export default function CaptainsScreen() {
           )}
         </>
       )}
+
+      <ConfirmDialog
+        visible={!!removePlayerTarget}
+        title="Remove this player"
+        message={`Remove "${removePlayerTarget?.name}" from the squad?`}
+        confirmLabel="Yes, Remove"
+        confirmVariant="danger"
+        onConfirm={() => { if (removePlayerTarget) return removePlayer(removePlayerTarget.id); }}
+        onCancel={() => setRemovePlayerTarget(null)}
+        onSuccess={() => setRemovePlayerTarget(null)}
+      />
+
+      <ConfirmDialog
+        visible={!!rejectTarget}
+        title="Reject request"
+        message={`Reject ${rejectTarget?.displayName}'s request?`}
+        confirmLabel="Yes, Reject"
+        confirmVariant="danger"
+        onConfirm={performRejectJoinRequest}
+        onCancel={() => setRejectTarget(null)}
+        onSuccess={() => setRejectTarget(null)}
+      />
     </Screen>
   );
 }

@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { View, ScrollView, TouchableOpacity, ActivityIndicator, Alert, Platform, useWindowDimensions } from 'react-native';
+import { View, ScrollView, TouchableOpacity, ActivityIndicator, Platform, useWindowDimensions } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { Stack, useLocalSearchParams } from 'expo-router';
 import { useColorScheme } from 'nativewind';
@@ -10,21 +10,25 @@ import { goBack } from '@/lib/navigation';
 import { RAW } from '@/lib/theme';
 import { Screen, Body, Caption, Button, Card, Chip, AppBar, AppIcon } from '@/components/ui';
 import { AdminShell } from '@/components/admin/AdminShell';
+import { mergeGame } from '@/lib/matchResultDraft';
 import type { Match, MatchGame, MatchSide } from '@/types';
 
 const DESKTOP_BREAKPOINT = 768;
 
 interface Player { id: string; name: string; teamId: string }
 
+// Pairings + leg-winner sequence ONLY — matches functions/src/index.ts's
+// pairingsAndScoreAgree (the actual server-side reconciliation check) and
+// mobile/src/lib/matchResultDraft.ts's normalizeGameForCompare. Stats
+// (180s/checkouts) are deliberately excluded: each team only ever reports
+// its own players' stats, so they're expected to differ between the two
+// submissions by construction — never a real disagreement, just
+// complementary data mergeGame combines below.
 function normalize(game: MatchGame) {
   return JSON.stringify({
     homePlayerIds: [...game.homePlayerIds].sort(),
     awayPlayerIds: [...game.awayPlayerIds].sort(),
-    legs: game.legs.map((l) => ({
-      winner: l.winner,
-      oneEighties: [...l.oneEighties].sort(),
-      highCheckout: l.highCheckout,
-    })),
+    legs: game.legs.map((l) => l.winner),
   });
 }
 
@@ -47,6 +51,14 @@ export default function AdminDisputeScreen() {
 
   const [resolved, setResolved] = useState<Record<number, MatchGame>>({});
   const [isConfirming, setIsConfirming] = useState(false);
+  // Alert.alert's success/error feedback for this action was a documented
+  // no-op on web (see ConfirmDialog's own comment on this) — confirmResult
+  // doesn't gate behind a confirmation prompt (the admin has already picked
+  // a version for every conflicting game, so pressing Confirm Result IS the
+  // confirmation), but its outcome still needs to be visible on web, so it's
+  // shown inline instead.
+  const [confirmError, setConfirmError] = useState<string | null>(null);
+  const [confirmedSuccessfully, setConfirmedSuccessfully] = useState(false);
 
   useEffect(() => {
     if (!matchId || !appUser?.leagueId) return;
@@ -72,12 +84,15 @@ export default function AdminDisputeScreen() {
         setHomeGames(hGames);
         setAwayGames(aGames);
 
-        // Pre-resolve any games both teams already agree on
+        // Pre-resolve any games both teams already agree on (pairings/score)
+        // — merged, not just home's copy: each side only ever reports its
+        // OWN players' stats, so using hg wholesale here would silently
+        // drop every one of away's 180s/checkouts for this game.
         if (hGames && aGames) {
           const initial: Record<number, MatchGame> = {};
           hGames.forEach((hg) => {
             const ag = aGames.find((g) => g.order === hg.order);
-            if (ag && normalize(hg) === normalize(ag)) initial[hg.order] = hg;
+            if (ag && normalize(hg) === normalize(ag)) initial[hg.order] = mergeGame(hg, ag);
           });
           setResolved(initial);
         }
@@ -124,14 +139,14 @@ export default function AdminDisputeScreen() {
   async function confirmResult() {
     if (!matchId || !allResolved) return;
     setIsConfirming(true);
+    setConfirmError(null);
     try {
       const finalGames = gameOrders.map((o) => resolved[o]).sort((a, b) => a.order - b.order);
-      await updateDoc(doc(db, 'matches', matchId), { status: 'confirmed', games: finalGames });
+      await updateDoc(doc(db, 'matches', matchId), { status: 'confirmed', games: finalGames, confirmedVia: 'adminOverride' });
       if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      Alert.alert('Result confirmed', 'Standings and stats will update shortly.');
-      goBack();
+      setConfirmedSuccessfully(true);
     } catch (e: unknown) {
-      Alert.alert('Error', (e as Error).message ?? 'Something went wrong');
+      setConfirmError((e as Error).message ?? 'Something went wrong');
     } finally {
       setIsConfirming(false);
     }
@@ -254,9 +269,26 @@ export default function AdminDisputeScreen() {
           </ScrollView>
 
           <View className="p-5 pt-2">
-            <Button disabled={!allResolved || isConfirming} loading={isConfirming} onPress={confirmResult}>
-              Confirm Result
-            </Button>
+            {confirmedSuccessfully ? (
+              <>
+                <Card tone="sage" className="mb-3">
+                  <Body tone="sage" weight="semibold">Result confirmed</Body>
+                  <Body size="sm" tone="sage">Standings and stats will update shortly.</Body>
+                </Card>
+                <Button onPress={() => goBack()}>Done</Button>
+              </>
+            ) : (
+              <>
+                {confirmError && (
+                  <Card tone="coral" className="mb-3">
+                    <Body size="sm" tone="coral">{confirmError}</Body>
+                  </Card>
+                )}
+                <Button disabled={!allResolved || isConfirming} loading={isConfirming} onPress={confirmResult}>
+                  {confirmError ? 'Try Again' : 'Confirm Result'}
+                </Button>
+              </>
+            )}
           </View>
         </>
       )}
