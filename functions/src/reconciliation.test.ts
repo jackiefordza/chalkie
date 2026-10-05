@@ -85,6 +85,35 @@ function sevenGames(opts: {
   });
 }
 
+// Own-team-only model: a REAL submission from one team only ever populates
+// its own side of every game — the opponent's side is always []. Default
+// leg-winner sequence matches sevenGames' own default (2-1 to home) so two
+// ownSideGames calls, one per side, agree by default; pass `overrides` to
+// diverge a specific game's score for a dispute test.
+function ownSideGames(opts: {
+  side: MatchSide; ownIds: string[];
+  overrides?: Partial<Record<number, Partial<MatchGame>>>;
+}): MatchGame[] {
+  return Array.from({ length: 7 }, (_, i) => {
+    const order = i + 1;
+    const type = order > 5 ? 'pairs' : 'singles';
+    const n = type === 'pairs' ? 2 : 1;
+    const ownPlayerIds = opts.ownIds.slice(0, n);
+    const base: MatchGame = {
+      order,
+      type,
+      homePlayerIds: opts.side === 'home' ? ownPlayerIds : [],
+      awayPlayerIds: opts.side === 'away' ? ownPlayerIds : [],
+      legs: [
+        { winner: 'home', oneEighties: [], highCheckout: null },
+        { winner: 'home', oneEighties: [], highCheckout: null },
+        { winner: 'away', oneEighties: [], highCheckout: null },
+      ],
+    };
+    return { ...base, ...(opts.overrides?.[order] ?? {}) };
+  });
+}
+
 // Seeds a scheduled league match (leagueId/seasonId/divisionId are dummy —
 // no other collection needs to resolve them for these tests) plus, unless
 // overridden, real `players` docs for every playerId used, each correctly
@@ -155,12 +184,12 @@ function uniqueIds(prefix: string, n: number): string[] {
 
 // ── PURE tests ──────────────────────────────────────────────────────────
 
-test('pairingsAndScoreAgree: identical pairings and scores agree', () => {
+test('pairingsAndScoreAgree: identical scores agree', () => {
   const games = sevenGames({ homeIds: ['h1', 'h2', 'h3', 'h4', 'h5', 'h6'], awayIds: ['a1', 'a2', 'a3', 'a4', 'a5', 'a6'] });
   assert.equal(pairingsAndScoreAgree(games, games.map((g) => ({ ...g }))), true);
 });
 
-test('pairingsAndScoreAgree: a different score disagrees (test spec #5)', () => {
+test('pairingsAndScoreAgree: a different score disagrees (test spec #5/#7)', () => {
   const homeIds = ['h1', 'h2', 'h3', 'h4', 'h5', 'h6'];
   const awayIds = ['a1', 'a2', 'a3', 'a4', 'a5', 'a6'];
   const a = sevenGames({ homeIds, awayIds });
@@ -171,12 +200,17 @@ test('pairingsAndScoreAgree: a different score disagrees (test spec #5)', () => 
   assert.equal(pairingsAndScoreAgree(a, b), false);
 });
 
-test('pairingsAndScoreAgree: a different pairing disagrees (test spec #6)', () => {
-  const homeIds = ['h1', 'h2', 'h3', 'h4', 'h5', 'h6'];
-  const awayIds = ['a1', 'a2', 'a3', 'a4', 'a5', 'a6'];
-  const a = sevenGames({ homeIds, awayIds });
-  const b = sevenGames({ homeIds, awayIds, overrides: { 1: { homePlayerIds: ['h2'] } } });
-  assert.equal(pairingsAndScoreAgree(a, b), false);
+// Own-team-only model (test spec #5/#6): a real home submission and a real
+// away submission never share any player IDs at all — home's side is always
+// empty in away's submission, and vice versa. pairingsAndScoreAgree must
+// still agree on these when their scores match; it no longer compares
+// pairings at all (replaces the old "a different pairing disagrees" test,
+// which assumed both submissions carried full, directly-comparable pairings
+// — never true under this model).
+test('pairingsAndScoreAgree: disjoint own-side-only submissions with matching scores still agree', () => {
+  const a = ownSideGames({ side: 'home', ownIds: ['h1', 'h2', 'h3', 'h4', 'h5', 'h6'] });
+  const b = ownSideGames({ side: 'away', ownIds: ['a1', 'a2', 'a3', 'a4', 'a5', 'a6'] });
+  assert.equal(pairingsAndScoreAgree(a, b), true);
 });
 
 test('pairingsAndScoreAgree: different 180s for the same team\'s player never disagrees (test spec #7)', () => {
@@ -195,22 +229,29 @@ test('pairingsAndScoreAgree: different high checkouts for the same team\'s playe
   assert.equal(pairingsAndScoreAgree(a, b), true);
 });
 
-test('mergeSubmissionGames: combines each side\'s own 180s/checkouts, and the result is valid input to the unchanged stats pipeline (test spec #16)', () => {
+test('mergeSubmissionGames: combines each side\'s own 180s/checkouts AND own pairing, and the result is valid input to the unchanged stats pipeline (test spec #6/#16)', () => {
   const homeIds = ['h1', 'h2', 'h3', 'h4', 'h5', 'h6'];
   const awayIds = ['a1', 'a2', 'a3', 'a4', 'a5', 'a6'];
-  const home = sevenGames({
-    homeIds, awayIds,
+  const home = ownSideGames({
+    side: 'home', ownIds: homeIds,
     overrides: { 1: { legs: [{ winner: 'home', oneEighties: ['h1'], highCheckout: null }, { winner: 'home', oneEighties: [], highCheckout: { playerId: 'h1', value: '100' } }, { winner: 'away', oneEighties: [], highCheckout: null }] } },
   });
-  const away = sevenGames({
-    homeIds, awayIds,
+  const away = ownSideGames({
+    side: 'away', ownIds: awayIds,
     overrides: { 1: { legs: [{ winner: 'home', oneEighties: [], highCheckout: null }, { winner: 'home', oneEighties: [], highCheckout: null }, { winner: 'away', oneEighties: ['a1'], highCheckout: { playerId: 'a1', value: '121' } }] } },
   });
   const merged = mergeSubmissionGames(home, away);
 
-  const game1OneEighties = merged.find((g) => g.order === 1)!.legs.flatMap((l) => l.oneEighties);
+  // The merged result contains BOTH teams' independently submitted players
+  // (test spec #6) — home's submission never carried a1, away's never
+  // carried h1, yet both are correctly present in the merge.
+  const game1 = merged.find((g) => g.order === 1)!;
+  assert.deepEqual(game1.homePlayerIds, ['h1']);
+  assert.deepEqual(game1.awayPlayerIds, ['a1']);
+
+  const game1OneEighties = game1.legs.flatMap((l) => l.oneEighties);
   assert.deepEqual(game1OneEighties.sort(), ['a1', 'h1']);
-  const game1Checkouts = merged.find((g) => g.order === 1)!.legs.map((l) => l.highCheckout).filter((hc) => hc !== null);
+  const game1Checkouts = game1.legs.map((l) => l.highCheckout).filter((hc) => hc !== null);
   assert.deepEqual(game1Checkouts.sort((x, y) => x!.playerId.localeCompare(y!.playerId)), [{ playerId: 'a1', value: '121' }, { playerId: 'h1', value: '100' }]);
 
   // Handoff correctness (spec #16): the merged games array is exactly what
@@ -223,27 +264,74 @@ test('mergeSubmissionGames: combines each side\'s own 180s/checkouts, and the re
   assert.equal(totals.homeLegsWon + totals.awayLegsWon, 21);
 });
 
-test('isValidGamesShape: a submission cannot attribute a 180 to the opposing team\'s player (test spec #2/#3)', () => {
+test('isValidGamesShape: a submission cannot attribute a 180 to the opposing team\'s player (test spec #4)', () => {
   const homeIds = ['h1', 'h2', 'h3', 'h4', 'h5', 'h6'];
   const awayIds = ['a1', 'a2', 'a3', 'a4', 'a5', 'a6'];
-  const gamesClaimingAwayPlayersFor180 = sevenGames({
+  // Own-side-only shapes: a real home submission (awayPlayerIds always
+  // empty) that wrongly claims a 180 for a1 — an away player who isn't even
+  // listed on this game at all.
+  const homeSubmissionClaiming180ForAwayPlayer = ownSideGames({
+    side: 'home', ownIds: homeIds,
+    overrides: { 1: { legs: [{ winner: 'home', oneEighties: ['a1'], highCheckout: null }, { winner: 'home', oneEighties: [], highCheckout: null }, { winner: 'away', oneEighties: [], highCheckout: null }] } },
+  });
+  assert.equal(
+    isValidGamesShape(homeSubmissionClaiming180ForAwayPlayer as never, { submittedByTeamId: 'home-team', matchHomeTeamId: 'home-team' }),
+    false,
+  );
+
+  // The equivalent AWAY submission legitimately claiming a1's own 180 is valid.
+  const awaySubmissionClaiming180ForOwnPlayer = ownSideGames({
+    side: 'away', ownIds: awayIds,
+    overrides: { 1: { legs: [{ winner: 'home', oneEighties: ['a1'], highCheckout: null }, { winner: 'home', oneEighties: [], highCheckout: null }, { winner: 'away', oneEighties: [], highCheckout: null }] } },
+  });
+  assert.equal(
+    isValidGamesShape(awaySubmissionClaiming180ForOwnPlayer as never, { submittedByTeamId: 'away-team', matchHomeTeamId: 'home-team' }),
+    true,
+  );
+
+  // A FINAL/MERGED record (both sides genuinely populated, no statScope) —
+  // either side's player is legitimately eligible there.
+  const merged = sevenGames({
     homeIds, awayIds,
     overrides: { 1: { legs: [{ winner: 'home', oneEighties: ['a1'], highCheckout: null }, { winner: 'home', oneEighties: [], highCheckout: null }, { winner: 'away', oneEighties: [], highCheckout: null }] } },
   });
-  // As a raw HOME submission, this must be rejected — a1 is away's player.
+  assert.equal(isValidGamesShape(merged as never), true);
+});
+
+// Test spec #1/#2/#3: a HOME captain can submit only home players (their
+// own submission's awayPlayerIds must be empty), and the mirror for AWAY —
+// the server actively rejects a raw submission that populates the
+// opponent's side at all, not just one that misattributes a stat.
+test('isValidGamesShape: a raw submission populating the opponent\'s side is rejected (test spec #1/#2)', () => {
+  const homeIds = ['h1', 'h2', 'h3', 'h4', 'h5', 'h6'];
+  const awayIds = ['a1', 'a2', 'a3', 'a4', 'a5', 'a6'];
+
+  // A real own-side-only home submission is accepted.
+  const validHomeSubmission = ownSideGames({ side: 'home', ownIds: homeIds });
   assert.equal(
-    isValidGamesShape(gamesClaimingAwayPlayersFor180 as never, { submittedByTeamId: 'home-team', matchHomeTeamId: 'home-team' }),
-    false,
-  );
-  // The identical games array IS valid as a raw AWAY submission — a1 really
-  // is one of away's own players.
-  assert.equal(
-    isValidGamesShape(gamesClaimingAwayPlayersFor180 as never, { submittedByTeamId: 'away-team', matchHomeTeamId: 'home-team' }),
+    isValidGamesShape(validHomeSubmission as never, { submittedByTeamId: 'home-team', matchHomeTeamId: 'home-team' }),
     true,
   );
-  // And valid as a FINAL/MERGED record with no statScope — either side's
-  // player is legitimately eligible there.
-  assert.equal(isValidGamesShape(gamesClaimingAwayPlayersFor180 as never), true);
+  // The mirror for away.
+  const validAwaySubmission = ownSideGames({ side: 'away', ownIds: awayIds });
+  assert.equal(
+    isValidGamesShape(validAwaySubmission as never, { submittedByTeamId: 'away-team', matchHomeTeamId: 'home-team' }),
+    true,
+  );
+
+  // A home submission that ALSO fills in the away side (the old, pre-model
+  // shape, or a client/attacker trying to supply the opponent's pairing) is
+  // rejected outright, even with no stat misattribution at all.
+  const homeSubmissionWithOpponentPairing = sevenGames({ homeIds, awayIds });
+  assert.equal(
+    isValidGamesShape(homeSubmissionWithOpponentPairing as never, { submittedByTeamId: 'home-team', matchHomeTeamId: 'home-team' }),
+    false,
+  );
+  // Same for away.
+  assert.equal(
+    isValidGamesShape(homeSubmissionWithOpponentPairing as never, { submittedByTeamId: 'away-team', matchHomeTeamId: 'home-team' }),
+    false,
+  );
 });
 
 // ── INTEGRATION tests (real Firestore emulator) ────────────────────────
@@ -254,7 +342,7 @@ test('handleSubmissionWrite: one submission leaves the match awaiting the second
   const homeTeamId = uniqueId('team-home');
   const awayTeamId = uniqueId('team-away');
   const matchId = await seedMatch({ homeTeamId, awayTeamId, homeIds, awayIds });
-  await submit(matchId, homeTeamId, sevenGames({ homeIds, awayIds }));
+  await submit(matchId, homeTeamId, ownSideGames({ side: 'home', ownIds: homeIds }));
 
   await handleSubmissionWrite(matchId);
 
@@ -263,15 +351,14 @@ test('handleSubmissionWrite: one submission leaves the match awaiting the second
   assert.equal(match.games, null);
 });
 
-test('handleSubmissionWrite: identical pairings/scores produce pending_confirmation, NOT confirmed (test spec #4/#10)', async () => {
+test('handleSubmissionWrite: matching scores from two real own-side-only submissions produce pending_confirmation, NOT confirmed (test spec #4/#5/#6/#10)', async () => {
   const homeIds = ['h1', 'h2', 'h3', 'h4', 'h5', 'h6'];
   const awayIds = ['a1', 'a2', 'a3', 'a4', 'a5', 'a6'];
   const homeTeamId = uniqueId('team-home');
   const awayTeamId = uniqueId('team-away');
   const matchId = await seedMatch({ homeTeamId, awayTeamId, homeIds, awayIds });
-  const games = sevenGames({ homeIds, awayIds });
-  await submit(matchId, homeTeamId, games);
-  await submit(matchId, awayTeamId, games.map((g) => ({ ...g })));
+  await submit(matchId, homeTeamId, ownSideGames({ side: 'home', ownIds: homeIds }));
+  await submit(matchId, awayTeamId, ownSideGames({ side: 'away', ownIds: awayIds }));
 
   await handleSubmissionWrite(matchId);
 
@@ -279,17 +366,22 @@ test('handleSubmissionWrite: identical pairings/scores produce pending_confirmat
   assert.equal(match.status, 'pending_confirmation');
   assert.notEqual(match.status, 'confirmed');
   assert.equal(match.games.length, 7);
+  // The merged result contains BOTH teams' independently submitted players
+  // (test spec #6) — neither submission ever named the other side's player.
+  const game1 = match.games.find((g: MatchGame) => g.order === 1);
+  assert.deepEqual(game1.homePlayerIds, [homeIds[0]]);
+  assert.deepEqual(game1.awayPlayerIds, [awayIds[0]]);
 });
 
-test('handleSubmissionWrite: a genuine score disagreement disputes the match, never silently picks one side', async () => {
+test('handleSubmissionWrite: a genuine score disagreement disputes the match, never silently picks one side (test spec #7)', async () => {
   const homeIds = ['h1', 'h2', 'h3', 'h4', 'h5', 'h6'];
   const awayIds = ['a1', 'a2', 'a3', 'a4', 'a5', 'a6'];
   const homeTeamId = uniqueId('team-home');
   const awayTeamId = uniqueId('team-away');
   const matchId = await seedMatch({ homeTeamId, awayTeamId, homeIds, awayIds });
-  await submit(matchId, homeTeamId, sevenGames({ homeIds, awayIds }));
-  await submit(matchId, awayTeamId, sevenGames({
-    homeIds, awayIds,
+  await submit(matchId, homeTeamId, ownSideGames({ side: 'home', ownIds: homeIds }));
+  await submit(matchId, awayTeamId, ownSideGames({
+    side: 'away', ownIds: awayIds,
     overrides: { 1: { legs: [{ winner: 'away', oneEighties: [], highCheckout: null }, { winner: 'away', oneEighties: [], highCheckout: null }, { winner: 'home', oneEighties: [], highCheckout: null }] } },
   }));
 
@@ -306,12 +398,12 @@ test('handleSubmissionWrite: different own-team 180s/checkouts reconcile (never 
   const homeTeamId = uniqueId('team-home');
   const awayTeamId = uniqueId('team-away');
   const matchId = await seedMatch({ homeTeamId, awayTeamId, homeIds, awayIds });
-  await submit(matchId, homeTeamId, sevenGames({
-    homeIds, awayIds,
+  await submit(matchId, homeTeamId, ownSideGames({
+    side: 'home', ownIds: homeIds,
     overrides: { 1: { legs: [{ winner: 'home', oneEighties: ['h1'], highCheckout: null }, { winner: 'home', oneEighties: [], highCheckout: null }, { winner: 'away', oneEighties: [], highCheckout: null }] } },
   }));
-  await submit(matchId, awayTeamId, sevenGames({
-    homeIds, awayIds,
+  await submit(matchId, awayTeamId, ownSideGames({
+    side: 'away', ownIds: awayIds,
     overrides: { 1: { legs: [{ winner: 'home', oneEighties: [], highCheckout: null }, { winner: 'home', oneEighties: [], highCheckout: null }, { winner: 'away', oneEighties: ['a1'], highCheckout: { playerId: 'a1', value: '121' } }] } },
   }));
 
@@ -332,9 +424,10 @@ test('handleSubmissionWrite: a submission claiming the opponent\'s player\'s 180
   const homeTeamId = uniqueId('team-home');
   const awayTeamId = uniqueId('team-away');
   const matchId = await seedMatch({ homeTeamId, awayTeamId, homeIds, awayIds });
-  // Home's own submission claims a 180 for a1 — an AWAY player.
-  await submit(matchId, homeTeamId, sevenGames({
-    homeIds, awayIds,
+  // Home's own submission claims a 180 for a1 — an AWAY player, not even
+  // listed on this (own-side-only) submission's game at all.
+  await submit(matchId, homeTeamId, ownSideGames({
+    side: 'home', ownIds: homeIds,
     overrides: { 1: { legs: [{ winner: 'home', oneEighties: ['a1'], highCheckout: null }, { winner: 'home', oneEighties: [], highCheckout: null }, { winner: 'away', oneEighties: [], highCheckout: null }] } },
   }));
 
@@ -558,15 +651,26 @@ test('handleMatchConfirmed: re-invoking with no actual games change makes no fur
 // "reconcile" test above (both submissions ARE valid submissions, or the
 // match would never have left 'scheduled'). This direct call is the same
 // check in isolation, for a clearer failure message if it ever regresses.
-test('isValidSubmission: a genuinely valid own-team submission is accepted (test spec #1)', async () => {
+test('isValidSubmission: a genuinely valid own-team-only submission is accepted (test spec #1)', async () => {
   const homeIds = ['h1', 'h2', 'h3', 'h4', 'h5', 'h6'];
   const awayIds = ['a1', 'a2', 'a3', 'a4', 'a5', 'a6'];
   const homeTeamId = uniqueId('team-home');
   const awayTeamId = uniqueId('team-away');
   await seedMatch({ homeTeamId, awayTeamId, homeIds, awayIds });
-  const games = sevenGames({ homeIds, awayIds });
+  const games = ownSideGames({ side: 'home', ownIds: homeIds });
   const valid = await isValidSubmission({ games }, homeTeamId, awayTeamId, homeTeamId);
   assert.equal(valid, true);
+});
+
+test('isValidSubmission: a home submission that also populates the away side is rejected (test spec #2)', async () => {
+  const homeIds = ['h1', 'h2', 'h3', 'h4', 'h5', 'h6'];
+  const awayIds = ['a1', 'a2', 'a3', 'a4', 'a5', 'a6'];
+  const homeTeamId = uniqueId('team-home');
+  const awayTeamId = uniqueId('team-away');
+  await seedMatch({ homeTeamId, awayTeamId, homeIds, awayIds });
+  const games = sevenGames({ homeIds, awayIds }); // both sides populated
+  const valid = await isValidSubmission({ games }, homeTeamId, awayTeamId, homeTeamId);
+  assert.equal(valid, false);
 });
 
 // performAdminResetMatchResult (the adminResetMatchResult callable, body

@@ -47,25 +47,26 @@ function normalizeGames(games: MatchGame[]) {
     }));
 }
 
-// ── Reconciliation: compare pairings + score ONLY, never stats ─────────────
-// Two independently-submitted sheets are "reconciled" when they agree on who
-// played and who won each leg — NOT on 180s/checkouts, which each team only
-// ever reports for its own players (isValidGamesShape enforces this
-// server-side) and are therefore expected to differ between submissions by
-// construction, never a real disagreement. Score is compared by the leg WIN
+// ── Reconciliation: compare SCORE ONLY, never pairings or stats ────────────
+// Own-team-only submission model: each side submits only its own players for
+// its own side of every game (the opponent's side is always empty in a raw
+// submission — see isValidGame's statScope handling below), so there is
+// nothing to compare on pairings at all — only whether the two independently-
+// reported scores for a given game agree. Score is compared by the leg WIN
 // COUNT per side, not the exact leg-by-leg sequence: the app's own entry UI
 // (toMatchGame in mobile/src/lib/matchResultDraft.ts) always derives that
 // sequence deterministically from the score alone, so two submissions with
 // the same score already have byte-identical sequences — comparing counts
-// is equivalent and simpler.
+// is equivalent and simpler. Stats (180s/checkouts) are never compared here
+// either — each team only ever reports its own players' stats
+// (isValidGamesShape enforces this server-side), so they're expected to
+// differ between submissions by construction, never a real disagreement.
 export function pairingsAndScoreAgree(a: MatchGame[], b: MatchGame[]): boolean {
   if (a.length !== b.length) return false;
   const bByOrder = new Map(b.map((g) => [g.order, g]));
   return a.every((ag) => {
     const bg = bByOrder.get(ag.order);
     if (!bg) return false;
-    if (JSON.stringify([...ag.homePlayerIds].sort()) !== JSON.stringify([...bg.homePlayerIds].sort())) return false;
-    if (JSON.stringify([...ag.awayPlayerIds].sort()) !== JSON.stringify([...bg.awayPlayerIds].sort())) return false;
     const aHomeLegs = ag.legs.filter((l) => l.winner === 'home').length;
     const bHomeLegs = bg.legs.filter((l) => l.winner === 'home').length;
     return aHomeLegs === bHomeLegs;
@@ -101,13 +102,16 @@ function distributeHighCheckouts(highCheckouts: HighCheckout[]): (HighCheckout |
   return Array.from({ length: LEGS_PER_GAME }, (_, i) => sorted[i] ?? null);
 }
 
-// Combines one already-pairings-and-score-agreed game from each side: the
-// pairings/leg-winner sequence come from homeGame (guaranteed equivalent to
-// awayGame's — see pairingsAndScoreAgree); each side's own-team 180s/
-// checkouts are pulled from ITS OWN submission only, filtered to that side's
-// own players as a defense-in-depth re-check (isValidGamesShape should
-// already have refused a submission naming the opponent's player, but this
-// never trusts that alone), then merged.
+// Combines one already-score-agreed game from each side: each side's own
+// PAIRING is taken from its own submission (homeGame.homePlayerIds,
+// awayGame.awayPlayerIds — this is the actual own-team-only merge, since
+// neither submission ever contains the opponent's pairing at all); each
+// side's own-team 180s/checkouts are likewise pulled from ITS OWN submission
+// only, filtered to that side's own players as a defense-in-depth re-check
+// (isValidGamesShape should already have refused a submission naming the
+// opponent's player, but this never trusts that alone). The leg-winner
+// sequence comes from homeGame (guaranteed equivalent to awayGame's once
+// scores agree — see pairingsAndScoreAgree).
 function buildMergedGame(homeGame: MatchGame, awayGame: MatchGame): MatchGame {
   const homeOwn = new Set(homeGame.homePlayerIds);
   const awayOwn = new Set(awayGame.awayPlayerIds);
@@ -128,7 +132,7 @@ function buildMergedGame(homeGame: MatchGame, awayGame: MatchGame): MatchGame {
     order: homeGame.order,
     type: homeGame.type,
     homePlayerIds: homeGame.homePlayerIds,
-    awayPlayerIds: homeGame.awayPlayerIds,
+    awayPlayerIds: awayGame.awayPlayerIds,
     legs: homeGame.legs.map((leg, i) => ({
       winner: leg.winner,
       oneEighties: mergedOneEightiesByLeg[i],
@@ -178,15 +182,18 @@ function isValidLeg(leg: unknown, eligiblePlayerIds: Set<string>): leg is MatchL
   return true;
 }
 
-// `statScope`, when passed, restricts which players' 180s/checkouts this
-// specific games array may claim — used to validate a RAW SUBMISSION from
-// one team, where oneEighties/highCheckout may only name players on the
-// SUBMITTING team (never the opponent's — this is the server-side half of
-// "own-team stat security"; the client UI only hides the controls, it
-// doesn't enforce anything). Omitted (the default) when validating a
-// FINAL/MERGED games array (onMatchConfirmed/onMatchDeleted/
-// adminResetMatchResult), where a stat legitimately naming either side's
-// player is correct — that's the whole point of the merge.
+// `statScope`, when passed, means this is validating a RAW SUBMISSION from
+// one team under the own-team-only model: the submitting team's own side of
+// every game must carry its real pairing, and the OPPONENT's side must be
+// EMPTY — a captain's submission never contains the opponent's players at
+// all, by construction (the client UI never offers them; this is the
+// server-side enforcement of that, not just a UX nicety). oneEighties/
+// highCheckout are likewise restricted to the submitting team's own players
+// only (the pre-existing "own-team stat security"). Omitted (the default)
+// when validating a FINAL/MERGED games array (onMatchConfirmed/
+// onMatchDeleted/adminResetMatchResult), where both sides are legitimately
+// populated and either side's player is eligible for stats — that's the
+// whole point of the merge.
 function isValidGame(game: unknown, statScope?: { submittedByTeamId: string; matchHomeTeamId: string }): game is MatchGame {
   if (!game || typeof game !== 'object') return false;
   const g = game as Record<string, unknown>;
@@ -194,17 +201,21 @@ function isValidGame(game: unknown, statScope?: { submittedByTeamId: string; mat
   const expectedType: GameType = g.order > SINGLES_GAMES ? 'pairs' : 'singles';
   const expectedPlayerCount = expectedType === 'pairs' ? 2 : 1;
   if (g.type !== expectedType) return false;
-  if (!Array.isArray(g.homePlayerIds) || g.homePlayerIds.length !== expectedPlayerCount) return false;
-  if (!Array.isArray(g.awayPlayerIds) || g.awayPlayerIds.length !== expectedPlayerCount) return false;
+  if (!Array.isArray(g.homePlayerIds) || !Array.isArray(g.awayPlayerIds)) return false;
   if (!g.homePlayerIds.every((id) => typeof id === 'string') || !g.awayPlayerIds.every((id) => typeof id === 'string')) {
     return false;
   }
+  const isHomeSubmission = statScope ? statScope.submittedByTeamId === statScope.matchHomeTeamId : undefined;
+  const expectedHomeCount = !statScope || isHomeSubmission ? expectedPlayerCount : 0;
+  const expectedAwayCount = !statScope || !isHomeSubmission ? expectedPlayerCount : 0;
+  if (g.homePlayerIds.length !== expectedHomeCount) return false;
+  if (g.awayPlayerIds.length !== expectedAwayCount) return false;
   const homeIds = g.homePlayerIds as string[];
   const awayIds = g.awayPlayerIds as string[];
   if (homeIds.some((id) => awayIds.includes(id))) return false; // can't play both sides
   if (!Array.isArray(g.legs) || g.legs.length !== LEGS_PER_GAME) return false;
   const eligible = statScope
-    ? new Set<string>(statScope.submittedByTeamId === statScope.matchHomeTeamId ? homeIds : awayIds)
+    ? new Set<string>(isHomeSubmission ? homeIds : awayIds)
     : new Set<string>([...homeIds, ...awayIds]);
   return g.legs.every((leg) => isValidLeg(leg, eligible));
 }

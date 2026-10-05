@@ -18,8 +18,7 @@ import {
 import { AdminShell } from '@/components/admin/AdminShell';
 import { MatchHeader, MatchSummary, GameRow, ActionBanner } from '@/components/MatchCentre';
 import {
-  LEGS_PER_GAME, blankGames, toDraft, toMatchGame, slotsFor, isGameComplete, normalizeGameForCompare,
-  keepOnlyOwnTeamStats,
+  LEGS_PER_GAME, blankGames, toDraft, toMatchGame, slotsFor, isGameComplete,
   type DraftGame,
 } from '@/lib/matchResultDraft';
 import type { Match, MatchGame, MatchSide } from '@/types';
@@ -39,13 +38,17 @@ export default function ResultsEntryScreen() {
   const [awayTeamName, setAwayTeamName] = useState('');
   const [players, setPlayers] = useState<Player[]>([]);
   const [mySubmission, setMySubmission] = useState<MatchGame[] | null>(null);
-  const [otherSubmission, setOtherSubmission] = useState<MatchGame[] | null>(null);
+  // Existence only — under the own-team-only model a captain never reads or
+  // displays the OTHER team's submitted players/stats at all, only whether
+  // they've submitted yet (for the "waiting on them" vs "not yet submitted"
+  // messaging below).
+  const [otherTeamHasSubmitted, setOtherTeamHasSubmitted] = useState(false);
   // The single team submission an admin is being asked to sign off on
   // (awaiting_confirmation means exactly one side has submitted). Loaded
-  // separately from mySubmission/otherSubmission above, which only ever
-  // populate for a viewer on one of the two teams — a pure admin (no team)
-  // never triggers that effect, so this match's submission was previously
-  // never fetched for them at all.
+  // separately from mySubmission above, which only ever populates for a
+  // viewer on one of the two teams — a pure admin (no team) never triggers
+  // that effect, so this match's submission was previously never fetched for
+  // them at all.
   const [awaitingSubmission, setAwaitingSubmission] = useState<{ teamId: string; games: MatchGame[] } | null>(null);
   const [isLoadingAwaitingSubmission, setIsLoadingAwaitingSubmission] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
@@ -55,9 +58,6 @@ export default function ResultsEntryScreen() {
   const [adminCorrecting, setAdminCorrecting] = useState(false);
   const [games, setGames] = useState<DraftGame[]>(blankGames());
   const [isSubmitting, setIsSubmitting] = useState(false);
-  // Review mode: games flagged as "not right, let me fix this" — everything else
-  // is treated as agreed-with, copied straight from the other team's submission.
-  const [editedGameIndexes, setEditedGameIndexes] = useState<Set<number>>(new Set());
   // Inline error for Submit Result / Save Correction (shown in the bottom
   // bar) — these share one state since only one of the two is ever active
   // at a time (adminCorrecting gates which).
@@ -68,7 +68,6 @@ export default function ResultsEntryScreen() {
   // away.
   const [postSubmitSuccess, setPostSubmitSuccess] = useState<{ title: string; message: string } | null>(null);
   const [confirmError, setConfirmError] = useState<string | null>(null);
-  const [adoptError, setAdoptError] = useState<{ gameIndex: number; message: string } | null>(null);
 
   // player-picker modal
   const [picker, setPicker] = useState<{ gameIndex: number; side: MatchSide } | null>(null);
@@ -169,7 +168,9 @@ export default function ResultsEntryScreen() {
     return () => { unsubMatch(); unsubPlayers(); };
   }, [matchId, appUser?.leagueId]);
 
-  // Load our own existing submission (for edit) + the other team's (to review/reconcile)
+  // Load our own existing submission (for edit) — own-team-only model, so
+  // the other team's submission content is never fetched or displayed here,
+  // only whether it exists yet (for the "waiting on them" messaging below).
   useEffect(() => {
     if (!matchId || !myTeamId || !match) return;
     const otherTeamId = isHome ? match.awayTeamId : match.homeTeamId;
@@ -179,20 +180,7 @@ export default function ResultsEntryScreen() {
       if (myGames) { setMySubmission(myGames); setGames(toDraft(myGames)); }
 
       getDoc(doc(db, 'matches', matchId, 'submissions', otherTeamId)).then((otherSnap) => {
-        const otherGames = otherSnap.exists() ? (otherSnap.data().games as MatchGame[]) : null;
-        setOtherSubmission(otherGames);
-        // Nobody's submitted on our side yet, but the other team has — start
-        // from their entry (review mode) instead of a blank form. Their own
-        // stat entries are stripped first: the OTHER team's 180s/checkouts
-        // must never end up inside what becomes OUR submission if we accept
-        // this game as-is without touching it — the server would reject the
-        // whole submission (own-team-only stat validation, see
-        // functions/src/index.ts). Pairings/score carry over untouched;
-        // that's exactly what review mode exists to let us agree with.
-        if (!myGames && otherGames && myTeamId && match) {
-          const stripped = otherGames.map((g) => keepOnlyOwnTeamStats(g, myTeamId, match.homeTeamId));
-          setGames(toDraft(stripped));
-        }
+        setOtherTeamHasSubmitted(otherSnap.exists());
       });
     });
   }, [matchId, myTeamId, match, isHome]);
@@ -240,62 +228,12 @@ export default function ResultsEntryScreen() {
     });
   }, [matchId, match, appUser]);
 
-  type Mode = 'blank' | 'review' | 'waiting' | 'reconcile';
-  const mode: Mode = otherSubmission && !mySubmission
-    ? 'review'
-    : mySubmission && !otherSubmission
-      ? 'waiting'
-      : mySubmission && otherSubmission
-        ? 'reconcile'
-        : 'blank';
-
-  const diffGameIndexes = useMemo(() => {
-    if (!mySubmission || !otherSubmission) return [];
-    const mine = toDraft(mySubmission);
-    const theirs = toDraft(otherSubmission);
-    return mine
-      .map((g, i) => (normalizeGameForCompare(g) !== normalizeGameForCompare(theirs[i]) ? i : -1))
-      .filter((i) => i !== -1);
-  }, [mySubmission, otherSubmission]);
-
-  async function adoptTheirVersion(gameIndex: number) {
-    if (!matchId || !myTeamId || !appUser || !match || !mySubmission || !otherSubmission) return;
-    // Adopts their pairings/score for this game, but keeps only OUR team's
-    // own stat entries from it — the opponent's own-reported 180s/checkouts
-    // must never end up inside OUR submission (the server would reject the
-    // whole thing — own-team-only stat validation, see
-    // functions/src/index.ts). Any of our own stats we'd already entered for
-    // this specific game are replaced by adopting, same as before — this
-    // only fixes what's ATTRIBUTED, not whether an override happens.
-    const adopted = keepOnlyOwnTeamStats(otherSubmission[gameIndex], myTeamId, match.homeTeamId);
-    const updated = mySubmission.map((g, i) => (i === gameIndex ? adopted : g));
-    setAdoptError(null);
-    try {
-      await setDoc(doc(db, 'matches', matchId, 'submissions', myTeamId), {
-        submittedByTeamId: myTeamId,
-        submittedByUserId: appUser.uid,
-        games: updated,
-        createdAt: serverTimestamp(),
-      });
-      setMySubmission(updated);
-    } catch (e: unknown) {
-      setAdoptError({ gameIndex, message: (e as Error).message ?? 'Something went wrong' });
-    }
-  }
-
-  function revertGame(gameIndex: number) {
-    if (!otherSubmission || !myTeamId || !match) return;
-    // Same stripping as adoptTheirVersion/the review pre-fill — reverting to
-    // "their" version must never pull the opponent's own stat entries into
-    // our draft.
-    const stripped = keepOnlyOwnTeamStats(otherSubmission[gameIndex], myTeamId, match.homeTeamId);
-    updateGame(gameIndex, toDraft([stripped])[0]);
-    setEditedGameIndexes((prev) => {
-      const next = new Set(prev);
-      next.delete(gameIndex);
-      return next;
-    });
-  }
+  // Own-team-only model: there's nothing to "review" or "reconcile" against
+  // on this screen anymore — the server does all pairing/score comparison
+  // once both own-side submissions exist (handleSubmissionWrite), and a
+  // captain only ever sees their OWN side, whether they're entering it for
+  // the first time or editing an existing submission.
+  const hasSubmitted = !!mySubmission;
 
   const homePlayers = useMemo(
     () => (match ? players.filter((p) => p.teamId === match.homeTeamId) : []),
@@ -307,7 +245,9 @@ export default function ResultsEntryScreen() {
   );
   const playerName = (id: string) => players.find((p) => p.id === id)?.name ?? '?';
 
-  const allComplete = games.every(isGameComplete);
+  // Admin correction edits the full merged record (both sides); a captain's
+  // own submission only ever needs their own side filled in.
+  const allComplete = games.every((g) => isGameComplete(g, adminCorrecting ? undefined : myTeamSide ?? undefined));
 
   function updateGame(index: number, patch: Partial<DraftGame>) {
     setGames((prev) => prev.map((g, i) => (i === index ? { ...g, ...patch } : g)));
@@ -321,6 +261,11 @@ export default function ResultsEntryScreen() {
   }
 
   function togglePlayer(gameIndex: number, side: MatchSide, playerId: string) {
+    // Defense in depth — the picker itself is already disabled for the
+    // opponent's side (own-team-only model), but this must never silently
+    // let a captain's own submission populate the other side even if called
+    // some other way.
+    if (!adminCorrecting && side !== myTeamSide) return;
     const game = games[gameIndex];
     const key = side === 'home' ? 'homePlayerIds' : 'awayPlayerIds';
     const current = game[key];
@@ -469,8 +414,8 @@ export default function ResultsEntryScreen() {
       if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       setPostSubmitSuccess({
         title: 'Result submitted',
-        message: otherSubmission
-          ? "Both teams have now submitted — if the pairings and scores match, you'll both be asked to confirm the reconciled sheet. If they don't match, it'll be flagged for the admin."
+        message: otherTeamHasSubmitted
+          ? "Both teams have now submitted — if the scores match, you'll both be asked to confirm the reconciled sheet. If they don't, it'll be flagged for the admin."
           : 'Waiting on the other team to submit their result too.',
       });
     } catch (e: unknown) {
@@ -582,13 +527,7 @@ export default function ResultsEntryScreen() {
   }
 
   // The 180/checkout entry section for one game, scoped to `ownIds` (my own
-  // team's players in this game — see ownParticipants at each call site).
-  // Factored out because it's needed in two places: the full editable card,
-  // and — new under the reconciliation model — the collapsed "review,
-  // unedited" card too, since a captain still needs to enter their OWN
-  // team's stats even for a game whose pairing/score they're simply
-  // accepting from the other side's submission (only pairing/score, never
-  // stats, are something review mode can skip re-entering).
+  // team's players in this game — see ownParticipants at the call site).
   function renderStatsEntry(gameIndex: number, game: DraftGame, ownIds: string[]) {
     return (
       <>
@@ -764,26 +703,17 @@ export default function ResultsEntryScreen() {
 
           {canAct ? (
             <ActionBanner
-              eyebrow={
-                mode === 'reconcile' ? 'SUBMISSIONS DON\'T MATCH'
-                  : mode === 'review' ? 'RESULT SUBMITTED BY THE OTHER TEAM'
-                    : mode === 'waiting' ? 'WAITING ON THE OTHER TEAM'
-                      : 'RESULT NOT YET SUBMITTED'
-              }
+              eyebrow={hasSubmitted ? 'WAITING ON THE OTHER TEAM' : 'RESULT NOT YET SUBMITTED'}
               description={
-                mode === 'reconcile'
-                  ? (diffGameIndexes.length > 0
-                    ? `${diffGameIndexes.length} game${diffGameIndexes.length > 1 ? 's' : ''} don't match the other team's submission. Check each one — adopt their version if they're right, or leave it for the admin to resolve.`
-                    : "Pairings and scores match — this'll move to Confirm any moment.")
-                  : mode === 'review'
-                    ? 'Review it below — anything you don\'t flag is treated as agreed.'
-                    : mode === 'waiting'
-                      ? 'You have a saved submission for this match.'
-                      : '7 games · 5 singles, 2 pairs · enter the legs score for each.'
+                hasSubmitted
+                  ? (otherTeamHasSubmitted
+                    ? "You've both submitted — this'll move to Confirm any moment if the scores match."
+                    : 'You have a saved submission for this match.')
+                  : '7 games · 5 singles, 2 pairs · enter your own team\'s side and the legs score for each.'
               }
-              buttonLabel={mode === 'review' ? 'Review Result' : mode === 'reconcile' ? 'Resolve Differences' : mode === 'waiting' ? 'Edit Result' : 'Enter Result'}
+              buttonLabel={hasSubmitted ? 'Edit Result' : 'Enter Result'}
               onPress={() => setEditing(true)}
-              tone={mode === 'reconcile' ? 'coral' : mode === 'review' ? 'butter' : 'brand'}
+              tone="brand"
             />
           ) : canSignOffMatch(appUser, match) ? (
             isLoadingAwaitingSubmission ? (
@@ -804,8 +734,10 @@ export default function ResultsEntryScreen() {
                   <Body size="sm">
                     {awaitingSubmission.teamId === match!.homeTeamId ? homeTeamName : awayTeamName} submitted this
                     result and the other team hasn't responded. As a league admin, you can confirm it on their
-                    behalf — but {awaitingSubmission.teamId === match!.homeTeamId ? awayTeamName : homeTeamName}'s
-                    players won't have any 180s/checkouts recorded, since they never submitted their own sheet.
+                    behalf — but since each team only ever submits its own side,
+                    {' '}{awaitingSubmission.teamId === match!.homeTeamId ? awayTeamName : homeTeamName}'s players
+                    won't appear at all, and they'll have no 180s/checkouts recorded, since they never submitted
+                    their own sheet.
                   </Body>
                 </Card>
                 {awaitingSubmission.games.map((game, gameIndex) => (
@@ -854,32 +786,6 @@ export default function ResultsEntryScreen() {
             </Card>
           ) : null}
         </ScrollView>
-      ) : mode === 'reconcile' ? (
-        <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 8 }}>
-          <TouchableOpacity activeOpacity={0.7} onPress={() => setEditing(false)} className="mb-3">
-            <Body size="sm">‹ Back to summary</Body>
-          </TouchableOpacity>
-          <View className="flex-row items-center justify-between mb-4">
-            <Body tone="strong" weight="semibold" className="flex-1" numberOfLines={1}>{homeTeamName} vs {awayTeamName}</Body>
-            {(isHome || isAway) && <Body size="sm" tone="brand" weight="semibold">You're {isHome ? 'Home' : 'Away'}</Body>}
-          </View>
-          {diffGameIndexes.length === 0 ? (
-            <Body>Pairings and scores match — this'll move to Confirm any moment.</Body>
-          ) : (
-            diffGameIndexes.map((gameIndex) => (
-              <View key={gameIndex} className="mb-2">
-                <GameRow game={mySubmission![gameIndex]} gameIndex={gameIndex} playerName={playerName} label={`Game ${gameIndex + 1} · Your version`} tone="coral" />
-                <GameRow game={otherSubmission![gameIndex]} gameIndex={gameIndex} playerName={playerName} label={`Game ${gameIndex + 1} · Their version`} tone="coral" />
-                {adoptError?.gameIndex === gameIndex && (
-                  <Card tone="coral" className="mb-2.5" padded={false}>
-                    <Body tone="coral" size="sm" className="p-3">{adoptError.message}</Body>
-                  </Card>
-                )}
-                <Button variant="good" size="sm" className="-mt-1 mb-3.5" onPress={() => adoptTheirVersion(gameIndex)}>Adopt Their Version</Button>
-              </View>
-            ))
-          )}
-        </ScrollView>
       ) : (
         <>
           <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 8 }}>
@@ -888,7 +794,7 @@ export default function ResultsEntryScreen() {
               {(isHome || isAway) && <Body size="sm" tone="brand" weight="semibold">You're {isHome ? 'Home' : 'Away'}</Body>}
             </View>
             <Body size="sm" className="mb-4">
-              {games.filter(isGameComplete).length} of {games.length} games complete
+              {games.filter((g) => isGameComplete(g, adminCorrecting ? undefined : myTeamSide ?? undefined)).length} of {games.length} games complete
             </Body>
 
             {games.map((game, gameIndex) => {
@@ -904,49 +810,31 @@ export default function ResultsEntryScreen() {
                   : myTeamSide === 'away' ? game.awayPlayerIds
                     : [];
 
-              if (mode === 'review' && !editedGameIndexes.has(gameIndex)) {
-                return (
-                  <View key={gameIndex} className="mb-3.5">
-                    <GameRow game={otherSubmission![gameIndex]} gameIndex={gameIndex} playerName={playerName} tone="sage" />
-                    <Button
-                      variant="danger" size="sm" className="-mt-1.5 mb-2.5"
-                      onPress={() => setEditedGameIndexes((prev) => new Set(prev).add(gameIndex))}
-                    >
-                      This isn't right — edit this game
-                    </Button>
-                    {/* Pairing/score are accepted as-is above, but 180s/
-                        checkouts are never something the other side reports
-                        for us — still ours to add here even when we're not
-                        touching anything else about this game. */}
-                    <Card>{renderStatsEntry(gameIndex, game, ownParticipants)}</Card>
-                  </View>
-                );
-              }
-
               return (
                 <Card key={gameIndex} className="mb-3.5">
                   <View className="flex-row items-center mb-2.5">
                     <Caption className="flex-1">Game {gameIndex + 1} of {games.length} · {game.type === 'singles' ? 'Singles' : 'Pairs'}</Caption>
-                    {isGameComplete(game) && <Badge tone="sage" className="mr-2">Complete</Badge>}
-                    {mode === 'review' && editedGameIndexes.has(gameIndex) && (
-                      <TouchableOpacity activeOpacity={0.7}
-                        onPress={() => revertGame(gameIndex)}
-                        className="px-3 py-2 rounded-lg bg-surface-2 dark:bg-surface-2-dark"
-                      >
-                        <Body size="xs" weight="semibold">Undo</Body>
-                      </TouchableOpacity>
-                    )}
+                    {isGameComplete(game, adminCorrecting ? undefined : myTeamSide ?? undefined) && <Badge tone="sage" className="mr-2">Complete</Badge>}
                   </View>
 
-                  {/* Lineup: boxed, clearly tappable name pickers */}
+                  {/* Lineup: boxed, clearly tappable name pickers. Own-team-
+                      only model — a captain can only ever open/edit their OWN
+                      side; the opponent's side is entered separately by
+                      their own captain and never shown here, even as a
+                      placeholder beyond "entered separately". Admin
+                      correction is the one exception (editing the full
+                      merged record for both sides). */}
                   <View className="flex-row gap-2.5 mb-3">
                     <TouchableOpacity activeOpacity={0.7}
+                      disabled={!adminCorrecting && myTeamSide !== 'home'}
                       onPress={() => setPicker({ gameIndex, side: 'home' })}
                       className="flex-1 items-start px-3 py-2.5 rounded-xl border border-border dark:border-border-dark bg-surface-2 dark:bg-surface-2-dark"
                     >
                       <Caption className="mb-1">Home</Caption>
                       {game.homePlayerIds.length === 0 ? (
-                        <Body size="sm">Tap to pick</Body>
+                        <Body size="sm" tone={!adminCorrecting && myTeamSide !== 'home' ? 'dim' : undefined}>
+                          {!adminCorrecting && myTeamSide !== 'home' ? 'Entered separately' : 'Tap to pick'}
+                        </Body>
                       ) : (
                         game.homePlayerIds.map((id) => (
                           <Body key={id} tone="strong" weight="semibold">{playerName(id)}</Body>
@@ -955,12 +843,15 @@ export default function ResultsEntryScreen() {
                     </TouchableOpacity>
 
                     <TouchableOpacity activeOpacity={0.7}
+                      disabled={!adminCorrecting && myTeamSide !== 'away'}
                       onPress={() => setPicker({ gameIndex, side: 'away' })}
                       className="flex-1 items-start px-3 py-2.5 rounded-xl border border-border dark:border-border-dark bg-surface-2 dark:bg-surface-2-dark"
                     >
                       <Caption className="mb-1">Away</Caption>
                       {game.awayPlayerIds.length === 0 ? (
-                        <Body size="sm">Tap to pick</Body>
+                        <Body size="sm" tone={!adminCorrecting && myTeamSide !== 'away' ? 'dim' : undefined}>
+                          {!adminCorrecting && myTeamSide !== 'away' ? 'Entered separately' : 'Tap to pick'}
+                        </Body>
                       ) : (
                         game.awayPlayerIds.map((id) => (
                           <Body key={id} tone="strong" weight="semibold">{playerName(id)}</Body>

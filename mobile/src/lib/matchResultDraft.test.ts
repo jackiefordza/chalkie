@@ -14,7 +14,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  blankGames, toDraft, toMatchGame, normalizeGameForCompare, isGameComplete, mergeGame, keepOnlyOwnTeamStats,
+  blankGames, toDraft, toMatchGame, isGameComplete, mergeGame,
   type DraftGame,
 } from './matchResultDraft';
 import type { MatchGame } from '@/types';
@@ -153,47 +153,6 @@ test('toMatchGame: a game with no 180s/checkouts at all still produces the right
   });
 });
 
-test('normalizeGameForCompare: same 180s/checkouts in different entry order compare equal', () => {
-  const a = draftSinglesGame({
-    oneEighties: ['home-1', 'away-1'],
-    highCheckouts: [{ playerId: 'home-1', value: '100' }],
-  });
-  const b = draftSinglesGame({
-    oneEighties: ['away-1', 'home-1'],
-    highCheckouts: [{ playerId: 'home-1', value: '100' }],
-  });
-  assert.equal(normalizeGameForCompare(a), normalizeGameForCompare(b));
-});
-
-// Reconciliation model change: each team only ever reports its OWN players'
-// stats (never the opponent's), so two independently-submitted sheets are
-// EXPECTED to differ on 180s/checkouts by construction — that's never a real
-// disagreement (see functions/src/index.ts's pairingsAndScoreAgree, which
-// this mirrors client-side). Only pairings + score are compared.
-test('normalizeGameForCompare: a different 180 count for the same player compares EQUAL (stats are never compared)', () => {
-  const a = draftSinglesGame({ oneEighties: ['home-1'] });
-  const b = draftSinglesGame({ oneEighties: ['home-1', 'home-1'] });
-  assert.equal(normalizeGameForCompare(a), normalizeGameForCompare(b));
-});
-
-test('normalizeGameForCompare: a different checkout value for the same player compares EQUAL (stats are never compared)', () => {
-  const a = draftSinglesGame({ highCheckouts: [{ playerId: 'home-1', value: '100' }] });
-  const b = draftSinglesGame({ highCheckouts: [{ playerId: 'home-1', value: '121' }] });
-  assert.equal(normalizeGameForCompare(a), normalizeGameForCompare(b));
-});
-
-test('normalizeGameForCompare: a different score compares unequal', () => {
-  const a = draftSinglesGame({ score: { home: 2, away: 1 } });
-  const b = draftSinglesGame({ score: { home: 1, away: 2 } });
-  assert.notEqual(normalizeGameForCompare(a), normalizeGameForCompare(b));
-});
-
-test('normalizeGameForCompare: a different pairing compares unequal', () => {
-  const a = draftSinglesGame({ homePlayerIds: ['home-1'] });
-  const b = draftSinglesGame({ homePlayerIds: ['home-2'] });
-  assert.notEqual(normalizeGameForCompare(a), normalizeGameForCompare(b));
-});
-
 test('mergeGame: combines each side\'s OWN players\' 180s/checkouts, pairings/score from home', () => {
   const home = matchGame({
     legs: [
@@ -234,28 +193,67 @@ test('mergeGame: ignores a stat wrongly present for the opponent\'s player, as a
   assert.deepEqual(allOneEighties(merged), []);
 });
 
-test('keepOnlyOwnTeamStats: strips a stat belonging to the other side, keeps pairings/score/winners', () => {
-  const game = matchGame({
+// Own-team-only model (test spec: "matching scores reconcile correctly" /
+// "the merged result contains both teams' independently submitted
+// players") — a real home submission never contains away's player at all,
+// and vice versa. This is the actual shape handleSubmissionWrite's two
+// submissions take; the earlier "pairings/score from home" test above still
+// passes with the old shared-both-sides fixture, but doesn't by itself
+// prove the merge reaches into AWAY's own submission for away's pairing.
+test('mergeGame: a disjoint own-side-only submission from each team still merges both real players in', () => {
+  const home = matchGame({ homePlayerIds: ['home-1'], awayPlayerIds: [] });
+  const away = matchGame({ homePlayerIds: [], awayPlayerIds: ['away-1'] });
+  const merged = mergeGame(home, away);
+  assert.deepEqual(merged.homePlayerIds, ['home-1']);
+  assert.deepEqual(merged.awayPlayerIds, ['away-1']);
+});
+
+test('mergeGame: legWinnerSource picks whose score is authoritative, independent of pairings', () => {
+  const home = matchGame({
+    homePlayerIds: ['home-1'], awayPlayerIds: [],
     legs: [
-      { winner: 'home', oneEighties: ['home-1'], highCheckout: null },
-      { winner: 'home', oneEighties: ['away-1'], highCheckout: { playerId: 'away-1', value: '121' } },
+      { winner: 'home', oneEighties: [], highCheckout: null },
+      { winner: 'home', oneEighties: [], highCheckout: null },
       { winner: 'away', oneEighties: [], highCheckout: null },
     ],
   });
-  const strippedForHome = keepOnlyOwnTeamStats(game, 'home-team', 'home-team');
-  assert.deepEqual(allOneEighties(strippedForHome), ['home-1']);
-  assert.deepEqual(allCheckouts(strippedForHome), []);
-  assert.deepEqual(strippedForHome.homePlayerIds, game.homePlayerIds);
-  assert.deepEqual(strippedForHome.legs.map((l) => l.winner), game.legs.map((l) => l.winner));
+  const away = matchGame({
+    homePlayerIds: [], awayPlayerIds: ['away-1'],
+    legs: [
+      { winner: 'away', oneEighties: [], highCheckout: null },
+      { winner: 'away', oneEighties: [], highCheckout: null },
+      { winner: 'home', oneEighties: [], highCheckout: null },
+    ],
+  });
+  const mergedHomeScore = mergeGame(home, away, home);
+  assert.deepEqual(mergedHomeScore.legs.map((l) => l.winner), ['home', 'home', 'away']);
+  assert.deepEqual(mergedHomeScore.homePlayerIds, ['home-1']);
+  assert.deepEqual(mergedHomeScore.awayPlayerIds, ['away-1']);
 
-  const strippedForAway = keepOnlyOwnTeamStats(game, 'away-team', 'home-team');
-  assert.deepEqual(allOneEighties(strippedForAway), ['away-1']);
-  assert.deepEqual(allCheckouts(strippedForAway), [{ playerId: 'away-1', value: '121' }]);
+  const mergedAwayScore = mergeGame(home, away, away);
+  assert.deepEqual(mergedAwayScore.legs.map((l) => l.winner), ['away', 'away', 'home']);
+  assert.deepEqual(mergedAwayScore.homePlayerIds, ['home-1']);
+  assert.deepEqual(mergedAwayScore.awayPlayerIds, ['away-1']);
 });
 
-test('isGameComplete: unaffected by this fix — still just player counts + score, no 180/checkout requirement', () => {
+test('isGameComplete: with no ownSide, requires both sides + score (admin correction of the full record)', () => {
   const incomplete = draftSinglesGame({ score: null });
   const complete = draftSinglesGame();
   assert.equal(isGameComplete(incomplete), false);
   assert.equal(isGameComplete(complete), true);
+});
+
+// Own-team-only model: a captain's own draft is complete once THEIR side's
+// slots + score are filled — the opponent's side is never touched at all.
+test('isGameComplete: with ownSide, only that side\'s player count + score is required', () => {
+  const homeOnly = draftSinglesGame({ homePlayerIds: ['home-1'], awayPlayerIds: [] });
+  assert.equal(isGameComplete(homeOnly, 'home'), true);
+  assert.equal(isGameComplete(homeOnly, 'away'), false);
+
+  const awayOnly = draftSinglesGame({ homePlayerIds: [], awayPlayerIds: ['away-1'] });
+  assert.equal(isGameComplete(awayOnly, 'away'), true);
+  assert.equal(isGameComplete(awayOnly, 'home'), false);
+
+  const noScore = draftSinglesGame({ homePlayerIds: ['home-1'], awayPlayerIds: [], score: null });
+  assert.equal(isGameComplete(noScore, 'home'), false);
 });

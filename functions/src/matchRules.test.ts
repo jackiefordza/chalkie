@@ -181,3 +181,40 @@ test('a captain can still resubmit while the match is scheduled/awaiting_confirm
     }),
   );
 });
+
+// ── players (pre-existing, unchanged rule) ──────────────────────────────
+// The own-team-only matchday model depends on this: "an opposition player
+// who hasn't yet been added to their roster is no longer a blocker — the
+// opposition captain can add that player when submitting their own side"
+// only holds if a captain genuinely cannot create (or edit) a player on the
+// OTHER team's roster — this rule already enforces that (it predates this
+// PR and isn't changed by it), but nothing tested it directly until now.
+test('a captain cannot create a player on the OTHER team\'s roster', async () => {
+  const playerId = 'player-wrong-team';
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    await ctx.firestore().doc(`users/${HOME_UID}`).set({ role: 'captain', teamId: HOME_TEAM, leagueId: 'league-1', isLeagueAdmin: false });
+  });
+  const homeCaptain = testEnv.authenticatedContext(HOME_UID).firestore();
+
+  await assertFails(
+    homeCaptain.doc(`players/${playerId}`).set({
+      name: 'Sneaky Player', leagueId: 'league-1', teamId: AWAY_TEAM,
+      claimedByUserId: null, claimedAt: null, createdAt: new Date(), createdByUserId: HOME_UID,
+    }),
+  );
+});
+
+test('a captain CAN create a player on their OWN team\'s roster (positive control)', async () => {
+  const playerId = 'player-own-team';
+  await testEnv.withSecurityRulesDisabled(async (ctx) => {
+    await ctx.firestore().doc(`users/${HOME_UID}`).set({ role: 'captain', teamId: HOME_TEAM, leagueId: 'league-1', isLeagueAdmin: false });
+  });
+  const homeCaptain = testEnv.authenticatedContext(HOME_UID).firestore();
+
+  await assertSucceeds(
+    homeCaptain.doc(`players/${playerId}`).set({
+      name: 'New Own Player', leagueId: 'league-1', teamId: HOME_TEAM,
+      claimedByUserId: null, claimedAt: null, createdAt: new Date(), createdByUserId: HOME_UID,
+    }),
+  );
+});
