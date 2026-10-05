@@ -1,0 +1,21 @@
+{
+  "name": "real-season-import-staging",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Staging-only variant of PR #36's real-season-import. Standalone Admin SDK script that imports the real Bedford & Kempston District Darts League Division 2 + Division 3 (Winter 2026/27) season into the chalkie-app-staging Firebase project, from the canonical dataset derived from the official fixture poster. Never run against any other project — see README.md before running anything.",
+  "engines": {
+    "node": "20"
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "offline-checks": "npm run build && node dist/src/offlineChecks.js"
+  },
+  "dependencies": {
+    "firebase-admin": "^13.10.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2",
+    "@types/node": "^22.0.0"
+  }
+}

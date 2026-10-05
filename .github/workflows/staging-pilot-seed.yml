@@ -1,0 +1,86 @@
+name: Staging pilot seed (Div 2/3 real data + 2 pilot captains)
+
+# Manual-only. Runs two standalone, independently safety-checked Admin SDK
+# scripts against chalkie-app-staging ONLY:
+#   1. scripts/real-season-import-staging — the real Bedford & Kempston
+#      Division 2 + Division 3 teams/fixtures (a staging-retargeted copy of
+#      PR #36's real-season-import; see that directory's README for what
+#      changed — exactly one constant).
+#   2. scripts/pilot-captains-seed — placeholder players + 2 captain
+#      accounts for exactly Oakley Sports Club and Burnaby Arms C, for the
+#      Captain A / Captain B pilot smoke test on fixture bk-d2-w01-2v1.
+#
+# Both scripts carry their own triple project-ID check (hard-coded to
+# chalkie-app-staging, never read from this workflow's inputs/secrets/env)
+# plus a write-guard allowlist scoped to exactly their own IDs — this
+# workflow adds no additional targeting logic of its own, same as
+# deploy-firebase-staging.yml. Credential handling mirrors that workflow
+# exactly: same FIREBASE_SERVICE_ACCOUNT_STAGING secret, same
+# write-to-$RUNNER_TEMP-then-unconditional-cleanup pattern.
+#
+# This workflow never touches chalkie-app, Functions, Firestore rules/
+# indexes, or Hosting — only the Firestore/Auth writes each script makes.
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  seed:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Write staging Firebase service-account credential
+        env:
+          FIREBASE_SERVICE_ACCOUNT_STAGING: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_STAGING }}
+        run: printf '%s' "$FIREBASE_SERVICE_ACCOUNT_STAGING" > "$RUNNER_TEMP/service-account-staging.json"
+
+      # ── Step 1: real Division 2/3 teams + fixtures ──────────────────────
+      - name: Install real-season-import-staging dependencies
+        working-directory: scripts/real-season-import-staging
+        run: npm ci
+
+      - name: Offline safety checks (no network, no credentials used)
+        working-directory: scripts/real-season-import-staging
+        run: npm run offline-checks
+
+      - name: Import real Division 2/3 teams + fixtures into chalkie-app-staging
+        working-directory: scripts/real-season-import-staging
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/service-account-staging.json
+        run: node dist/import.js --confirm
+
+      # ── Step 2: 2 pilot captain accounts + their placeholder players ────
+      - name: Install pilot-captains-seed dependencies
+        working-directory: scripts/pilot-captains-seed
+        run: npm ci
+
+      - name: Build pilot-captains-seed
+        working-directory: scripts/pilot-captains-seed
+        run: npm run build
+
+      - name: Seed pilot captain accounts (Oakley Sports Club, Burnaby Arms C)
+        working-directory: scripts/pilot-captains-seed
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/service-account-staging.json
+        run: node dist/seed.js --confirm-pilot-seed
+
+      - name: Print summary
+        run: |
+          {
+            echo "### Staging pilot seed complete"
+            echo "- Firebase project: chalkie-app-staging"
+            echo "- Real Division 2/3 schedule: imported (see 'Import real Division 2/3...' step log for create/update/skip counts)"
+            echo "- Pilot fixture: bk-d2-w01-2v1 (Oakley Sports Club vs Burnaby Arms C, Division 2, Week 1, 2026-10-14)"
+            echo "- Pilot captain accounts: pilot.captain.oakley@chalkie.test, pilot.captain.burnabyc@chalkie.test (see 'Seed pilot captain accounts...' step log for the verification report)"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove credential file
+        if: always()
+        run: rm -f "$RUNNER_TEMP/service-account-staging.json"

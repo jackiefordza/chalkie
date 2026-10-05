@@ -1,0 +1,20 @@
+{
+  "name": "pilot-captains-seed",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Standalone Admin SDK script that creates placeholder captain accounts and roster players for exactly two real Division 2 teams (Oakley Sports Club, Burnaby Arms C) in the chalkie-app-staging Firebase project, for the Captain A / Captain B pilot smoke test. Never run against any other project — see README.md before running anything.",
+  "engines": {
+    "node": "20"
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "firebase-admin": "^13.10.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2",
+    "@types/node": "^22.0.0"
+  }
+}
