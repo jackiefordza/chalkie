@@ -18,7 +18,7 @@ import {
 import { AdminShell } from '@/components/admin/AdminShell';
 import { MatchHeader, MatchSummary, GameRow, ActionBanner } from '@/components/MatchCentre';
 import {
-  LEGS_PER_GAME, blankGames, toDraft, toMatchGame, slotsFor, isGameComplete,
+  LEGS_PER_GAME, blankGames, toDraft, toMatchGame, slotsFor, isGameComplete, scoresAgree, mergeSubmissionGames,
   type DraftGame,
 } from '@/lib/matchResultDraft';
 import type { Match, MatchGame, MatchSide } from '@/types';
@@ -50,6 +50,17 @@ export default function ResultsEntryScreen() {
   // that effect, so this match's submission was previously never fetched for
   // them at all.
   const [awaitingSubmission, setAwaitingSubmission] = useState<{ teamId: string; games: MatchGame[] } | null>(null);
+  // Set instead of awaitingSubmission when BOTH teams' raw submissions
+  // already exist while the match doc still reads 'awaiting_confirmation' —
+  // an invariant the server's own onSubmissionWrite is supposed to prevent
+  // (it should have already merged both into match.games and moved the
+  // status on to pending_confirmation), but one a client load can still
+  // observe for a moment (trigger latency) or, if that trigger run ever
+  // failed, indefinitely. Either way, a raw single-sided submission must
+  // never be shown once both sides are actually in — see bug report: the
+  // admin-override view was unconditionally preferring homeSnap's raw data
+  // whenever it existed, even when awaySnap existed too.
+  const [bothSubmittedPreview, setBothSubmittedPreview] = useState<{ agree: true; games: MatchGame[] } | { agree: false } | null>(null);
   const [isLoadingAwaitingSubmission, setIsLoadingAwaitingSubmission] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -212,18 +223,40 @@ export default function ResultsEntryScreen() {
   // never fetches (or offers sign-off) for a match outside the admin's league
   // or one that isn't actually awaiting confirmation.
   useEffect(() => {
-    if (!matchId || !match || !canSignOffMatch(appUser, match)) { setAwaitingSubmission(null); return; }
+    if (!matchId || !match || !canSignOffMatch(appUser, match)) {
+      setAwaitingSubmission(null);
+      setBothSubmittedPreview(null);
+      return;
+    }
     setIsLoadingAwaitingSubmission(true);
     Promise.all([
       getDoc(doc(db, 'matches', matchId, 'submissions', match.homeTeamId)),
       getDoc(doc(db, 'matches', matchId, 'submissions', match.awayTeamId)),
     ]).then(([homeSnap, awaySnap]) => {
-      const submitted = homeSnap.exists()
-        ? { teamId: match.homeTeamId, games: homeSnap.data().games as MatchGame[] }
-        : awaySnap.exists()
-          ? { teamId: match.awayTeamId, games: awaySnap.data().games as MatchGame[] }
-          : null;
-      setAwaitingSubmission(submitted);
+      if (homeSnap.exists() && awaySnap.exists()) {
+        // Both teams have genuinely submitted — never show either one's raw
+        // submission (this is no longer the single-missing-side case Admin
+        // Override exists for). Show the same merged record
+        // pending_confirmation would, read-only, so an admin can never sign
+        // off an incomplete one-sided record while both sides are actually
+        // in.
+        const homeGames = homeSnap.data().games as MatchGame[];
+        const awayGames = awaySnap.data().games as MatchGame[];
+        setAwaitingSubmission(null);
+        setBothSubmittedPreview(
+          scoresAgree(homeGames, awayGames)
+            ? { agree: true, games: mergeSubmissionGames(homeGames, awayGames) }
+            : { agree: false },
+        );
+      } else {
+        const submitted = homeSnap.exists()
+          ? { teamId: match.homeTeamId, games: homeSnap.data().games as MatchGame[] }
+          : awaySnap.exists()
+            ? { teamId: match.awayTeamId, games: awaySnap.data().games as MatchGame[] }
+            : null;
+        setAwaitingSubmission(submitted);
+        setBothSubmittedPreview(null);
+      }
       setIsLoadingAwaitingSubmission(false);
     });
   }, [matchId, match, appUser]);
@@ -718,6 +751,32 @@ export default function ResultsEntryScreen() {
           ) : canSignOffMatch(appUser, match) ? (
             isLoadingAwaitingSubmission ? (
               <ActivityIndicator color={RAW.brand} style={{ marginTop: 20 }} />
+            ) : bothSubmittedPreview?.agree ? (
+              <>
+                {/* Both teams have genuinely submitted and their scores
+                    agree — this is the reconciled record, not either side's
+                    raw submission (see bothSubmittedPreview above). Read-only:
+                    this will finish moving to Pending Confirmation on its own
+                    once the backend catches up; refresh if it doesn't. */}
+                <Card tone="butter" className="mb-4">
+                  <Caption className="mb-1">Both Teams Submitted</Caption>
+                  <Body size="sm">
+                    Both teams have already submitted and their results match. This reconciled sheet should move to
+                    Pending Confirmation automatically — refresh in a moment if it hasn't yet.
+                  </Body>
+                </Card>
+                {bothSubmittedPreview.games.map((game, gameIndex) => (
+                  <GameRow key={gameIndex} game={game} gameIndex={gameIndex} playerName={playerName} />
+                ))}
+              </>
+            ) : bothSubmittedPreview ? (
+              <Card tone="coral" className="mb-4">
+                <Caption className="mb-1">Both Teams Submitted — Scores Don't Match</Caption>
+                <Body size="sm">
+                  Both teams have submitted, but their reported scores disagree. This should move to Disputed
+                  automatically — refresh in a moment if it hasn't yet, or resolve it from there once it does.
+                </Body>
+              </Card>
             ) : !awaitingSubmission ? (
               <Card tone="coral" className="mb-4">
                 <Body size="sm">No submission found for this match yet.</Body>

@@ -14,7 +14,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  blankGames, toDraft, toMatchGame, isGameComplete, mergeGame,
+  blankGames, toDraft, toMatchGame, isGameComplete, mergeGame, scoresAgree, mergeSubmissionGames,
   type DraftGame,
 } from './matchResultDraft';
 import type { MatchGame } from '@/types';
@@ -234,6 +234,94 @@ test('mergeGame: legWinnerSource picks whose score is authoritative, independent
   assert.deepEqual(mergedAwayScore.legs.map((l) => l.winner), ['away', 'away', 'home']);
   assert.deepEqual(mergedAwayScore.homePlayerIds, ['home-1']);
   assert.deepEqual(mergedAwayScore.awayPlayerIds, ['away-1']);
+});
+
+test('scoresAgree: true when every game\'s leg-winner COUNT matches, regardless of pairing (own-team-only submissions never share one)', () => {
+  const home = [
+    matchGame({ order: 1, homePlayerIds: ['home-1'], awayPlayerIds: [] }),
+    matchGame({
+      order: 2, homePlayerIds: ['home-2'], awayPlayerIds: [],
+      legs: [
+        { winner: 'away', oneEighties: [], highCheckout: null },
+        { winner: 'away', oneEighties: [], highCheckout: null },
+        { winner: 'home', oneEighties: [], highCheckout: null },
+      ],
+    }),
+  ];
+  const away = [
+    matchGame({ order: 1, homePlayerIds: [], awayPlayerIds: ['away-1'] }),
+    matchGame({
+      order: 2, homePlayerIds: [], awayPlayerIds: ['away-2'],
+      legs: [
+        { winner: 'away', oneEighties: [], highCheckout: null },
+        { winner: 'away', oneEighties: [], highCheckout: null },
+        { winner: 'home', oneEighties: [], highCheckout: null },
+      ],
+    }),
+  ];
+  assert.equal(scoresAgree(home, away), true);
+});
+
+test('scoresAgree: false when a game\'s reported score genuinely disagrees', () => {
+  const home = [matchGame({ order: 1 })]; // 2-1 home
+  const away = [matchGame({
+    order: 1,
+    legs: [
+      { winner: 'away', oneEighties: [], highCheckout: null },
+      { winner: 'away', oneEighties: [], highCheckout: null },
+      { winner: 'home', oneEighties: [], highCheckout: null },
+    ],
+  })]; // 1-2 home
+  assert.equal(scoresAgree(home, away), false);
+});
+
+// Regression: results-entry.tsx's admin-override view was unconditionally
+// showing the HOME submission's raw games whenever it existed, even when
+// the away submission also existed — so a captain/admin opening the
+// confirmation/review screen after BOTH teams had genuinely submitted saw
+// one team's raw, one-sided data (that team's own player + a real score,
+// the opponent's side blank) instead of the real reconciled result. The fix
+// (mergeSubmissionGames, mirroring functions/src/index.ts's own
+// mergeSubmissionGames) must produce, for every game, both teams'
+// independently-submitted player IDs — proving the confirmation/review view
+// built from it can never again show just one side.
+test('mergeSubmissionGames: two disjoint own-side submissions reconcile into a record containing BOTH teams\' player IDs, for every game', () => {
+  const home = [
+    matchGame({ order: 1, type: 'singles', homePlayerIds: ['home-1'], awayPlayerIds: [] }),
+    matchGame({
+      order: 2, type: 'singles', homePlayerIds: ['home-2'], awayPlayerIds: [],
+      legs: [
+        { winner: 'away', oneEighties: [], highCheckout: null },
+        { winner: 'away', oneEighties: [], highCheckout: null },
+        { winner: 'home', oneEighties: [], highCheckout: null },
+      ],
+    }),
+  ];
+  const away = [
+    matchGame({ order: 1, type: 'singles', homePlayerIds: [], awayPlayerIds: ['away-1'] }),
+    matchGame({
+      order: 2, type: 'singles', homePlayerIds: [], awayPlayerIds: ['away-2'],
+      legs: [
+        { winner: 'away', oneEighties: [], highCheckout: null },
+        { winner: 'away', oneEighties: [], highCheckout: null },
+        { winner: 'home', oneEighties: [], highCheckout: null },
+      ],
+    }),
+  ];
+
+  const merged = mergeSubmissionGames(home, away);
+
+  assert.equal(merged.length, 2);
+  // Neither side is ever blank — this is the exact symptom reported: a
+  // review screen showing a real player on one side and '—' on the other.
+  merged.forEach((g) => {
+    assert.notDeepEqual(g.homePlayerIds, []);
+    assert.notDeepEqual(g.awayPlayerIds, []);
+  });
+  assert.deepEqual(merged.find((g) => g.order === 1)?.homePlayerIds, ['home-1']);
+  assert.deepEqual(merged.find((g) => g.order === 1)?.awayPlayerIds, ['away-1']);
+  assert.deepEqual(merged.find((g) => g.order === 2)?.homePlayerIds, ['home-2']);
+  assert.deepEqual(merged.find((g) => g.order === 2)?.awayPlayerIds, ['away-2']);
 });
 
 test('isGameComplete: with no ownSide, requires both sides + score (admin correction of the full record)', () => {

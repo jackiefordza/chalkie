@@ -190,6 +190,40 @@ function distributeHighCheckouts(highCheckouts: HighCheckout[]): (HighCheckout |
 // disagreement in away's favor; mirrors functions/src/index.ts's
 // buildMergedGame, which has no such choice to make since it only ever runs
 // once pairingsAndScoreAgree has already confirmed both sides match.
+// Score-only agreement check — mirrors functions/src/index.ts's
+// pairingsAndScoreAgree exactly. Own-team-only model: there's no pairing to
+// compare (neither submission ever contains the opponent's players at all),
+// only whether each side's independently-reported leg-winner COUNT for a
+// given game agrees. Used client-side only for display (deciding whether
+// two already-fetched raw submissions can be shown merged) — the server's
+// own check in onSubmissionWrite remains the sole authority over whether a
+// match actually moves to pending_confirmation vs disputed.
+export function scoresAgree(a: MatchGame[], b: MatchGame[]): boolean {
+  if (a.length !== b.length) return false;
+  const bByOrder = new Map(b.map((g) => [g.order, g]));
+  return a.every((ag) => {
+    const bg = bByOrder.get(ag.order);
+    if (!bg) return false;
+    const aHomeLegs = ag.legs.filter((l) => l.winner === 'home').length;
+    const bHomeLegs = bg.legs.filter((l) => l.winner === 'home').length;
+    return aHomeLegs === bHomeLegs;
+  });
+}
+
+// Merges two full own-side submissions (every game) into the complete
+// reconciled record — mirrors functions/src/index.ts's mergeSubmissionGames
+// exactly, built from mergeGame per game. Callers should only use this once
+// scoresAgree(homeGames, awayGames) is true; results-entry.tsx uses it to
+// show the correct merged record — never either side's raw submission —
+// for the rare case both teams have genuinely submitted but the match
+// hasn't (yet) been moved to pending_confirmation server-side.
+export function mergeSubmissionGames(homeGames: MatchGame[], awayGames: MatchGame[]): MatchGame[] {
+  const awayByOrder = new Map(awayGames.map((g) => [g.order, g]));
+  return [...homeGames]
+    .sort((a, b) => a.order - b.order)
+    .map((hg) => mergeGame(hg, awayByOrder.get(hg.order)!));
+}
+
 export function mergeGame(homeGame: MatchGame, awayGame: MatchGame, legWinnerSource: MatchGame = homeGame): MatchGame {
   const homeOwn = new Set(homeGame.homePlayerIds);
   const awayOwn = new Set(awayGame.awayPlayerIds);
