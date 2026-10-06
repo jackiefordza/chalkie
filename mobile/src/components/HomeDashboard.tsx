@@ -9,7 +9,7 @@ import { db } from '@/config/firebase';
 import { useAuthStore } from '@/stores/authStore';
 import { RAW, toneClasses } from '@/lib/theme';
 import { FONT_MONO, FONT_DISPLAY } from '@/styles/typography';
-import { STATUS_LABEL, STATUS_TONE } from '@/lib/matchStatus';
+import { STATUS_LABEL, STATUS_TONE, nextMatchCtaLabel } from '@/lib/matchStatus';
 import { formatTeamRecord } from '@/lib/matchScore';
 import { resolveOpponentInfo } from '@/lib/opponentInfo';
 import { recentForm } from '@/lib/recentForm';
@@ -208,11 +208,7 @@ function NextMatchHero({ match, teamId, opponentName, form, isCaptainOrVC }: Nex
 
   const tone = STATUS_TONE[match.status];
   const tc = tone ? toneClasses(tone) : null;
-  const ctaLabel = match.status === 'scheduled' ? 'Enter Result'
-    : match.status === 'disputed' ? 'Resolve Differences'
-      : match.status === 'awaiting_confirmation' && hasSubmitted === false ? 'Review Their Result'
-        : match.status === 'awaiting_confirmation' && hasSubmitted === true ? 'View Submission'
-          : 'View / Edit Result';
+  const ctaLabel = nextMatchCtaLabel(match.status, hasSubmitted, opponentName);
 
   const content = (
     <View className="rounded-lg border border-border dark:border-border-dark bg-surface dark:bg-surface-dark px-5 py-5 mb-6">
