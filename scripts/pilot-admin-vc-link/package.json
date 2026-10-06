@@ -1,0 +1,20 @@
+{
+  "name": "pilot-admin-vc-link",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Standalone Admin SDK script that links the EXISTING pilot.admin@chalkie.test staging admin account to a new claimed player record on Burnaby Arms B (Division 3) as vice-captain, in the chalkie-app-staging Firebase project only. Never creates an Auth account, never touches isLeagueAdmin/isGlobalAdmin/leagueId, never changes firestore.rules or the data model. See README.md before running anything.",
+  "engines": {
+    "node": "20"
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "firebase-admin": "^13.10.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2",
+    "@types/node": "^22.0.0"
+  }
+}

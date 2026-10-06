@@ -1,6 +1,6 @@
 name: Staging pilot seed (Div 2/3 real data + 2 pilot captains)
 
-# Manual-only. Runs three standalone, independently safety-checked Admin SDK
+# Manual-only. Runs four standalone, independently safety-checked Admin SDK
 # scripts against chalkie-app-staging ONLY:
 #   1. scripts/real-season-import-staging — the real Bedford & Kempston
 #      Division 2 + Division 3 teams/fixtures (a staging-retargeted copy of
@@ -13,8 +13,13 @@ name: Staging pilot seed (Div 2/3 real data + 2 pilot captains)
 #      (pilot.admin@chalkie.test), so the admin dispute-resolution screen
 #      can be tested against the real pilot data. Explicitly temporary —
 #      see that script's README for manual teardown steps.
+#   4. scripts/pilot-admin-vc-link — links that SAME existing admin account
+#      to a claimed player record on Burnaby Arms B (Division 3) as
+#      vice-captain. No new Auth account, no rules/schema change — proves
+#      the existing data model already supports one account being both a
+#      league admin and a team's VC.
 #
-# All three scripts carry their own triple project-ID check (hard-coded to
+# All four scripts carry their own triple project-ID check (hard-coded to
 # chalkie-app-staging, never read from this workflow's inputs/secrets/env)
 # plus a write-guard allowlist scoped to exactly their own IDs — this
 # workflow adds no additional targeting logic of its own, same as
@@ -97,6 +102,21 @@ jobs:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/service-account-staging.json
         run: node dist/seed.js --confirm-pilot-admin-seed
 
+      # ── Step 4: link that same admin account to Burnaby Arms B as VC ────
+      - name: Install pilot-admin-vc-link dependencies
+        working-directory: scripts/pilot-admin-vc-link
+        run: npm ci
+
+      - name: Build pilot-admin-vc-link
+        working-directory: scripts/pilot-admin-vc-link
+        run: npm run build
+
+      - name: Link pilot admin account to Burnaby Arms B as vice-captain
+        working-directory: scripts/pilot-admin-vc-link
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/service-account-staging.json
+        run: node dist/link.js --confirm-pilot-admin-vc-link
+
       - name: Print summary
         run: |
           {
@@ -106,6 +126,7 @@ jobs:
             echo "- Pilot fixture: bk-d2-w01-2v1 (Oakley Sports Club vs Burnaby Arms C, Division 2, Week 1, 2026-10-14)"
             echo "- Pilot captain accounts: pilot.captain.oakley@chalkie.test, pilot.captain.burnabyc@chalkie.test (see 'Seed pilot captain accounts...' step log for the verification report)"
             echo "- Pilot admin account (temporary, league-scoped): pilot.admin@chalkie.test (see 'Seed pilot admin account...' step log for the verification report; see scripts/pilot-admin-seed/README.md for manual teardown steps)"
+            echo "- Pilot admin also linked as vice-captain of Burnaby Arms B, Division 3 (see 'Link pilot admin account...' step log for the verification report; see scripts/pilot-admin-vc-link/README.md to undo)"
           } | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Remove credential file
