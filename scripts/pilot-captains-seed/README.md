@@ -56,12 +56,50 @@ not something this script already did for you.
 
 ## Pilot accounts
 
-Password for both: **`ChalkiePilotTest2026!`**
-
 | Team | Email | Role |
 |---|---|---|
 | Oakley Sports Club | `pilot.captain.oakley@chalkie.test` | Captain |
 | Burnaby Arms C | `pilot.captain.burnabyc@chalkie.test` | Captain |
+
+### Getting the password
+
+**No password is hard-coded in this repo, even a throwaway test one.**
+`src/seedCore.ts` generates one random password per run with
+`crypto.randomBytes`, shared by whichever of the two captain accounts
+above are actually created during that run, and `seed.ts` prints it
+**once**, to that run's own console output — it is never written to
+Firestore, a file, or any source file in this tree.
+
+- Running via the `staging-pilot-seed.yml` workflow: open the **"Seed
+  pilot captain accounts..."** step's log for that run — the password is
+  printed there, inside a clearly marked banner.
+- Running locally: it prints directly to your terminal.
+
+Re-running this script once both accounts already exist does **not**
+reprint or change either password — it leaves them untouched and says so
+instead.
+
+> **Note on this script's history:** earlier versions of this file
+> committed a fixed password (`ChalkiePilotTest2026!`) directly in
+> `src/constants.ts`, and the two live pilot captain accounts in
+> `chalkie-app-staging` were created under that password before this
+> change. This script never resets an existing account's password, so
+> those two accounts still use that original value today — this change
+> only affects accounts created from now on. If you want those two
+> rotated onto a freshly generated password, that needs a deliberate,
+> separate step (e.g. Firebase Console → reset password), not a re-run of
+> this script.
+
+#### If you lose the password
+
+This script never stores it, so if you didn't copy it from the run output:
+
+1. **Firebase Console → Authentication → (the captain's email) → Reset
+   password**, and set a new one by hand, or
+2. Delete that Auth user and their `users/{uid}` Firestore doc, then
+   re-run this script — it will create a fresh account with a freshly
+   generated password (and re-link the same placeholder player/team, since
+   those are keyed by fixed, deterministic IDs, not by the uid).
 
 ## Prerequisites
 

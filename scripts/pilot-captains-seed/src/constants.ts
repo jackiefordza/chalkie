@@ -70,10 +70,11 @@ export const PILOT_TEAMS: readonly PilotTeam[] = [
 export const PLAYERS_PER_TEAM = 5;
 export const CAPTAIN_ROSTER_INDEX = 1;
 
-// Clearly test-only, distinct from scripts/showcase-seed's own
-// ChalkieShowcase2026! — never mistake one dataset's credentials for the
-// other's.
-export const PILOT_PASSWORD = 'ChalkiePilotTest2026!';
+// Deliberately NO password constant here. A password is never committed
+// to version control, even a throwaway test one — src/seedCore.ts
+// generates one at runtime, only when a captain account is actually
+// created, and it is printed once to that run's own output (see seed.ts)
+// and never written to Firestore, a file, or this source tree.
 
 export function playerId(team: PilotTeam, rosterIndex: number): string {
   return `pilot-player-${team.teamId}-${rosterIndex}`;

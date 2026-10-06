@@ -49,7 +49,20 @@ async function main(): Promise<void> {
   const { db, auth } = initializePilotAdminSeedApp();
   const log = (msg: string) => console.log(msg);
 
-  await seedPilotAdmin(db, auth, log);
+  const { newPassword } = await seedPilotAdmin(db, auth, log);
+
+  if (newPassword) {
+    console.log('');
+    console.log('='.repeat(60));
+    console.log(`NEW PASSWORD for ${ADMIN_EMAIL} (generated this run — shown ONCE, never stored):`);
+    console.log(newPassword);
+    console.log('Copy this now. It is not written to Firestore, a file, or git — if you lose it,');
+    console.log('see scripts/pilot-admin-seed/README.md\'s "If you lose the password" section.');
+    console.log('='.repeat(60));
+    console.log('');
+  } else {
+    console.log(`\n(${ADMIN_EMAIL} already existed — its password was left unchanged, not reprinted.)`);
+  }
 
   log('Verifying…');
   const report = await verifyPilotAdmin(db, auth);

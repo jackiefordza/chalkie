@@ -56,8 +56,35 @@ the normal app flow, exactly as already tested.
 | Field | Value |
 |---|---|
 | Email | `pilot.admin@chalkie.test` |
-| Password | `ChalkiePilotAdminTest2026!` |
+| Password | Generated at seed-time — see **Getting the password** below |
 | Scope | League admin for `bedford-kempston-district` only (not global) |
+
+### Getting the password
+
+**No password is hard-coded in this repo, even a throwaway test one.**
+`src/seedCore.ts` generates a random one with `crypto.randomBytes` only at
+the moment the Auth account is actually created, and `seed.ts` prints it
+**once**, to that run's own console output — it is never written to
+Firestore, a file, or any source file in this tree.
+
+- Running via the `staging-pilot-seed.yml` workflow: open the **"Seed pilot
+  admin account (league-scoped, staging only)"** step's log for that run —
+  the password is printed there, inside a clearly marked banner.
+- Running locally: it prints directly to your terminal.
+
+Re-running this script after the account already exists does **not**
+reprint or change the password — it leaves the existing account untouched
+(see **Idempotent** below) and says so instead.
+
+#### If you lose the password
+
+This script never stores it, so if you didn't copy it from the run output:
+
+1. **Firebase Console → Authentication → `pilot.admin@chalkie.test` → Reset
+   password**, and set a new one by hand, or
+2. Delete the Auth user and the `users/{uid}` Firestore doc (see **Cleaning
+   this account up afterward** below), then re-run this script — it will
+   create a fresh account with a freshly generated password.
 
 ## Prerequisites
 
@@ -114,12 +141,13 @@ target) causes it to refuse to run before touching anything.
   all.
 - **Explicit confirmation required** — `--confirm-pilot-admin-seed` must be
   passed; omit it and the script refuses to run.
-- **No configurable target** — the league ID, email, and password are all
-  compile-time constants in `src/constants.ts`. Never read from argv, an
-  environment variable, or the currently-authenticated user.
+- **No configurable target** — the league ID and email are compile-time
+  constants in `src/constants.ts`. Never read from argv, an environment
+  variable, or the currently-authenticated user. The password is never a
+  constant at all — see **Getting the password** above.
 - **Idempotent** — re-running finds the existing Auth user/doc by email and
-  never resets `createdAt`; the league-doc correction only ever fires while
-  `adminUserId` is still the pending placeholder.
+  never resets `createdAt` or the password; the league-doc correction only
+  ever fires while `adminUserId` is still the pending placeholder.
 - **A loud pre-flight banner** before anything happens, naming the target
   project, league, and account; a verification report at the end, never a
   bare "it worked."

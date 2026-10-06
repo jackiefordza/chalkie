@@ -24,9 +24,13 @@ export const PENDING_ADMIN_PLACEHOLDER = 'PENDING_REAL_ADMIN_ACCOUNT';
 
 // Clearly a temporary pilot-test account, not a real person — same
 // '@chalkie.test' convention scripts/pilot-captains-seed uses for its two
-// captain accounts, and a password clearly distinct from both that script's
-// ChalkiePilotTest2026! and scripts/showcase-seed's ChalkieShowcase2026! so
-// none of the three can be mistaken for one another.
+// captain accounts.
+//
+// Deliberately NO password constant here. A password is never committed to
+// version control, even a throwaway test one — src/seedCore.ts generates
+// one at runtime, only on first account creation, and it is printed once to
+// this run's own output (see seed.ts) and never written to Firestore, a
+// file, or this source tree. See README.md's "If you lose the password"
+// section for recovery.
 export const ADMIN_EMAIL = 'pilot.admin@chalkie.test';
 export const ADMIN_DISPLAY_NAME = 'Pilot League Admin (staging only)';
-export const ADMIN_PASSWORD = 'ChalkiePilotAdminTest2026!';

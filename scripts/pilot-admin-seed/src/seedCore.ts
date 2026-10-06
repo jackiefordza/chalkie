@@ -1,23 +1,31 @@
+import * as crypto from 'node:crypto';
 import * as admin from 'firebase-admin';
 import {
-  ADMIN_DISPLAY_NAME, ADMIN_EMAIL, ADMIN_PASSWORD, LEAGUE_ID, PENDING_ADMIN_PLACEHOLDER,
+  ADMIN_DISPLAY_NAME, ADMIN_EMAIL, LEAGUE_ID, PENDING_ADMIN_PLACEHOLDER,
 } from './constants';
 import { safeSet, registerPilotAdminUserId } from './firebaseAdmin';
 
 const FieldValue = admin.firestore.FieldValue;
 
-async function ensureAuthUser(auth: admin.auth.Auth): Promise<string> {
-  let uid: string;
+// Only ever called when actually creating the Auth user below — never
+// stored anywhere (not Firestore, not a file, not this source tree). The
+// caller prints it once to this run's own console output.
+function generateOneTimePassword(): string {
+  return crypto.randomBytes(24).toString('base64url');
+}
+
+async function ensureAuthUser(auth: admin.auth.Auth): Promise<{ uid: string; newPassword: string | null }> {
   try {
     const existing = await auth.getUserByEmail(ADMIN_EMAIL);
-    uid = existing.uid;
+    registerPilotAdminUserId(existing.uid);
+    return { uid: existing.uid, newPassword: null };
   } catch (e: unknown) {
     if ((e as { code?: string }).code !== 'auth/user-not-found') throw e;
-    const created = await auth.createUser({ email: ADMIN_EMAIL, password: ADMIN_PASSWORD, displayName: ADMIN_DISPLAY_NAME });
-    uid = created.uid;
+    const password = generateOneTimePassword();
+    const created = await auth.createUser({ email: ADMIN_EMAIL, password, displayName: ADMIN_DISPLAY_NAME });
+    registerPilotAdminUserId(created.uid);
+    return { uid: created.uid, newPassword: password };
   }
-  registerPilotAdminUserId(uid);
-  return uid;
 }
 
 // Mirrors scripts/showcase-seed's seedAdminPersonas two-step pattern
@@ -41,9 +49,11 @@ async function ensureBaseUserDoc(db: admin.firestore.Firestore, uid: string): Pr
   });
 }
 
-export async function seedPilotAdmin(db: admin.firestore.Firestore, auth: admin.auth.Auth, log: (msg: string) => void): Promise<string> {
+export async function seedPilotAdmin(
+  db: admin.firestore.Firestore, auth: admin.auth.Auth, log: (msg: string) => void,
+): Promise<{ uid: string; newPassword: string | null }> {
   log('Pilot admin account: ensuring Auth user + base user doc…');
-  const uid = await ensureAuthUser(auth);
+  const { uid, newPassword } = await ensureAuthUser(auth);
   await ensureBaseUserDoc(db, uid);
 
   log(`Pilot admin account: granting league-scoped admin (leagueId=${LEAGUE_ID})…`);
@@ -76,5 +86,5 @@ export async function seedPilotAdmin(db: admin.firestore.Firestore, auth: admin.
     );
   }
 
-  return uid;
+  return { uid, newPassword };
 }

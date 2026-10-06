@@ -5,7 +5,7 @@
 // to run. Requires scripts/real-season-import-staging to have already
 // created the league/season/division/teams/matches this script links
 // captains onto — it never creates those itself.
-import { EXPECTED_PROJECT_ID, PILOT_MATCH_ID, PILOT_TEAMS } from './src/constants';
+import { EXPECTED_PROJECT_ID, PILOT_MATCH_ID, PILOT_TEAMS, allPilotEmails } from './src/constants';
 import { getResolvedProjectId, initializePilotAdminApp } from './src/firebaseAdmin';
 import { seedCaptains, seedPlayers } from './src/seedCore';
 import { printVerificationReport, verifyPilotDataset } from './src/verify';
@@ -50,7 +50,21 @@ async function main(): Promise<void> {
   const log = (msg: string) => console.log(msg);
 
   await seedPlayers(db, log);
-  await seedCaptains(db, auth, log);
+  const { newPassword } = await seedCaptains(db, auth, log);
+
+  if (newPassword) {
+    console.log('');
+    console.log('='.repeat(60));
+    console.log('NEW PASSWORD for any captain account(s) just created above');
+    console.log(`(${allPilotEmails().join(', ')}) — generated this run, shown ONCE, never stored:`);
+    console.log(newPassword);
+    console.log('Copy this now. It is not written to Firestore, a file, or git — if you lose it,');
+    console.log('see scripts/pilot-captains-seed/README.md\'s "If you lose the password" section.');
+    console.log('='.repeat(60));
+    console.log('');
+  } else {
+    console.log('\n(Both captain accounts already existed — their passwords were left unchanged, not reprinted.)');
+  }
 
   log('Verifying…');
   const report = await verifyPilotDataset(db, auth);

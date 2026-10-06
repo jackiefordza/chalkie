@@ -1,6 +1,7 @@
+import * as crypto from 'node:crypto';
 import * as admin from 'firebase-admin';
 import {
-  CAPTAIN_ROSTER_INDEX, PILOT_PASSWORD, PILOT_TEAMS, PLAYERS_PER_TEAM,
+  CAPTAIN_ROSTER_INDEX, PILOT_TEAMS, PLAYERS_PER_TEAM,
   PilotTeam, playerId, playerName,
 } from './constants';
 import { safeSet, registerPilotUserId } from './firebaseAdmin';
@@ -9,18 +10,26 @@ const FieldValue = admin.firestore.FieldValue;
 
 // ── Small helpers — mirrors scripts/showcase-seed's own conventions ────────
 
-async function ensureAuthUser(auth: admin.auth.Auth, email: string, displayName: string): Promise<string> {
-  let uid: string;
+// Only ever called when actually creating a captain's Auth user below —
+// never stored anywhere (not Firestore, not a file, not this source tree).
+// The caller prints it once to this run's own console output.
+function generateOneTimePassword(): string {
+  return crypto.randomBytes(24).toString('base64url');
+}
+
+async function ensureAuthUser(
+  auth: admin.auth.Auth, email: string, displayName: string, password: string,
+): Promise<{ uid: string; created: boolean }> {
   try {
     const existing = await auth.getUserByEmail(email);
-    uid = existing.uid;
+    registerPilotUserId(existing.uid);
+    return { uid: existing.uid, created: false };
   } catch (e: unknown) {
     if ((e as { code?: string }).code !== 'auth/user-not-found') throw e;
-    const created = await auth.createUser({ email, password: PILOT_PASSWORD, displayName });
-    uid = created.uid;
+    const created = await auth.createUser({ email, password, displayName });
+    registerPilotUserId(created.uid);
+    return { uid: created.uid, created: true };
   }
-  registerPilotUserId(uid);
-  return uid;
 }
 
 // Idempotent "create if missing, otherwise leave completely untouched" — a
@@ -67,9 +76,9 @@ export async function seedPlayers(db: admin.firestore.Firestore, log: (msg: stri
 // chat report accompanying this change. ────────────────────────────────────
 
 async function linkCaptain(
-  db: admin.firestore.Firestore, auth: admin.auth.Auth, team: PilotTeam,
-): Promise<string> {
-  const uid = await ensureAuthUser(auth, team.captainEmail, team.captainDisplayName);
+  db: admin.firestore.Firestore, auth: admin.auth.Auth, team: PilotTeam, password: string,
+): Promise<{ uid: string; created: boolean }> {
+  const { uid, created } = await ensureAuthUser(auth, team.captainEmail, team.captainDisplayName, password);
   const pid = playerId(team, CAPTAIN_ROSTER_INDEX);
 
   await safeSet(db, 'users', uid, {
@@ -98,16 +107,23 @@ async function linkCaptain(
   }
 
   await safeSet(db, 'teams', team.teamId, { captainUserId: uid });
-  return uid;
+  return { uid, created };
 }
 
 export async function seedCaptains(
   db: admin.firestore.Firestore, auth: admin.auth.Auth, log: (msg: string) => void,
-): Promise<Record<string, string>> {
+): Promise<{ uidByTeamKey: Record<string, string>; newPassword: string | null }> {
   log(`Phase 2/2: ${PILOT_TEAMS.length} captain accounts…`);
+  // One generated password per run, shared by whichever captain account(s)
+  // actually get created this run (mirrors the old shared-constant
+  // behaviour, just never committed to source).
+  const password = generateOneTimePassword();
   const uidByTeamKey: Record<string, string> = {};
+  let anyCreated = false;
   for (const team of PILOT_TEAMS) {
-    uidByTeamKey[team.key] = await linkCaptain(db, auth, team);
+    const { uid, created } = await linkCaptain(db, auth, team, password);
+    uidByTeamKey[team.key] = uid;
+    if (created) anyCreated = true;
   }
-  return uidByTeamKey;
+  return { uidByTeamKey, newPassword: anyCreated ? password : null };
 }
