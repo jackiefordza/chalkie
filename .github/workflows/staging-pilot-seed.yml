@@ -1,6 +1,6 @@
 name: Staging pilot seed (Div 2/3 real data + 2 pilot captains)
 
-# Manual-only. Runs four standalone, independently safety-checked Admin SDK
+# Manual-only. Runs six standalone, independently safety-checked Admin SDK
 # scripts against chalkie-app-staging ONLY:
 #   1. scripts/real-season-import-staging — the real Bedford & Kempston
 #      Division 2 + Division 3 teams/fixtures (a staging-retargeted copy of
@@ -18,8 +18,16 @@ name: Staging pilot seed (Div 2/3 real data + 2 pilot captains)
 #      vice-captain. No new Auth account, no rules/schema change — proves
 #      the existing data model already supports one account being both a
 #      league admin and a team's VC.
+#   5. scripts/pilot-collision-cleanup — retires the three pilot/test
+#      accounts above from the real teams their slots collide with (Oakley
+#      Sports Club, Burnaby Arms C, Burnaby Arms B), ahead of real Division
+#      2/3 captain onboarding via the Captain Invite flow. Never deletes an
+#      Auth account, a league, a fixture, or match-result data.
+#   6. scripts/real-team-contacts-seed — writes the real captain/VC
+#      reference names/phone numbers and real venue addresses onto all 16
+#      real teams. Never writes a venue telephone number.
 #
-# All four scripts carry their own triple project-ID check (hard-coded to
+# All six scripts carry their own triple project-ID check (hard-coded to
 # chalkie-app-staging, never read from this workflow's inputs/secrets/env)
 # plus a write-guard allowlist scoped to exactly their own IDs — this
 # workflow adds no additional targeting logic of its own, same as
@@ -117,6 +125,36 @@ jobs:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/service-account-staging.json
         run: node dist/link.js --confirm-pilot-admin-vc-link
 
+      # ── Step 5: retire the 3 pilot/test accounts colliding with real teams ──
+      - name: Install pilot-collision-cleanup dependencies
+        working-directory: scripts/pilot-collision-cleanup
+        run: npm ci
+
+      - name: Build pilot-collision-cleanup
+        working-directory: scripts/pilot-collision-cleanup
+        run: npm run build
+
+      - name: Retire pilot/test accounts ahead of real captain onboarding
+        working-directory: scripts/pilot-collision-cleanup
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/service-account-staging.json
+        run: node dist/cleanup.js --confirm-pilot-collision-cleanup
+
+      # ── Step 6: real captain/VC contact info + venue addresses ──────────
+      - name: Install real-team-contacts-seed dependencies
+        working-directory: scripts/real-team-contacts-seed
+        run: npm ci
+
+      - name: Build real-team-contacts-seed
+        working-directory: scripts/real-team-contacts-seed
+        run: npm run build
+
+      - name: Seed real team contact/address info
+        working-directory: scripts/real-team-contacts-seed
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/service-account-staging.json
+        run: node dist/seed.js --confirm-real-team-contacts-seed
+
       - name: Print summary
         run: |
           {
@@ -127,6 +165,8 @@ jobs:
             echo "- Pilot captain accounts: pilot.captain.oakley@chalkie.test, pilot.captain.burnabyc@chalkie.test (see 'Seed pilot captain accounts...' step log for the verification report)"
             echo "- Pilot admin account (temporary, league-scoped): pilot.admin@chalkie.test (see 'Seed pilot admin account...' step log for the verification report; see scripts/pilot-admin-seed/README.md for manual teardown steps)"
             echo "- Pilot admin also linked as vice-captain of Burnaby Arms B, Division 3 (see 'Link pilot admin account...' step log for the verification report; see scripts/pilot-admin-vc-link/README.md to undo)"
+            echo "- Pilot/test account collisions retired on Oakley Sports Club, Burnaby Arms C, Burnaby Arms B (see 'Retire pilot/test accounts...' step log for the verification report)"
+            echo "- Real captain/VC contact info + venue addresses written onto all 16 real teams (see 'Seed real team contact/address info' step log for the verification report)"
           } | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Remove credential file

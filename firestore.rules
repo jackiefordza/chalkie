@@ -484,5 +484,26 @@ service cloud.firestore {
       allow create: if isCaptainOrVC() && me().teamId == request.resource.data.teamId;
       allow update, delete: if isCaptainOrVC() && me().teamId == resource.data.teamId;
     }
+
+    // ── invites ───────────────────────────────────────────────────────────
+    // A single-use, team-specific Captain/VC invitation. Creation and
+    // acceptance are BOTH Cloud-Function-only (createTeamInvite/
+    // acceptTeamInvite in functions/src/index.ts, Admin SDK, bypasses these
+    // rules) — never a direct client write — so the random token is never
+    // written by a client at all (only ever returned once, in
+    // createTeamInvite's response) and status can never be set to
+    // 'accepted' by anything but that one server-side check. The only
+    // client write this collection's rules allow at all is an admin
+    // revoking a still-pending invite, which carries no secret and no
+    // privilege of its own.
+    match /invites/{inviteId} {
+      allow read: if isAdminFor(resource.data.leagueId);
+      allow create: if false;
+      allow update: if isAdminFor(resource.data.leagueId)
+        && resource.data.status == 'pending'
+        && request.resource.data.status == 'revoked'
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status']);
+      allow delete: if isAdminFor(resource.data.leagueId);
+    }
   }
 }

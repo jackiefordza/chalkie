@@ -62,6 +62,15 @@ export interface Team {
   address: string | null;
   venuePhone: string | null;
   createdAt: Date;
+  // Reference contact info for the real captain/VC a Captain/VC invite will
+  // be sent to — populated by an admin-run seed script, not by any in-app
+  // write path. Never a venue/club phone number (explicitly excluded — see
+  // scripts/real-team-contacts-seed). Optional: absent on older/showcase
+  // teams that predate this field.
+  captainName?: string | null;
+  captainPhone?: string | null;
+  viceCaptainName?: string | null;
+  viceCaptainPhone?: string | null;
 }
 
 export interface Player {
@@ -100,6 +109,33 @@ export interface JoinRequest {
   requestedRole: 'captain' | 'viceCaptain' | null; // set when requestType === 'captainRole'
   status: JoinRequestStatus;
   createdAt: Date;
+}
+
+export type InviteRole = 'captain' | 'viceCaptain';
+export type InviteStatus = 'pending' | 'accepted' | 'revoked';
+
+// A single-use, team-specific Captain/VC invitation — the onboarding path
+// for a real captain/VC who has no Chalkie account and no email on file,
+// only a phone number to receive the link on. Created and accepted
+// EXCLUSIVELY via Cloud Functions (createTeamInvite/acceptTeamInvite in
+// functions/src/index.ts) — see firestore.rules' invites/{inviteId}, whose
+// `allow create` is unconditionally false. The raw token is never part of
+// this type: it exists only in the URL/AsyncStorage on the invitee's
+// device and in createTeamInvite's one-time response, never in Firestore
+// (only its hash does, which the client never reads).
+export interface Invite {
+  id: string;
+  leagueId: string;
+  seasonId: string;
+  divisionId: string;
+  teamId: string;
+  role: InviteRole;
+  status: InviteStatus;
+  createdByUserId: string;
+  createdAt: Date;
+  expiresAt: Date | null;
+  acceptedAt: Date | null;
+  acceptedByUserId: string | null;
 }
 
 // A league match: 7 games (5 singles then 2 pairs), all 501, 3 legs per game,

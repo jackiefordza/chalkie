@@ -1,0 +1,20 @@
+{
+  "name": "pilot-collision-cleanup",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Standalone Admin SDK script that retires exactly three pilot/test accounts' team/role access (pilot.captain.oakley, pilot.captain.burnabyc as captains of bk-d2-team-2/bk-d2-team-1; pilot.admin as vice-captain of bk-d3-team-2) ahead of real Division 2/3 captain onboarding, in chalkie-app-staging only. Never deletes an Auth account, a league, a fixture, or match-result data. See README.md before running anything.",
+  "engines": {
+    "node": "20"
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "firebase-admin": "^13.10.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2",
+    "@types/node": "^22.0.0"
+  }
+}

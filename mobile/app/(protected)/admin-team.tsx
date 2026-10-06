@@ -49,6 +49,22 @@ export default function AdminTeamScreen() {
   const [vcUserId, setVcUserId] = useState<string | null>(null);
   const [captainName, setCaptainName] = useState<string | null>(null);
   const [vcName, setVcName] = useState<string | null>(null);
+
+  // Reference-only contact info for the REAL person this team's captain/VC
+  // slot belongs to (from scripts/real-team-contacts-seed) — distinct from
+  // captainName/vcName above, which reflect whoever is CURRENTLY linked via
+  // teams.captainUserId/viceCaptainUserId (nobody, until an invite is
+  // accepted).
+  const [refCaptainName, setRefCaptainName] = useState<string | null>(null);
+  const [refCaptainPhone, setRefCaptainPhone] = useState<string | null>(null);
+  const [refVcName, setRefVcName] = useState<string | null>(null);
+  const [refVcPhone, setRefVcPhone] = useState<string | null>(null);
+
+  const [inviteSheetRole, setInviteSheetRole] = useState<'captain' | 'viceCaptain' | null>(null);
+  const [isCreatingInvite, setIsCreatingInvite] = useState(false);
+  const [createdInvite, setCreatedInvite] = useState<{ inviteId: string; token: string } | null>(null);
+  const [inviteError, setInviteError] = useState<string | null>(null);
+  const [isRevokingInvite, setIsRevokingInvite] = useState(false);
   const [roleSheetPlayer, setRoleSheetPlayer] = useState<Player | null>(null);
   const [isChangingRole, setIsChangingRole] = useState(false);
   const [changeRoleError, setChangeRoleError] = useState<string | null>(null);
@@ -81,6 +97,10 @@ export default function AdminTeamScreen() {
 
       setCaptainUserId(data.captainUserId ?? null);
       setVcUserId(data.viceCaptainUserId ?? null);
+      setRefCaptainName(data.captainName ?? null);
+      setRefCaptainPhone(data.captainPhone ?? null);
+      setRefVcName(data.viceCaptainName ?? null);
+      setRefVcPhone(data.viceCaptainPhone ?? null);
 
       setSeasonId(data.seasonId ?? null);
       setDivisionId(data.divisionId ?? null);
@@ -281,21 +301,82 @@ export default function AdminTeamScreen() {
     await httpsCallable(functions, 'adminDeleteTeam')({ teamId });
   }
 
+  function openInviteSheet(role: 'captain' | 'viceCaptain') {
+    setInviteSheetRole(role);
+    setCreatedInvite(null);
+    setInviteError(null);
+  }
+
+  async function generateInvite() {
+    if (!teamId || !inviteSheetRole) return;
+    setIsCreatingInvite(true);
+    setInviteError(null);
+    try {
+      const result = await httpsCallable(functions, 'createTeamInvite')({ teamId, role: inviteSheetRole });
+      const data = result.data as { inviteId: string; token: string };
+      setCreatedInvite(data);
+    } catch (e: unknown) {
+      setInviteError((e as Error).message ?? 'Something went wrong');
+    } finally {
+      setIsCreatingInvite(false);
+    }
+  }
+
+  // Only revokes the invite still held in this sheet's own state — this
+  // screen doesn't keep a list of past-created pending invites, so once
+  // this sheet closes the only way to supersede an invite is to generate a
+  // new one for the same role (the old one just goes unused).
+  async function revokeCreatedInvite() {
+    if (!createdInvite) return;
+    setIsRevokingInvite(true);
+    try {
+      await updateDoc(doc(db, 'invites', createdInvite.inviteId), { status: 'revoked' });
+      setCreatedInvite(null);
+      setInviteSheetRole(null);
+    } catch (e: unknown) {
+      setInviteError((e as Error).message ?? 'Something went wrong');
+    } finally {
+      setIsRevokingInvite(false);
+    }
+  }
+
+  const inviteLink = createdInvite && typeof window !== 'undefined'
+    ? `${window.location.origin}/invite/${createdInvite.inviteId}?t=${encodeURIComponent(createdInvite.token)}`
+    : null;
+
   const captainCard = (
     <Card className="mb-4">
-      <View className={vcName ? 'mb-3' : ''}>
+      <View className="mb-3">
         <Caption className="mb-1">Captain</Caption>
         <Body tone={captainName ? 'strong' : 'dim'} weight="semibold">{captainName ?? 'Not yet assigned'}</Body>
+        {!captainName && (refCaptainName || refCaptainPhone) && (
+          <Body size="xs" className="mt-0.5">
+            On file: {refCaptainName ?? 'unnamed'}{refCaptainPhone ? ` · ${refCaptainPhone}` : ''}
+          </Body>
+        )}
+        {!captainName && (
+          <Button size="sm" variant="secondary" className="mt-2 self-start" onPress={() => openInviteSheet('captain')}>
+            Invite Captain
+          </Button>
+        )}
       </View>
-      {vcName && (
-        <View>
-          <Caption className="mb-1">Vice Captain</Caption>
-          <Body tone="strong" weight="semibold">{vcName}</Body>
-        </View>
-      )}
+      <View>
+        <Caption className="mb-1">Vice Captain</Caption>
+        <Body tone={vcName ? 'strong' : 'dim'} weight="semibold">{vcName ?? 'Not yet assigned'}</Body>
+        {!vcName && (refVcName || refVcPhone) && (
+          <Body size="xs" className="mt-0.5">
+            On file: {refVcName ?? 'unnamed'}{refVcPhone ? ` · ${refVcPhone}` : ''}
+          </Body>
+        )}
+        {!vcName && (
+          <Button size="sm" variant="secondary" className="mt-2 self-start" onPress={() => openInviteSheet('viceCaptain')}>
+            Invite Vice Captain
+          </Button>
+        )}
+      </View>
       {!captainName && (
         <Body size="xs" className="mt-2">
-          Waiting for someone to request this role — see the league Inbox.
+          A captain can also still request this role themselves — see the league Inbox.
         </Body>
       )}
     </Card>
@@ -439,6 +520,58 @@ export default function AdminTeamScreen() {
             </Button>
           </>
         )}
+      </Sheet>
+
+      <Sheet
+        visible={!!inviteSheetRole}
+        onClose={() => { setInviteSheetRole(null); setCreatedInvite(null); setInviteError(null); }}
+      >
+        <Heading size="lg" className="mb-1">
+          Invite {inviteSheetRole === 'viceCaptain' ? 'Vice Captain' : 'Captain'}
+        </Heading>
+        <Body size="sm" className="mb-4">
+          Generates a one-time link for {teamName || 'this team'}. Send it via WhatsApp/SMS — whoever opens it
+          signs in or creates a Chalkie account, then is linked to this team automatically.
+        </Body>
+
+        {!createdInvite ? (
+          <>
+            <Button disabled={isCreatingInvite} loading={isCreatingInvite} onPress={generateInvite}>
+              Generate Link
+            </Button>
+          </>
+        ) : (
+          <>
+            <Card tone="brand" className="mb-3">
+              <Caption className="mb-1">Copy this link now — it's shown only once</Caption>
+              <Body size="sm" selectable style={{ fontFamily: 'monospace' }}>
+                {inviteLink ?? `(invite ${createdInvite.inviteId} created — open this screen on web to see the full link)`}
+              </Body>
+            </Card>
+            <Button
+              variant="ghost"
+              disabled={isRevokingInvite}
+              loading={isRevokingInvite}
+              onPress={revokeCreatedInvite}
+            >
+              Revoke This Invite
+            </Button>
+          </>
+        )}
+
+        {inviteError && (
+          <Card tone="coral" className="mt-3">
+            <Body size="sm" tone="coral">{inviteError}</Body>
+          </Card>
+        )}
+
+        <Button
+          variant="ghost"
+          className="mt-4"
+          onPress={() => { setInviteSheetRole(null); setCreatedInvite(null); setInviteError(null); }}
+        >
+          Close
+        </Button>
       </Sheet>
 
       <Sheet visible={showAddPlayer} onClose={() => { setShowAddPlayer(false); setAddPlayerError(null); }}>

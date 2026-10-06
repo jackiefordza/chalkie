@@ -1,5 +1,6 @@
+import { randomBytes, createHash } from 'node:crypto';
 import { initializeApp } from 'firebase-admin/app';
-import { getFirestore, FieldValue } from 'firebase-admin/firestore';
+import { getFirestore, FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { onDocumentWritten, onDocumentUpdated, onDocumentDeleted } from 'firebase-functions/v2/firestore';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 
@@ -997,4 +998,146 @@ export const adminResetMatchResult = onCall(async (request) => {
   const { matchId } = (request.data ?? {}) as { matchId?: string };
   if (!matchId) throw new HttpsError('invalid-argument', 'matchId is required.');
   await performAdminResetMatchResult(matchId, request.auth?.uid);
+});
+
+// ── Captain/VC invite: a single-use, team-specific invitation ──────────────
+// Lets a league admin link a real captain/VC onto a team without them ever
+// going through the self-service joinRequests flow (and without an admin
+// manually approving it on their behalf) — the minimum-viable onboarding
+// path for real Division 2/3 captains who have no Chalkie account yet.
+//
+// Both creation and acceptance are Cloud-Function-only (see firestore.rules'
+// invites/{inviteId}, whose `allow create` is unconditionally `false` and
+// whose `allow update` only ever lets an admin set status:'revoked') — the
+// raw token is NEVER written to Firestore by a client, by this function, or
+// by anything else: only its sha256 hash ever lands in `tokenHash`. The raw
+// token exists only in this function's response (once, at creation) and
+// briefly in the accept call's own request payload.
+const INVITE_ROLES = ['captain', 'viceCaptain'] as const;
+type InviteRole = typeof INVITE_ROLES[number];
+
+function hashInviteToken(token: string): string {
+  return createHash('sha256').update(token).digest('hex');
+}
+
+const INVITE_EXPIRY_MS = 14 * 24 * 60 * 60 * 1000;
+
+export async function performCreateTeamInvite(
+  teamId: string, role: InviteRole, uid: string | undefined,
+): Promise<{ inviteId: string; token: string }> {
+  const teamSnap = await db.doc(`teams/${teamId}`).get();
+  if (!teamSnap.exists) throw new HttpsError('not-found', 'Team not found.');
+  const team = teamSnap.data()!;
+  await assertLeagueAdmin(uid, team.leagueId);
+
+  // Generated here, server-side, with a CSPRNG — never client-supplied,
+  // never derived from anything predictable (team/role/time).
+  const token = randomBytes(24).toString('base64url');
+  const inviteRef = db.collection('invites').doc();
+  await inviteRef.set({
+    leagueId: team.leagueId,
+    seasonId: team.seasonId,
+    divisionId: team.divisionId,
+    teamId,
+    role,
+    tokenHash: hashInviteToken(token),
+    status: 'pending',
+    createdByUserId: uid,
+    createdAt: FieldValue.serverTimestamp(),
+    expiresAt: Timestamp.fromMillis(Date.now() + INVITE_EXPIRY_MS),
+    acceptedAt: null,
+    acceptedByUserId: null,
+  });
+
+  return { inviteId: inviteRef.id, token };
+}
+
+export const createTeamInvite = onCall(async (request) => {
+  const { teamId, role } = (request.data ?? {}) as { teamId?: string; role?: string };
+  if (!teamId) throw new HttpsError('invalid-argument', 'teamId is required.');
+  if (!INVITE_ROLES.includes(role as InviteRole)) {
+    throw new HttpsError('invalid-argument', `role must be one of: ${INVITE_ROLES.join(', ')}.`);
+  }
+  return performCreateTeamInvite(teamId, role as InviteRole, request.auth?.uid);
+});
+
+// Accepting an invite never touches playerId (stays whatever it already
+// was — null for a brand-new account) and never touches isLeagueAdmin/
+// isGlobalAdmin — the only fields an invite can ever grant are exactly
+// role/teamId/divisionId/seasonId/leagueId, read from the invite doc
+// itself, never from the caller's own request. If the team's captain/VC
+// slot is already held by a DIFFERENT account, that account is reset to
+// 'pending' (same shape scripts/pilot-collision-cleanup produces) — the
+// same "demote whoever currently holds this slot" precedent admin-inbox.tsx
+// already uses for the joinRequests approval flow, extended to fully
+// detach them (not just change role) since an invite means someone new is
+// taking their place on this team entirely, not just changing role within
+// it.
+// Returns { teamName, role } on success — the ONLY way the mobile accept
+// screen ever learns which team/role it joined, since a pending (not yet
+// admin) invitee has no Firestore read access to invites/{inviteId} at all
+// (see firestore.rules — read is admin-only). There is deliberately no
+// "preview the invite before accepting" step for the same reason: nothing
+// this unprivileged can safely read back the invite's contents ahead of
+// calling this function.
+export async function performAcceptTeamInvite(
+  inviteId: string, token: string, uid: string | undefined,
+): Promise<{ teamName: string; role: InviteRole }> {
+  if (!uid) throw new HttpsError('unauthenticated', 'Sign in required.');
+
+  const inviteRef = db.doc(`invites/${inviteId}`);
+  const userRef = db.doc(`users/${uid}`);
+
+  return db.runTransaction(async (tx) => {
+    const inviteSnap = await tx.get(inviteRef);
+    if (!inviteSnap.exists) throw new HttpsError('not-found', 'Invite not found.');
+    const invite = inviteSnap.data()!;
+
+    if (invite.status !== 'pending') {
+      throw new HttpsError('failed-precondition', 'This invite has already been used or revoked.');
+    }
+    if (invite.expiresAt && (invite.expiresAt as Timestamp).toMillis() < Date.now()) {
+      throw new HttpsError('failed-precondition', 'This invite has expired.');
+    }
+    if (hashInviteToken(token) !== invite.tokenHash) {
+      throw new HttpsError('permission-denied', 'Invalid invite token.');
+    }
+
+    const [userSnap, teamSnap] = await Promise.all([tx.get(userRef), tx.get(db.doc(`teams/${invite.teamId}`))]);
+    const user = userSnap.data();
+    if (!user || user.role !== 'pending') {
+      throw new HttpsError(
+        'failed-precondition',
+        'This account is already linked to a team/role — sign in with a different account, or contact your admin.',
+      );
+    }
+    if (!teamSnap.exists) throw new HttpsError('not-found', 'Team not found.');
+
+    const teamField = invite.role === 'viceCaptain' ? 'viceCaptainUserId' : 'captainUserId';
+    const outgoingUid = teamSnap.data()?.[teamField] as string | null | undefined;
+
+    tx.update(inviteRef, { status: 'accepted', acceptedAt: FieldValue.serverTimestamp(), acceptedByUserId: uid });
+    tx.update(userRef, {
+      role: invite.role,
+      teamId: invite.teamId,
+      divisionId: invite.divisionId,
+      seasonId: invite.seasonId,
+      leagueId: invite.leagueId,
+    });
+    tx.update(db.doc(`teams/${invite.teamId}`), { [teamField]: uid });
+
+    if (outgoingUid && outgoingUid !== uid) {
+      tx.update(db.doc(`users/${outgoingUid}`), {
+        role: 'pending', teamId: null, divisionId: null, seasonId: null, playerId: null,
+      });
+    }
+
+    return { teamName: teamSnap.data()!.name as string, role: invite.role as InviteRole };
+  });
+}
+
+export const acceptTeamInvite = onCall(async (request) => {
+  const { inviteId, token } = (request.data ?? {}) as { inviteId?: string; token?: string };
+  if (!inviteId || !token) throw new HttpsError('invalid-argument', 'inviteId and token are required.');
+  return performAcceptTeamInvite(inviteId, token, request.auth?.uid);
 });
