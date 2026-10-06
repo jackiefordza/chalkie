@@ -4,7 +4,7 @@ import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { httpsCallable } from 'firebase/functions';
 import { functions } from '@/config/firebase';
 import { useAuthStore } from '@/stores/authStore';
-import { clearPendingInvite, loadPendingInvite, savePendingInvite } from '@/lib/pendingInvite';
+import { clearPendingInvite, hasUsableInviteToken, loadPendingInvite, savePendingInvite } from '@/lib/pendingInvite';
 import { RAW } from '@/lib/theme';
 import { Heading, Body, Button, Card } from '@/components/ui';
 
@@ -20,10 +20,31 @@ export default function AcceptInviteScreen() {
   const [isAccepting, setIsAccepting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<{ teamName: string; role: string } | null>(null);
+  // null while still checking this device's storage for a token saved by
+  // an earlier visit to this same link — only once resolved do we know
+  // whether to show the real flow or fail clearly. Starts resolved when
+  // the URL itself already carries a token.
+  const [hasToken, setHasToken] = useState<boolean | null>(t ? true : null);
 
   useEffect(() => {
     if (!inviteId || !t) return;
     savePendingInvite({ inviteId, token: t });
+  }, [inviteId, t]);
+
+  // The actual "is there a usable token" check — covers both a live ?t= in
+  // the URL and a token saved to this device by an earlier visit (the path
+  // app/index.tsx's post-auth redirect relies on). If neither is true,
+  // this invite link never carried its security token and there is
+  // nothing to recover: fail clearly instead of silently letting the
+  // visitor proceed into Create Account/Sign In as if nothing were wrong.
+  useEffect(() => {
+    if (t) { setHasToken(true); return; }
+    let cancelled = false;
+    loadPendingInvite().then((stored) => {
+      if (cancelled) return;
+      setHasToken(hasUsableInviteToken({ inviteId, token: t, stored }));
+    });
+    return () => { cancelled = true; };
   }, [inviteId, t]);
 
   async function accept() {
@@ -45,7 +66,7 @@ export default function AcceptInviteScreen() {
     }
   }
 
-  if (!inviteId) {
+  if (!inviteId || hasToken === false) {
     return (
       <View className="flex-1 bg-bg dark:bg-bg-dark items-center justify-center p-6">
         <Stack.Screen options={{ headerShown: false }} />
@@ -54,7 +75,7 @@ export default function AcceptInviteScreen() {
     );
   }
 
-  if (isLoading) {
+  if (isLoading || hasToken === null) {
     return (
       <View className="flex-1 bg-bg dark:bg-bg-dark items-center justify-center">
         <Stack.Screen options={{ headerShown: false }} />

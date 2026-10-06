@@ -36,3 +36,23 @@ export async function loadPendingInvite(): Promise<PendingInvite | null> {
 export async function clearPendingInvite(): Promise<void> {
   await AsyncStorage.removeItem(STORAGE_KEY);
 }
+
+export interface InviteTokenCheck {
+  inviteId: string | undefined;
+  token: string | undefined;
+  stored: PendingInvite | null;
+}
+
+// Whether app/invite/[inviteId].tsx has an actual token to work with for
+// THIS invite — either live in the URL, or previously saved to this
+// device by an earlier visit to this same link (the second case is what
+// lets the screen work when app/index.tsx redirects back to it without
+// re-appending ?t=). False means the link itself never carried a token
+// and nothing recoverable exists either — the caller should fail clearly
+// instead of letting the visitor fall through into Create Account/Sign In
+// as if nothing were wrong.
+export function hasUsableInviteToken({ inviteId, token, stored }: InviteTokenCheck): boolean {
+  if (!inviteId) return false;
+  if (token) return true;
+  return !!stored && stored.inviteId === inviteId;
+}
