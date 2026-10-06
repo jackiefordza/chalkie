@@ -1,6 +1,6 @@
 name: Staging pilot seed (Div 2/3 real data + 2 pilot captains)
 
-# Manual-only. Runs two standalone, independently safety-checked Admin SDK
+# Manual-only. Runs three standalone, independently safety-checked Admin SDK
 # scripts against chalkie-app-staging ONLY:
 #   1. scripts/real-season-import-staging — the real Bedford & Kempston
 #      Division 2 + Division 3 teams/fixtures (a staging-retargeted copy of
@@ -9,8 +9,12 @@ name: Staging pilot seed (Div 2/3 real data + 2 pilot captains)
 #   2. scripts/pilot-captains-seed — placeholder players + 2 captain
 #      accounts for exactly Oakley Sports Club and Burnaby Arms C, for the
 #      Captain A / Captain B pilot smoke test on fixture bk-d2-w01-2v1.
+#   3. scripts/pilot-admin-seed — one temporary, league-scoped admin account
+#      (pilot.admin@chalkie.test), so the admin dispute-resolution screen
+#      can be tested against the real pilot data. Explicitly temporary —
+#      see that script's README for manual teardown steps.
 #
-# Both scripts carry their own triple project-ID check (hard-coded to
+# All three scripts carry their own triple project-ID check (hard-coded to
 # chalkie-app-staging, never read from this workflow's inputs/secrets/env)
 # plus a write-guard allowlist scoped to exactly their own IDs — this
 # workflow adds no additional targeting logic of its own, same as
@@ -78,6 +82,21 @@ jobs:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/service-account-staging.json
         run: node dist/seed.js --confirm-pilot-seed
 
+      # ── Step 3: one temporary, league-scoped admin account ──────────────
+      - name: Install pilot-admin-seed dependencies
+        working-directory: scripts/pilot-admin-seed
+        run: npm ci
+
+      - name: Build pilot-admin-seed
+        working-directory: scripts/pilot-admin-seed
+        run: npm run build
+
+      - name: Seed pilot admin account (league-scoped, staging only)
+        working-directory: scripts/pilot-admin-seed
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/service-account-staging.json
+        run: node dist/seed.js --confirm-pilot-admin-seed
+
       - name: Print summary
         run: |
           {
@@ -86,6 +105,7 @@ jobs:
             echo "- Real Division 2/3 schedule: imported (see 'Import real Division 2/3...' step log for create/update/skip counts)"
             echo "- Pilot fixture: bk-d2-w01-2v1 (Oakley Sports Club vs Burnaby Arms C, Division 2, Week 1, 2026-10-14)"
             echo "- Pilot captain accounts: pilot.captain.oakley@chalkie.test, pilot.captain.burnabyc@chalkie.test (see 'Seed pilot captain accounts...' step log for the verification report)"
+            echo "- Pilot admin account (temporary, league-scoped): pilot.admin@chalkie.test (see 'Seed pilot admin account...' step log for the verification report; see scripts/pilot-admin-seed/README.md for manual teardown steps)"
           } | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Remove credential file
