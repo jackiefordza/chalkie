@@ -20,6 +20,13 @@ name: Staging pilot seed (Div 2/3 real data + 2 pilot captains)
 #
 # This workflow never touches chalkie-app, Functions, Firestore rules/
 # indexes, or Hosting — only the Firestore/Auth writes each script makes.
+#
+# NOTE: this file is registered on main purely so workflow_dispatch can be
+# triggered via the API/UI at all (a GitHub requirement). The actual run
+# must be dispatched with ref: claude/staging-pilot-seed (or later, the
+# branch that carries the scripts this workflow calls) — on main alone,
+# the scripts/real-season-import-staging and scripts/pilot-captains-seed
+# directories this workflow depends on do not exist yet.
 on:
   workflow_dispatch: {}
 
