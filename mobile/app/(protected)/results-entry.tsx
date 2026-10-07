@@ -16,12 +16,20 @@ import {
   Screen, Heading, Body, Caption, Stat, Badge, Button, Card, Chip, Input, Label, Sheet, AppBar, ConfirmDialog,
 } from '@/components/ui';
 import { AdminShell } from '@/components/admin/AdminShell';
-import { MatchHeader, MatchSummary, GameRow, ActionBanner } from '@/components/MatchCentre';
+import {
+  MatchHeader, MatchSummary, GameRow, ActionBanner, VenueCard, OppositionCard, TeamContactsCard,
+} from '@/components/MatchCentre';
 import {
   LEGS_PER_GAME, blankGames, toDraft, toMatchGame, slotsFor, isGameComplete, scoresAgree, mergeSubmissionGames,
   type DraftGame,
 } from '@/lib/matchResultDraft';
-import type { Match, MatchGame, MatchSide } from '@/types';
+import type { Match, MatchGame, MatchSide, Team } from '@/types';
+
+// The subset of Team fields the Matchday Details venue/contacts cards need —
+// address/captain/VC reference info an admin seeds (scripts/real-team-
+// contacts-seed), distinct from the self-reported AppUser.phone/
+// phoneVisibility NextMatchHero already shows elsewhere.
+type TeamContactInfo = Pick<Team, 'address' | 'captainName' | 'captainPhone' | 'viceCaptainName' | 'viceCaptainPhone'>;
 
 const DESKTOP_BREAKPOINT = 768;
 
@@ -36,6 +44,11 @@ export default function ResultsEntryScreen() {
   const [match, setMatch] = useState<Match | null>(null);
   const [homeTeamName, setHomeTeamName] = useState('');
   const [awayTeamName, setAwayTeamName] = useState('');
+  // Matchday Details — venue/address + captain/VC reference contact info for
+  // both teams, loaded alongside the names above from the same two reads.
+  const [homeTeamInfo, setHomeTeamInfo] = useState<TeamContactInfo | null>(null);
+  const [awayTeamInfo, setAwayTeamInfo] = useState<TeamContactInfo | null>(null);
+  const [divisionName, setDivisionName] = useState<string | null>(null);
   const [players, setPlayers] = useState<Player[]>([]);
   const [mySubmission, setMySubmission] = useState<MatchGame[] | null>(null);
   // Existence only — under the own-team-only model a captain never reads or
@@ -160,6 +173,8 @@ export default function ResultsEntryScreen() {
         ]);
         setHomeTeamName(homeSnap.data()?.name ?? 'Home');
         setAwayTeamName(awaySnap.data()?.name ?? 'Away');
+        setHomeTeamInfo(homeSnap.exists() ? (homeSnap.data() as TeamContactInfo) : null);
+        setAwayTeamInfo(awaySnap.exists() ? (awaySnap.data() as TeamContactInfo) : null);
         setIsLoading(false);
       },
       (e) => { setLoadError(e.message); setIsLoading(false); },
@@ -178,6 +193,14 @@ export default function ResultsEntryScreen() {
 
     return () => { unsubMatch(); unsubPlayers(); };
   }, [matchId, appUser?.leagueId]);
+
+  // Division name for the Matchday Details "Match" section — one-time read,
+  // same pattern team-profile.tsx already uses (this data essentially never
+  // changes).
+  useEffect(() => {
+    if (!match?.divisionId) { setDivisionName(null); return; }
+    getDoc(doc(db, 'divisions', match.divisionId)).then((s) => setDivisionName(s.exists() ? s.data().name : null));
+  }, [match?.divisionId]);
 
   // Load our own existing submission (for edit) — own-team-only model, so
   // the other team's submission content is never fetched or displayed here,
@@ -638,6 +661,51 @@ export default function ResultsEntryScreen() {
       : match?.status === 'pending_confirmation' ? 'Confirm Result'
         : canAct ? 'Enter Result' : 'Match Centre';
 
+  // Matchday Details — Venue/Opposition/Contacts, shown once above whichever
+  // status-dependent action area the branches below already render. Venue is
+  // always the HOME team's own ground (a fact about the fixture, not the
+  // viewer). Opposition/Contacts are relative to the viewer's own side when
+  // they have one; a league admin with no team on this match sees both
+  // teams' contacts instead of a single "opposition", since there's no
+  // natural opponent from a neutral seat — ordinary players never reach this
+  // at all (gated by canSeeContacts below).
+  const opponentTeamId = isHome ? match?.awayTeamId : isAway ? match?.homeTeamId : null;
+  const opponentTeamName = isHome ? awayTeamName : isAway ? homeTeamName : null;
+  const opponentTeamInfo = isHome ? awayTeamInfo : isAway ? homeTeamInfo : null;
+  const canSeeContacts = canAct || isAdmin;
+  const showBothTeamsContacts = isAdmin && !isHome && !isAway;
+
+  const matchdayExtras = match ? (
+    <>
+      <VenueCard teamName={homeTeamName} address={homeTeamInfo?.address ?? null} />
+      {opponentTeamId && opponentTeamName && (
+        <OppositionCard teamId={opponentTeamId} teamName={opponentTeamName} address={opponentTeamInfo?.address ?? null} />
+      )}
+      {canSeeContacts && (
+        showBothTeamsContacts ? (
+          <>
+            <TeamContactsCard
+              label={`${homeTeamName} Contacts`}
+              captainName={homeTeamInfo?.captainName} captainPhone={homeTeamInfo?.captainPhone}
+              viceCaptainName={homeTeamInfo?.viceCaptainName} viceCaptainPhone={homeTeamInfo?.viceCaptainPhone}
+            />
+            <TeamContactsCard
+              label={`${awayTeamName} Contacts`}
+              captainName={awayTeamInfo?.captainName} captainPhone={awayTeamInfo?.captainPhone}
+              viceCaptainName={awayTeamInfo?.viceCaptainName} viceCaptainPhone={awayTeamInfo?.viceCaptainPhone}
+            />
+          </>
+        ) : opponentTeamInfo && (
+          <TeamContactsCard
+            label="Opposition Contacts"
+            captainName={opponentTeamInfo.captainName} captainPhone={opponentTeamInfo.captainPhone}
+            viceCaptainName={opponentTeamInfo.viceCaptainName} viceCaptainPhone={opponentTeamInfo.viceCaptainPhone}
+          />
+        )
+      )}
+    </>
+  ) : null;
+
   const body = (
     <>
 
@@ -655,7 +723,8 @@ export default function ResultsEntryScreen() {
         </View>
       ) : match!.status === 'confirmed' && !adminCorrecting ? (
         <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 8 }}>
-          <MatchHeader match={match!} homeTeamName={homeTeamName} awayTeamName={awayTeamName} />
+          <MatchHeader match={match!} homeTeamName={homeTeamName} awayTeamName={awayTeamName} divisionName={divisionName} viewerSide={myTeamSide} />
+          {matchdayExtras}
           <View className="flex-row items-center gap-1.5 mb-3">
             <Body tone="sage" weight="bold">✓ MATCH CONFIRMED</Body>
             {match!.confirmedVia === 'adminOverride' && (
@@ -687,7 +756,8 @@ export default function ResultsEntryScreen() {
         // match once both exist, which then re-renders this same screen into
         // the 'confirmed' branch above via the live match subscription.
         <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 8 }}>
-          <MatchHeader match={match!} homeTeamName={homeTeamName} awayTeamName={awayTeamName} />
+          <MatchHeader match={match!} homeTeamName={homeTeamName} awayTeamName={awayTeamName} divisionName={divisionName} viewerSide={myTeamSide} />
+          {matchdayExtras}
           <MatchSummary match={match!} playerName={playerName} />
           {(match!.games ?? []).map((game, gameIndex) => (
             <GameRow key={gameIndex} game={game} gameIndex={gameIndex} playerName={playerName} />
@@ -732,7 +802,8 @@ export default function ResultsEntryScreen() {
         </ScrollView>
       ) : !editing ? (
         <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 8 }}>
-          <MatchHeader match={match!} homeTeamName={homeTeamName} awayTeamName={awayTeamName} />
+          <MatchHeader match={match!} homeTeamName={homeTeamName} awayTeamName={awayTeamName} divisionName={divisionName} viewerSide={myTeamSide} />
+          {matchdayExtras}
 
           {canAct ? (
             <ActionBanner

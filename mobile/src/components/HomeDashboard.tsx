@@ -11,6 +11,7 @@ import { RAW, toneClasses } from '@/lib/theme';
 import { FONT_MONO, FONT_DISPLAY } from '@/styles/typography';
 import { STATUS_LABEL, STATUS_TONE, nextMatchCtaLabel } from '@/lib/matchStatus';
 import { competitionTypeLabel, isNotableCompetitionType } from '@/lib/competitionType';
+import { HomeAwayBadge } from '@/components/MatchCentre';
 import { formatTeamRecord } from '@/lib/matchScore';
 import { resolveOpponentInfo } from '@/lib/opponentInfo';
 import { recentForm } from '@/lib/recentForm';
@@ -243,15 +244,17 @@ function NextMatchHero({ match, teamId, opponentName, form, isCaptainOrVC }: Nex
         </View>
       </View>
 
-      <View className="flex-row items-baseline gap-1.5">
-        <Text className="text-[19px] font-bold text-text dark:text-text-dark" style={{ fontFamily: FONT_DISPLAY }}>You</Text>
-        <Text className="text-[12px] text-text-faint dark:text-text-faint-dark">({isHome ? 'H' : 'A'})</Text>
-      </View>
+      <Text className="text-[19px] font-bold text-text dark:text-text-dark" style={{ fontFamily: FONT_DISPLAY }}>You</Text>
       <Text className="text-[15px] text-text-dim dark:text-text-dim-dark mb-4" numberOfLines={1}>vs {opponentName}</Text>
 
-      <Text className="text-[13px] text-text-dim dark:text-text-dim-dark mb-1" numberOfLines={1}>
-        {formatDate(match.scheduledDate)}{match.venue ? ` · ${match.venue}` : ''}
-      </Text>
+      {/* HOME/AWAY as an explicit word + icon (HomeAwayBadge), replacing the
+          old "(H)/(A)" parenthetical — immediately obvious, never colour-only. */}
+      <View className="flex-row items-center gap-1.5 mb-1">
+        <Text className="text-[13px] text-text-dim dark:text-text-dim-dark" numberOfLines={1}>
+          {formatDate(match.scheduledDate)} ·
+        </Text>
+        <HomeAwayBadge isHome={isHome} />
+      </View>
 
       {/* Opponent snapshot — their league position and recent form, never
           the viewer's own (see NextMatchHeroProps comment / opponentInfo.ts).

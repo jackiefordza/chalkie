@@ -9,6 +9,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { RAW } from '@/lib/theme';
 import { STATUS_LABEL, STATUS_TONE, nextMatchCtaLabel } from '@/lib/matchStatus';
 import { competitionTypeLabel, isNotableCompetitionType } from '@/lib/competitionType';
+import { HomeAwayBadge } from '@/components/MatchCentre';
 import { Heading, Body, Badge, Card, Chip, Button, AppIcon } from '@/components/ui';
 import type { Match } from '@/types';
 
@@ -108,7 +109,7 @@ export default function FixturesScreen() {
       <View className="rounded-lg border border-border dark:border-border-dark bg-surface dark:bg-surface-dark p-5 mb-2">
         <View className="flex-row items-center mb-1">
           <Body tone="strong" weight="semibold" className="flex-1" numberOfLines={1}>
-            {isHome ? 'vs' : '@'} {teamNames[opponentId] ?? '…'}
+            vs {teamNames[opponentId] ?? '…'}
           </Body>
           <View className="flex-row items-center gap-1.5 ml-2">
             {isNotableCompetitionType(match.competitionType) && (
@@ -121,9 +122,14 @@ export default function FixturesScreen() {
             )}
           </View>
         </View>
-        <Body size="sm">
-          {formatDate(match.scheduledDate)} · {isHome ? (match.venue ?? 'Home') : 'Away'}
-        </Body>
+        {/* HOME/AWAY as an explicit word + icon (HomeAwayBadge), not just the
+            old "vs"/"@" prefix or venue-string heuristic — "immediately
+            obvious on mobile" and never colour-only, per the matchday-
+            experience brief. */}
+        <View className="flex-row items-center gap-1.5">
+          <Body size="sm">{formatDate(match.scheduledDate)} ·</Body>
+          <HomeAwayBadge isHome={isHome} />
+        </View>
         {match.status === 'confirmed' && (() => {
           // The match is won/lost on games, not legs — a team can win fewer
           // legs overall but still win more games (and therefore the match).
