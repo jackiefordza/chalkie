@@ -6,6 +6,7 @@ import { functions } from '@/config/firebase';
 import { useAuthStore } from '@/stores/authStore';
 import { clearPendingInvite, hasUsableInviteToken, loadPendingInvite, savePendingInvite } from '@/lib/pendingInvite';
 import { RAW } from '@/lib/theme';
+import { APP_NAME } from '@/lib/brand';
 import { Heading, Body, Button, Card } from '@/components/ui';
 
 // Reachable signed-out (no (protected) or (auth) wrapper, no auth gate in
@@ -98,7 +99,7 @@ export default function AcceptInviteScreen() {
           </>
         ) : !firebaseUser ? (
           <>
-            <Heading size="lg" className="mb-2">You've been invited to Chalkie</Heading>
+            <Heading size="lg" className="mb-2">You've been invited to {APP_NAME}</Heading>
             <Body className="mb-4">Sign in or create an account to accept this invitation.</Body>
             <Button className="mb-2.5" onPress={() => router.push('/(auth)/register')}>Create Account</Button>
             <Button variant="secondary" onPress={() => router.push('/(auth)/login')}>Sign In</Button>

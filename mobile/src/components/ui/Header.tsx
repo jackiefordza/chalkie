@@ -1,6 +1,7 @@
 import { View, Text } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { FONT_DISPLAY_EXTRABOLD } from '@/styles/typography';
+import { APP_NAME } from '@/lib/brand';
 import { HeaderAvatar } from './AppHeader';
 
 interface HeaderProps {
@@ -33,7 +34,7 @@ export function Header({ contextLine }: HeaderProps) {
           className="text-[15px] text-text dark:text-text-dark tracking-wide"
           style={{ fontFamily: FONT_DISPLAY_EXTRABOLD }}
         >
-          CHALKIE
+          {APP_NAME.toUpperCase()}
         </Text>
         {contextLine ? (
           <Text className="text-[12px] text-text-dim dark:text-text-dim-dark mt-0.5" numberOfLines={1}>

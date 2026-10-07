@@ -10,6 +10,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { RAW, toneClasses } from '@/lib/theme';
 import { FONT_MONO, FONT_DISPLAY } from '@/styles/typography';
 import { STATUS_LABEL, STATUS_TONE, nextMatchCtaLabel } from '@/lib/matchStatus';
+import { competitionTypeLabel, isNotableCompetitionType } from '@/lib/competitionType';
 import { formatTeamRecord } from '@/lib/matchScore';
 import { resolveOpponentInfo } from '@/lib/opponentInfo';
 import { recentForm } from '@/lib/recentForm';
@@ -214,13 +215,22 @@ function NextMatchHero({ match, teamId, opponentName, form, isCaptainOrVC }: Nex
     <View className="rounded-lg border border-border dark:border-border-dark bg-surface dark:bg-surface-dark px-5 py-5 mb-6">
       <View className="flex-row items-center justify-between mb-4">
         <EyebrowCaption>Next Match</EyebrowCaption>
-        {tc && (
-          <View className={`rounded px-2 py-1 ${tc.fill}`}>
-            <Text className={`text-[10px] font-bold uppercase tracking-wide ${tc.ink}`}>
-              {STATUS_LABEL[match.status]}
-            </Text>
-          </View>
-        )}
+        <View className="flex-row items-center gap-1.5">
+          {isNotableCompetitionType(match.competitionType) && (
+            <View className="rounded px-2 py-1 bg-butter-fill dark:bg-butter-fill-dark">
+              <Text className="text-[10px] font-bold uppercase tracking-wide text-butter-ink dark:text-butter-ink-dark">
+                {competitionTypeLabel(match.competitionType)}
+              </Text>
+            </View>
+          )}
+          {tc && (
+            <View className={`rounded px-2 py-1 ${tc.fill}`}>
+              <Text className={`text-[10px] font-bold uppercase tracking-wide ${tc.ink}`}>
+                {STATUS_LABEL[match.status]}
+              </Text>
+            </View>
+          )}
+        </View>
       </View>
 
       <View className="flex-row items-baseline gap-1.5">

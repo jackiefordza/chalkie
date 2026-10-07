@@ -5,6 +5,7 @@ import { useColorScheme } from 'nativewind';
 import { useAuthStore } from '@/stores/authStore';
 import { loadPendingInvite } from '@/lib/pendingInvite';
 import { RAW } from '@/lib/theme';
+import { APP_NAME } from '@/lib/brand';
 import { FONT_DISPLAY } from '@/styles/typography';
 import { Body, AppIcon, Button } from '@/components/ui';
 
@@ -106,7 +107,7 @@ export default function IndexScreen() {
         className="text-text dark:text-text-dark"
         style={{ fontFamily: FONT_DISPLAY, fontSize: 36, fontWeight: '700', letterSpacing: -0.5 }}
       >
-        Chalkie
+        {APP_NAME}
       </Text>
       <Body className="mt-1 mb-8">Darts League Management</Body>
       <ActivityIndicator size="large" color={RAW.brand} />

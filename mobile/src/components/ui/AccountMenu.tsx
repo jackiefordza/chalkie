@@ -125,10 +125,20 @@ export function AccountMenu() {
           </View>
 
           <View className="gap-4 mb-2">
-            {teamName && (
+            {/* Team + Role combined into one identity line ("Burnaby Arms B
+                · Vice Captain") rather than two separate rows — this is the
+                one place the account's full identity needs to read at a
+                glance, including for someone who is BOTH a team's VC and a
+                league admin on the same account (shown as its own row
+                below, never requiring a separate account). */}
+            {(teamName || (appUser?.role && appUser.role !== 'pending')) && (
               <View>
-                <Caption>Team</Caption>
-                <Body tone="strong" weight="semibold" className="mt-0.5">{teamName}</Body>
+                <Caption>Team &amp; Role</Caption>
+                <Body tone="strong" weight="semibold" className="mt-0.5">
+                  {[teamName, appUser?.role && appUser.role !== 'pending' ? (ROLE_LABEL[appUser.role] ?? appUser.role) : null]
+                    .filter(Boolean)
+                    .join(' · ')}
+                </Body>
               </View>
             )}
 
@@ -138,13 +148,6 @@ export function AccountMenu() {
                 <Body tone="strong" weight="semibold" className="mt-0.5">
                   {appUser?.isGlobalAdmin ? 'Global Admin' : 'League Admin'}
                 </Body>
-              </View>
-            )}
-
-            {appUser?.role && appUser.role !== 'pending' && (
-              <View>
-                <Caption>Role</Caption>
-                <Body tone="strong" weight="semibold" className="mt-0.5">{ROLE_LABEL[appUser.role] ?? appUser.role}</Body>
               </View>
             )}
 

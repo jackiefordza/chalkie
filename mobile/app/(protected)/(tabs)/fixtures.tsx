@@ -8,6 +8,7 @@ import { db } from '@/config/firebase';
 import { useAuthStore } from '@/stores/authStore';
 import { RAW } from '@/lib/theme';
 import { STATUS_LABEL, STATUS_TONE, nextMatchCtaLabel } from '@/lib/matchStatus';
+import { competitionTypeLabel, isNotableCompetitionType } from '@/lib/competitionType';
 import { Heading, Body, Badge, Card, Chip, Button, AppIcon } from '@/components/ui';
 import type { Match } from '@/types';
 
@@ -106,14 +107,19 @@ export default function FixturesScreen() {
     const content = (
       <View className="rounded-lg border border-border dark:border-border-dark bg-surface dark:bg-surface-dark p-5 mb-2">
         <View className="flex-row items-center mb-1">
-          <Body tone="strong" weight="semibold" className="flex-1">
+          <Body tone="strong" weight="semibold" className="flex-1" numberOfLines={1}>
             {isHome ? 'vs' : '@'} {teamNames[opponentId] ?? '…'}
           </Body>
-          {tone ? (
-            <Badge tone={tone}>{STATUS_LABEL[match.status]}</Badge>
-          ) : (
-            <Body size="sm">{STATUS_LABEL[match.status]}</Body>
-          )}
+          <View className="flex-row items-center gap-1.5 ml-2">
+            {isNotableCompetitionType(match.competitionType) && (
+              <Badge tone="butter">{competitionTypeLabel(match.competitionType)}</Badge>
+            )}
+            {tone ? (
+              <Badge tone={tone}>{STATUS_LABEL[match.status]}</Badge>
+            ) : (
+              <Body size="sm">{STATUS_LABEL[match.status]}</Body>
+            )}
+          </View>
         </View>
         <Body size="sm">
           {formatDate(match.scheduledDate)} · {isHome ? (match.venue ?? 'Home') : 'Away'}

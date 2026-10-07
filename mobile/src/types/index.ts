@@ -25,10 +25,23 @@ export interface AppUser {
   createdAt: Date;
 }
 
+// Optional, additive — absent on every league/division doc that predates
+// this field (every real/staging/showcase doc today). Name-only sponsor
+// display is fully supported with no logoUrl; a logo is only ever shown
+// once a real asset URL is actually set on the doc — nothing here
+// fabricates or guesses a logo. Set by an admin (Firestore write path TBD,
+// out of scope for this pass — this is the read-side type + UI only).
+export interface LeagueSponsor {
+  name: string;
+  logoUrl?: string | null;
+  websiteUrl?: string | null;
+}
+
 export interface League {
   id: string;
   name: string;
   adminUserId: string;
+  sponsor?: LeagueSponsor | null;
   createdAt: Date;
 }
 
@@ -48,6 +61,7 @@ export interface Division {
   seasonId: string;
   name: string;
   order: number;
+  sponsor?: LeagueSponsor | null;
   createdAt: Date;
 }
 

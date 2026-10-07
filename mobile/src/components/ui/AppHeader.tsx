@@ -3,6 +3,7 @@ import { useColorScheme } from 'nativewind';
 import { useAuthStore } from '@/stores/authStore';
 import { useUiStore } from '@/stores/uiStore';
 import { RAW } from '@/lib/theme';
+import { APP_NAME } from '@/lib/brand';
 import { FONT_DISPLAY_EXTRABOLD } from '@/styles/typography';
 import { Avatar } from './Avatar';
 import { AppIcon } from './AppIcon';
@@ -44,7 +45,7 @@ export function HeaderWordmark() {
     <View className="flex-row items-center gap-1.5">
       <AppIcon name="target" size={18} color={isDark ? RAW.brandInkDark : RAW.brandInk} />
       <Text className="text-lg text-brand dark:text-brand-dark" style={{ fontFamily: FONT_DISPLAY_EXTRABOLD }}>
-        Chalkie
+        {APP_NAME}
       </Text>
     </View>
   );

@@ -9,6 +9,7 @@ import { db, functions } from '@/config/firebase';
 import { useAuthStore } from '@/stores/authStore';
 import { goBack } from '@/lib/navigation';
 import { RAW } from '@/lib/theme';
+import { APP_NAME } from '@/lib/brand';
 import { DuplicatePlayerNameError, playerDocId } from '@/lib/players';
 import { Screen, Heading, Body, Caption, Button, Card, Avatar, ListRow, Input, Label, Badge, Sheet, ConfirmDialog } from '@/components/ui';
 import { AdminShell } from '@/components/admin/AdminShell';
@@ -531,7 +532,7 @@ export default function AdminTeamScreen() {
         </Heading>
         <Body size="sm" className="mb-4">
           Generates a one-time link for {teamName || 'this team'}. Send it via WhatsApp/SMS — whoever opens it
-          signs in or creates a Chalkie account, then is linked to this team automatically.
+          signs in or creates a {APP_NAME} account, then is linked to this team automatically.
         </Body>
 
         {!createdInvite ? (

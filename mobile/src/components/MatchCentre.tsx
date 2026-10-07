@@ -4,6 +4,7 @@ import { router } from 'expo-router';
 import { useColorScheme } from 'nativewind';
 import { RAW, type SemanticTone } from '@/lib/theme';
 import { STATUS_LABEL, STATUS_TONE } from '@/lib/matchStatus';
+import { competitionTypeLabel, isNotableCompetitionType } from '@/lib/competitionType';
 import { computeGamesTotals } from '@/lib/matchResultDraft';
 import {
   Heading, Body, Caption, Stat, Badge, Card, Button, AppIcon,
@@ -28,13 +29,28 @@ export function MatchHeader({ match, homeTeamName, awayTeamName }: { match: Matc
   const tone = STATUS_TONE[match.status];
   const isConfirmed = match.status === 'confirmed';
 
+  // The scoreboard side-tint below is purely a display convention (sage =
+  // winning side, matching the same win/loss colour language used
+  // everywhere else — RecentResultsList, fixtures.tsx) — it never affects
+  // which number is which; a drawn leg count (possible even though the
+  // match itself can't draw — see Match's own comment) tints neither side.
+  const homeLegsWon = match.homeLegsWon ?? 0;
+  const awayLegsWon = match.awayLegsWon ?? 0;
+  const homeWonLegs = homeLegsWon > awayLegsWon;
+  const awayWonLegs = awayLegsWon > homeLegsWon;
+
   return (
     <Card className="mb-4">
-      {tone ? (
-        <Badge tone={tone} className="self-start mb-3">{STATUS_LABEL[match.status]}</Badge>
-      ) : (
-        <Caption className="mb-3">Not yet played</Caption>
-      )}
+      <View className="flex-row items-center gap-2 mb-3">
+        {tone ? (
+          <Badge tone={tone}>{STATUS_LABEL[match.status]}</Badge>
+        ) : (
+          <Caption>Not yet played</Caption>
+        )}
+        {isNotableCompetitionType(match.competitionType) && (
+          <Badge tone="butter">{competitionTypeLabel(match.competitionType)}</Badge>
+        )}
+      </View>
 
       <Heading size="lg" numberOfLines={1} className="mb-3">
         <Heading size="lg" onPress={() => router.push(`/(protected)/team-profile?teamId=${match.homeTeamId}`)}>{homeTeamName}</Heading>
@@ -46,11 +62,14 @@ export function MatchHeader({ match, homeTeamName, awayTeamName }: { match: Matc
         <View className="items-center py-2">
           {/* The match score is total legs (e.g. 12-9), not games won — see
               matchScore.ts. Games decide who won and are shown small below,
-              clearly labeled, never as the headline figure. */}
+              clearly labeled, never as the headline figure. The winning
+              side's figure carries the same sage "win" tint used
+              everywhere else in the app; a draw (legs only, never the
+              match itself) tints neither. */}
           <View className="flex-row items-center gap-3">
-            <Stat size="lg">{match.homeLegsWon}</Stat>
+            <Stat size="lg" tone={homeWonLegs ? 'sage' : undefined}>{match.homeLegsWon}</Stat>
             <Body size="sm">–</Body>
-            <Stat size="lg">{match.awayLegsWon}</Stat>
+            <Stat size="lg" tone={awayWonLegs ? 'sage' : undefined}>{match.awayLegsWon}</Stat>
           </View>
           <Caption className="mt-1">{match.homeGamesWon}-{match.awayGamesWon} games</Caption>
         </View>
