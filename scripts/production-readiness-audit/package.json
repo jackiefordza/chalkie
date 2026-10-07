@@ -1,0 +1,20 @@
+{
+  "name": "production-readiness-audit",
+  "version": "1.0.0",
+  "private": true,
+  "description": "TEMPORARY, STRICTLY READ-ONLY Admin SDK script. Reports what currently exists in the REAL chalkie-app Firebase project (Firestore collection counts, Auth user counts, known test-account existence) ahead of the Bedford & Kempston production rollout. Contains zero write-capable code anywhere — verified by prove-read-only.sh before any Firebase call is made. See README.md before running anything.",
+  "engines": {
+    "node": "20"
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "firebase-admin": "^13.10.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2",
+    "@types/node": "^22.0.0"
+  }
+}

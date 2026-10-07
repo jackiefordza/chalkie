@@ -1,0 +1,12 @@
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Never commit credentials. This script reads its service-account key from
+# GOOGLE_APPLICATION_CREDENTIALS, which should point somewhere outside this
+# repo entirely — these patterns are a defensive backstop only.
+service-account*.json
+*-service-account.json
+*.serviceaccount.json
+.env
+.env.*
