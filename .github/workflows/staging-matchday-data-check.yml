@@ -1,0 +1,90 @@
+name: TEMP — Staging matchday data check (read-only)
+
+# TEMPORARY. Manual-only, read-only against chalkie-app-staging. Verifies
+# exactly what data already exists for the upcoming "Matchday Details"
+# feature before any UI is built: does teams/bk-d3-team-1 (The Grafton)
+# actually carry address/captain/VC contact fields written by
+# scripts/real-team-contacts-seed, does a sample Match doc carry a real
+# time-of-day on scheduledDate, and do division docs have a name. Never
+# writes anything — removed from main immediately after use (stays on the
+# feature branch).
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install firebase-admin (via the existing contacts-seed script's deps)
+        working-directory: scripts/real-team-contacts-seed
+        run: npm ci
+
+      - name: Write staging Firebase service-account credential
+        env:
+          FIREBASE_SERVICE_ACCOUNT_STAGING: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_STAGING }}
+        run: printf '%s' "$FIREBASE_SERVICE_ACCOUNT_STAGING" > "$RUNNER_TEMP/service-account-staging.json"
+
+      - name: Read relevant team/match/division docs (read-only)
+        working-directory: scripts/real-team-contacts-seed
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/service-account-staging.json
+        run: |
+          node -e "
+          const admin = require('firebase-admin');
+          admin.initializeApp({ credential: admin.credential.cert(process.env.GOOGLE_APPLICATION_CREDENTIALS), projectId: 'chalkie-app-staging' });
+          const db = admin.firestore();
+
+          (async () => {
+            console.log('=== TEAM DOCS ===');
+            for (const teamId of ['bk-d3-team-1', 'bk-d3-team-2', 'bk-d2-team-1']) {
+              const snap = await db.collection('teams').doc(teamId).get();
+              if (!snap.exists) { console.log(teamId, '-> DOES NOT EXIST'); continue; }
+              const d = snap.data();
+              console.log(teamId, JSON.stringify({
+                name: d.name,
+                address: d.address ?? null,
+                venuePhone: d.venuePhone ?? null,
+                captainName: d.captainName ?? null,
+                captainPhone: d.captainPhone ?? null,
+                viceCaptainName: d.viceCaptainName ?? null,
+                viceCaptainPhone: d.viceCaptainPhone ?? null,
+              }, null, 2));
+            }
+
+            console.log('=== SAMPLE MATCH (Division 3, involving bk-d3-team-1) ===');
+            const matchSnap = await db.collection('matches')
+              .where('divisionId', '==', 'bedford-kempston-winter-2026-27-division-3')
+              .limit(1).get();
+            matchSnap.forEach((m) => {
+              const d = m.data();
+              console.log(m.id, JSON.stringify({
+                homeTeamId: d.homeTeamId,
+                awayTeamId: d.awayTeamId,
+                scheduledDate: d.scheduledDate?.toDate?.().toISOString() ?? d.scheduledDate,
+                venue: d.venue ?? null,
+                competitionType: d.competitionType ?? null,
+                divisionId: d.divisionId,
+                status: d.status,
+              }, null, 2));
+            });
+
+            console.log('=== DIVISION DOCS ===');
+            for (const divId of ['bedford-kempston-winter-2026-27-division-2', 'bedford-kempston-winter-2026-27-division-3']) {
+              const snap = await db.collection('divisions').doc(divId).get();
+              console.log(divId, snap.exists ? JSON.stringify({ name: snap.data().name }) : 'DOES NOT EXIST');
+            }
+          })().catch((e) => { console.error(e); process.exit(1); });
+          "
+
+      - name: Remove credential file
+        if: always()
+        run: rm -f "$RUNNER_TEMP/service-account-staging.json"
