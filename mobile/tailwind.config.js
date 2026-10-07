@@ -10,42 +10,42 @@ module.exports = {
     extend: {
       colors: {
         // ───────────────────────────────────────────────────────────────
-        // Phase E, Step 5 — the approved design system, app-wide. Replaces
-        // the previous "warm cream + purple" palette. This IS the app's
-        // real light/dark palette now (toggled the same way it always was,
-        // via NativeWind's `dark:` variant) — not a Home-only fixed
-        // override. Home's own Steps 2-4 fixed-dark "home-*" token family
-        // has been retired; HomeDashboard/Header/TabBar now consume these
-        // same tokens, which is what gives Home a genuine light mode for
-        // the first time. Core visual language: soft graphite + off-white
-        // (the environment) with muted Chalkie green as a restrained
-        // accent (never the environment itself) — see brand/brand-strong
-        // below. Admin's own admin-* tokens (below) are untouched and
+        // DartGrid visual identity pass — a deliberately more vivid, warmer
+        // palette than the muted graphite/olive one it replaces. DartGrid
+        // Green is a confident grass-green (not the old desaturated olive),
+        // kept ~50° away in hue from sage's teal-green below so "brand
+        // accent" and "success/confirmed" never read as the same colour.
+        // Chosen by how the combination actually renders, not by theory —
+        // kept in sync with src/lib/theme.ts's RAW object (the handful of
+        // places that can't take a className read colours from there), and
+        // with the two hardcoded literals that mirror these exactly:
+        // TabBar.tsx's sliding-highlight tint and app/+html.tsx's SSR
+        // background. Admin's own admin-* tokens (below) are untouched and
         // still deliberately isolated from this family.
-        brand: '#71883A', // Chalkie accent — light
-        'brand-dark': '#B1C75E', // Chalkie accent — dark
+        brand: '#3F7D32', // DartGrid Green — light
+        'brand-dark': '#7ED957', // DartGrid Green — dark
         // Strong accent / primary CTA — a step brighter/more saturated
         // than the general accent above, reserved for primary buttons
         // (the one thing on a screen that should read as "the action").
         // Everything else that wants "accent" (numbers, active nav,
         // selected state, a highlighted row) uses brand/brand-dark instead.
-        'brand-strong': '#7D9640',
-        'brand-strong-dark': '#B8CC67',
+        'brand-strong': '#2F6826',
+        'brand-strong-dark': '#5BC93F',
         // Ink to pair with brand-fill (a faint accent-tinted background —
         // badges, selected chips): a readable accent-toned text colour,
         // darker than `brand` itself in light mode for contrast on a pale
         // tint, and the bright accent itself in dark mode where the tint
         // sits on a dark ground.
-        'brand-ink': '#5C7030',
-        'brand-ink-dark': '#B1C75E',
-        'brand-fill': 'rgba(113,136,58,0.12)',
-        'brand-fill-dark': 'rgba(177,199,94,0.16)',
+        'brand-ink': '#2C5F24',
+        'brand-ink-dark': '#7ED957',
+        'brand-fill': 'rgba(63,125,50,0.12)',
+        'brand-fill-dark': 'rgba(126,217,87,0.16)',
         // Ink for text sitting on a SOLID brand-strong fill (Button's
         // primary variant) — the inverse contrast problem from brand-ink
         // above: dark mode's accent is bright, so it needs dark ink; light
         // mode's is medium-dark, so white reads cleanly.
         'brand-cta-ink': '#FFFFFF',
-        'brand-cta-ink-dark': '#181B19',
+        'brand-cta-ink-dark': '#0F2608',
 
         'coral-ink': '#C94F4F',
         'coral-ink-dark': '#E66B6B',
@@ -68,22 +68,24 @@ module.exports = {
         'butter-fill': 'rgba(154,116,31,0.12)',
         'butter-fill-dark': 'rgba(213,174,85,0.16)',
 
-        bg: '#F3F4F1',
-        // Deep charcoal/navy base — cooler and more neutral than the
-        // previous near-black, which had a slight green undertone. Every
-        // dark-mode surface step below (bg/surface/surface-2/inset) now
-        // leads with blue over red/green, so the brand green pops as a
-        // deliberate accent against it instead of blending into an olive
-        // environment. text-dark/dim/faint are unchanged — contrast is
-        // unaffected, only the undertone moved.
-        'bg-dark': '#14161B',
+        // Warm cream — a deliberately warmer, more distinctive light-mode
+        // background than the previous near-neutral pale gray, so the
+        // base environment and the crisp-white content surface below it
+        // are clearly two different things, not two shades of almost-white.
+        bg: '#F7F3EA',
+        // Deep navy-charcoal — meaningfully darker and bluer than the
+        // previous near-black, with more contrast between each surface
+        // step below (bg/surface/surface-2/inset), so DartGrid Green pops
+        // as a deliberate accent and dark mode reads as a real, considered
+        // theme rather than a dimmed light mode.
+        'bg-dark': '#0F1320',
         surface: '#FFFFFF',
-        'surface-dark': '#1D2027',
+        'surface-dark': '#1A1F2E',
         // "Elevated" surface (StatTile fills, unselected chips, table
         // header rows, inner stat panels) — a visible step up from the
         // base surface, not just a slightly-different white/near-black.
-        'surface-2': '#E9ECE8',
-        'surface-2-dark': '#262A33',
+        'surface-2': '#ECE6D9',
+        'surface-2-dark': '#242B3D',
         // Recessed/"inset" surface, one step further in than surface-2 —
         // for controls meant to read as pressed into the page rather than
         // sitting on it (text inputs, stat counters, an unselected
@@ -91,18 +93,18 @@ module.exports = {
         // groove edge. Dark mode leans on the same darker-fill approach
         // rather than a shadow — see Card's own elevation comment for why
         // dark mode generally trades shadow for contrast/borders here.
-        'surface-inset': '#E2E5DF',
-        'surface-inset-dark': '#101216',
-        border: 'rgba(24,32,27,0.10)',
-        'border-dark': 'rgba(242,243,239,0.12)',
-        'inset-border': 'rgba(24,32,27,0.16)',
+        'surface-inset': '#E4DCC9',
+        'surface-inset-dark': '#0A0D16',
+        border: 'rgba(28,26,22,0.10)',
+        'border-dark': 'rgba(243,241,234,0.12)',
+        'inset-border': 'rgba(28,26,22,0.16)',
         'inset-border-dark': 'rgba(0,0,0,0.4)',
-        text: '#18201B',
-        'text-dark': '#F2F3EF',
-        'text-dim': '#5D6761',
-        'text-dim-dark': '#B4BAB6',
-        'text-faint': '#7C857F',
-        'text-faint-dark': '#858D88',
+        text: '#1C1A16',
+        'text-dark': '#F3F1EA',
+        'text-dim': '#5C574E',
+        'text-dim-dark': '#B8B3A8',
+        'text-faint': '#8B8477',
+        'text-faint-dark': '#8F897D',
 
         // Admin console — its own isolated palette so the desktop admin
         // shell reads as a distinct console rather than a stretched phone

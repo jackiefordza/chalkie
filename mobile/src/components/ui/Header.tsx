@@ -1,8 +1,6 @@
 import { View, Text } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { FONT_DISPLAY_EXTRABOLD } from '@/styles/typography';
-import { APP_NAME } from '@/lib/brand';
-import { HeaderAvatar } from './AppHeader';
+import { HeaderAvatar, Wordmark } from './AppHeader';
 
 interface HeaderProps {
   contextLine?: string | null;
@@ -40,14 +38,9 @@ export function Header({ contextLine }: HeaderProps) {
           the exact same Header). */}
       <HeaderAvatar />
       <View className="flex-1 ml-3">
-        <Text
-          className="text-[15px] text-text dark:text-text-dark tracking-wide"
-          style={{ fontFamily: FONT_DISPLAY_EXTRABOLD }}
-        >
-          {APP_NAME.toUpperCase()}
-        </Text>
+        <Wordmark size="md" />
         {contextLine ? (
-          <Text className="text-[12px] text-text-dim dark:text-text-dim-dark mt-0.5" numberOfLines={1}>
+          <Text className="text-[12px] font-semibold text-text-dim dark:text-text-dim-dark mt-1" numberOfLines={1}>
             {contextLine}
           </Text>
         ) : null}

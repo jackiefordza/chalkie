@@ -16,7 +16,7 @@ const TAB_META: Record<string, { icon: AppIconName; label: string }> = {
   admin: { icon: 'shield', label: 'Admin' },
   fixtures: { icon: 'calendar', label: 'Fixtures' },
   standings: { icon: 'table', label: 'Table' },
-  stats: { icon: 'target', label: 'Stats' },
+  stats: { icon: 'trending-up', label: 'Stats' },
 };
 
 // isAdmin (isLeagueAdmin or isGlobalAdmin) is independent of role now — an
@@ -140,12 +140,15 @@ export function TabBar({ state, navigation }: BottomTabBarProps) {
                 position: 'absolute',
                 left: 0,
                 borderRadius: 9999,
-                // Muted-green-tinted glass, not a solid fill — "accent =
+                // Green-tinted glass, not a solid fill — "accent =
                 // active/selected" communicated at low opacity, matching
                 // the "restrained, not neon" direction. rgba of the
-                // general accent token (brand/brand-dark), not the
-                // stronger CTA accent.
-                backgroundColor: isDark ? 'rgba(177,199,94,0.16)' : 'rgba(113,136,58,0.14)',
+                // general accent token (brand/brand-dark — DartGrid
+                // Green), not the stronger CTA accent. Kept as a literal
+                // (not a className) since Animated.View doesn't take
+                // NativeWind classes — update alongside RAW.brand/
+                // brandDark in theme.ts if that ever changes again.
+                backgroundColor: isDark ? 'rgba(126,217,87,0.16)' : 'rgba(63,125,50,0.14)',
                 width: highlight.width,
                 height: highlight.height,
                 top: highlight.y,

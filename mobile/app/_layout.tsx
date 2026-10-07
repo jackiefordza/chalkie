@@ -6,14 +6,14 @@ import { StatusBar } from 'expo-status-bar';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useColorScheme } from 'nativewind';
-import { useFonts, Nunito_700Bold, Nunito_800ExtraBold } from '@expo-google-fonts/nunito';
+import { useFonts, Nunito_700Bold, Nunito_800ExtraBold, Nunito_900Black } from '@expo-google-fonts/nunito';
 import { initAuthListener } from '@/stores/authStore';
 import { loadThemePreference, applyThemePreference, watchSystemTheme } from '@/lib/themePreference';
 import { isStaging, firebaseConfig } from '@/config/firebase';
 
 export default function RootLayout() {
   const { setColorScheme } = useColorScheme();
-  const [fontsLoaded] = useFonts({ Nunito_700Bold, Nunito_800ExtraBold });
+  const [fontsLoaded] = useFonts({ Nunito_700Bold, Nunito_800ExtraBold, Nunito_900Black });
 
   useEffect(() => {
     const unsub = initAuthListener();

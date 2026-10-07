@@ -30,18 +30,32 @@ export function formatMatchTime(date: Date): string | null {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// HOME/AWAY — an explicit word + icon, never colour alone (the fixture
-// list/Home dashboard previously leaned on "@"/"vs"/"(H)" as the only
-// signal). Shared so fixtures.tsx, HomeDashboard and this file's own
+// HOME/AWAY — a distinct word + icon + its own tinted pill, never colour
+// alone (the word and icon shape carry the meaning on their own; the tint
+// is reinforcement, not the only signal). Home gets a DartGrid-Green tint
+// (the thing you want to feel good about); Away gets a neutral slate tint
+// — not a semantic colour (coral/sage/butter already mean something else),
+// just "a different, deliberate pill" so the two are unmistakable at a
+// glance. Shared so fixtures.tsx, HomeDashboard and this file's own
 // MatchHeader never disagree on how this reads.
 // ─────────────────────────────────────────────────────────────────────────
 export function HomeAwayBadge({ isHome }: { isHome: boolean }) {
   const { colorScheme } = useColorScheme();
   const isDark = colorScheme === 'dark';
+  const iconColor = isHome
+    ? (isDark ? RAW.brandDark : RAW.brand)
+    : (isDark ? RAW.textDimDark : RAW.textDim);
   return (
-    <View className="flex-row items-center gap-1">
-      <AppIcon name={isHome ? 'home' : 'map-pin'} size={11} color={isDark ? RAW.textDark : RAW.text} />
-      <Caption className="text-text dark:text-text-dark">{isHome ? 'Home' : 'Away'}</Caption>
+    <View
+      className={[
+        'flex-row items-center gap-1 rounded-full px-2 py-0.5',
+        isHome ? 'bg-brand-fill dark:bg-brand-fill-dark' : 'bg-surface-2 dark:bg-surface-2-dark',
+      ].join(' ')}
+    >
+      <AppIcon name={isHome ? 'home' : 'map-pin'} size={11} color={iconColor} />
+      <Caption className={isHome ? 'text-brand-ink dark:text-brand-ink-dark' : 'text-text-dim dark:text-text-dim-dark'}>
+        {isHome ? 'Home' : 'Away'}
+      </Caption>
     </View>
   );
 }

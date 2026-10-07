@@ -41,11 +41,11 @@ export default function Root({ children }: PropsWithChildren) {
 // default white, outside the app's own light/dark surface entirely.
 const responsiveBackground = `
 body {
-  background-color: #F3F4F1;
+  background-color: #F7F3EA;
 }
 @media (prefers-color-scheme: dark) {
   body {
-    background-color: #181B19;
+    background-color: #0F1320;
   }
 }
 `;
