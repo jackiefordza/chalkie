@@ -1,0 +1,20 @@
+{
+  "name": "real-captain-invite-burnaby-c",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Standalone Admin SDK script that creates exactly ONE real Captain invite for teams/bk-d2-team-1 (Burnaby Arms C, Division 2, Bedford & Kempston District) in chalkie-app-staging, mirroring functions/src/index.ts's performCreateTeamInvite field-for-field. Refuses to run unless every pre-flight check (team identity, empty captainUserId, no existing pending Captain invite) passes. Never creates an Auth account, a users/{uid} document, a player record, or touches viceCaptainUserId. See README.md before running anything.",
+  "engines": {
+    "node": "20"
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "firebase-admin": "^13.10.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2",
+    "@types/node": "^22.0.0"
+  }
+}
