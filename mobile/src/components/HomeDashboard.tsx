@@ -190,9 +190,19 @@ function NextMatchHero({ match, teamId, opponentName, form, isCaptainOrVC }: Nex
 
   const opponentInfo = match ? resolveOpponentInfo(match, teamId, opponentTableRows, opponentLeagueMatches) : null;
 
+  // The #1 "what's happening now" surface on the whole screen — everything
+  // else that matters now has real elevation (Card, Sheet, the standings
+  // table); this was still perfectly flat. Same soft-shadow values Card.tsx
+  // uses, kept local here since this block intentionally isn't a <Card>
+  // (Phase E's own "not every fixture/section is a rounded card" call,
+  // which still holds — this only adds the depth, not the rounding/shape).
+  const heroElevation = isDark
+    ? { shadowColor: '#000000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 6, elevation: 2 }
+    : { shadowColor: '#000000', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.08, shadowRadius: 14, elevation: 3 };
+
   if (!match || !opponentId) {
     return (
-      <View className="rounded-lg border border-border dark:border-border-dark bg-surface dark:bg-surface-dark px-5 py-5 mb-6">
+      <View style={heroElevation} className="rounded-lg border border-border dark:border-border-dark bg-surface dark:bg-surface-dark px-5 py-5 mb-6">
         <EyebrowCaption>Next Match</EyebrowCaption>
         <Text className={`text-[13px] text-text-dim dark:text-text-dim-dark ${form.length > 0 ? 'mt-2 mb-3' : 'mt-2'}`}>
           No upcoming fixture scheduled
@@ -212,7 +222,7 @@ function NextMatchHero({ match, teamId, opponentName, form, isCaptainOrVC }: Nex
   const ctaLabel = nextMatchCtaLabel(match.status, hasSubmitted, opponentName);
 
   const content = (
-    <View className="rounded-lg border border-border dark:border-border-dark bg-surface dark:bg-surface-dark px-5 py-5 mb-6">
+    <View style={heroElevation} className="rounded-lg border border-border dark:border-border-dark bg-surface dark:bg-surface-dark px-5 py-5 mb-6">
       <View className="flex-row items-center justify-between mb-4">
         <EyebrowCaption>Next Match</EyebrowCaption>
         <View className="flex-row items-center gap-1.5">

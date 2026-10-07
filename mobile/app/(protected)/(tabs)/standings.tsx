@@ -224,7 +224,12 @@ export default function StandingsScreen() {
           </Body>
         </Card>
       ) : (
-        <View className="rounded-2xl overflow-hidden shadow-sm bg-surface dark:bg-surface-dark">
+        <View
+          className="rounded-2xl overflow-hidden bg-surface dark:bg-surface-dark"
+          style={isDark
+            ? { shadowColor: '#000000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 6, elevation: 2 }
+            : { shadowColor: '#000000', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.08, shadowRadius: 14, elevation: 3 }}
+        >
           {/* Header row */}
           <View className="flex-row py-2.5 px-3 bg-surface-2 dark:bg-surface-2-dark">
             <Caption className="w-6">#</Caption>
@@ -245,7 +250,10 @@ export default function StandingsScreen() {
                   isMine ? 'bg-brand-fill dark:bg-brand-fill-dark' : i % 2 === 0 ? 'bg-surface-2/40 dark:bg-surface-2-dark/40' : '',
                 ].join(' ')}
               >
-                <Body size="sm" className="w-6">{row.position}</Body>
+                {/* Position is the most important column in this table — it
+                    should read as a number, not plain text, same tabular-
+                    mono treatment every other stat column already gets. */}
+                <Stat size="sm" tone={isMine ? 'brand' : undefined} className="w-6">{row.position}</Stat>
                 <Body size="sm" tone={isMine ? 'strong' : 'dim'} weight={isMine ? 'bold' : 'normal'} className="flex-1" numberOfLines={1}>
                   {teamNames[row.teamId] ?? '…'}
                 </Body>
