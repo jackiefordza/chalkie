@@ -20,8 +20,18 @@ interface HeaderProps {
 export function Header({ contextLine }: HeaderProps) {
   const insets = useSafeAreaInsets();
 
+  // A quiet frosted tint + hairline, rather than Phase E's original plain
+  // "sits directly on the background" treatment — same position (this is
+  // not a floating/sticky header), just enough surface separation to read
+  // as a considered shell instead of bare background. No BlurView here
+  // (unlike TabBar/AccountMenu's floating glass): this header never sits
+  // over scrolling content, so a translucent tint alone already reads as
+  // frosted without the added native-blur cost.
   return (
-    <View style={{ paddingTop: insets.top + 12, paddingBottom: 12, paddingHorizontal: 20 }} className="flex-row items-center justify-between">
+    <View
+      style={{ paddingTop: insets.top + 12, paddingBottom: 12, paddingHorizontal: 20 }}
+      className="flex-row items-center justify-between bg-surface/70 dark:bg-surface-dark/70 border-b border-border dark:border-border-dark"
+    >
       {/* Avatar on the left, matching every other screen's native header
           (headerLeft in (tabs)/_layout.tsx) — Home previously put it on
           the right, the one place in the app where it wasn't. Same

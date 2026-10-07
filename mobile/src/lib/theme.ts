@@ -48,11 +48,32 @@ export function toneClasses(tone: SemanticTone): ToneClasses {
 // what gives it a genuine light mode.
 export const RAW = {
   bg: '#F3F4F1',
-  bgDark: '#181B19',
+  // Deep charcoal/navy rather than the previous near-black's slight green
+  // cast — a cooler, more neutral dark base (blue channel now leads red/
+  // green at every step: bg/surface/surface2 below), so the brand green
+  // reads as a deliberate accent against it rather than blending into an
+  // olive-dark environment. Text/dim/faint colours are unchanged — the
+  // contrast shift from this is imperceptible, only the undertone moved.
+  bgDark: '#14161B',
   surface: '#FFFFFF',
-  surfaceDark: '#242925',
+  surfaceDark: '#1D2027',
   surface2: '#E9ECE8',
-  surface2Dark: '#2C322E',
+  surface2Dark: '#262A33',
+  // Recessed/"inset" surface — one step further in than surface2, for
+  // controls meant to read as pressed into the page rather than sitting
+  // on it (text inputs, stat counters, an unselected segmented-toggle
+  // track). Light mode reads this via the darker fill alone (plus
+  // insetBorder below); dark mode leans on the same darker-fill approach
+  // rather than a shadow, per the "dark mode: subtle inset contrast, not
+  // shadow-dependent" direction.
+  surfaceInset: '#E2E5DF',
+  surfaceInsetDark: '#101216',
+  // The hairline that sells the recessed look — a touch stronger than the
+  // ordinary `border` token in light mode (a visible groove edge), and a
+  // dark seam (not a light highlight) in dark mode, consistent with that
+  // mode relying on contrast/borders rather than shadow for depth.
+  insetBorder: 'rgba(24,32,27,0.16)',
+  insetBorderDark: 'rgba(0,0,0,0.4)',
   text: '#18201B',
   textDark: '#F2F3EF',
   textDim: '#5D6761',
@@ -68,7 +89,7 @@ export const RAW = {
   brandFill: 'rgba(113,136,58,0.12)',
   brandFillDark: 'rgba(177,199,94,0.16)',
   brandCtaInk: '#FFFFFF',
-  brandCtaInkDark: '#181B19',
+  brandCtaInkDark: '#14161B',
   coralInk: '#C94F4F',
   coralInkDark: '#E66B6B',
   sageInk: '#31875A',

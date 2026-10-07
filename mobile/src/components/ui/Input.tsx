@@ -26,8 +26,12 @@ export const Input = forwardRef<TextInput, InputProps>(function Input(
       <TextInput
         ref={ref}
         className={[
-          'rounded-xl px-3.5 py-3 text-[15px] bg-surface-2 dark:bg-surface-2-dark text-text dark:text-text-dark',
-          error ? 'border-2 border-coral-ink dark:border-coral-ink-dark' : '',
+          // Inset/recessed rather than the general "elevated" surface-2 —
+          // a text field should read as a pressed-in slot to type into,
+          // not a raised surface. error state overrides the hairline with
+          // a full coral border, same as before.
+          'rounded-xl px-3.5 py-3 text-[15px] bg-surface-inset dark:bg-surface-inset-dark text-text dark:text-text-dark border',
+          error ? 'border-2 border-coral-ink dark:border-coral-ink-dark' : 'border-inset-border dark:border-inset-border-dark',
           className,
         ].join(' ')}
         placeholderTextColor={placeholderColor}

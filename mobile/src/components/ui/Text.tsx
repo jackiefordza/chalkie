@@ -82,10 +82,13 @@ export function Caption({ children, className = '', style, ...rest }: RoleTextPr
 
 interface StatProps extends RoleTextProps {
   tone?: SemanticTone;
-  size?: 'sm' | 'md' | 'lg';
+  size?: 'sm' | 'md' | 'lg' | 'xl';
 }
 
-const STAT_SIZES = { sm: 'text-[16px]', md: 'text-[22px]', lg: 'text-[28px]' } as const;
+// 'xl' — the one or two genuinely headline figures per screen (a confirmed
+// match score, a league position) that should feel unmistakably like the
+// most important thing on it, not just a bigger version of an ordinary stat.
+const STAT_SIZES = { sm: 'text-[16px]', md: 'text-[22px]', lg: 'text-[28px]', xl: 'text-[44px]' } as const;
 
 export function Stat({ children, tone, size = 'md', className = '', style, ...rest }: StatProps) {
   const inkClass = tone ? toneClasses(tone).ink : 'text-text dark:text-text-dark';

@@ -67,9 +67,9 @@ export function MatchHeader({ match, homeTeamName, awayTeamName }: { match: Matc
               everywhere else in the app; a draw (legs only, never the
               match itself) tints neither. */}
           <View className="flex-row items-center gap-3">
-            <Stat size="lg" tone={homeWonLegs ? 'sage' : undefined}>{match.homeLegsWon}</Stat>
+            <Stat size="xl" tone={homeWonLegs ? 'sage' : undefined}>{match.homeLegsWon}</Stat>
             <Body size="sm">–</Body>
-            <Stat size="lg" tone={awayWonLegs ? 'sage' : undefined}>{match.awayLegsWon}</Stat>
+            <Stat size="xl" tone={awayWonLegs ? 'sage' : undefined}>{match.awayLegsWon}</Stat>
           </View>
           <Caption className="mt-1">{match.homeGamesWon}-{match.awayGamesWon} games</Caption>
         </View>

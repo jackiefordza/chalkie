@@ -69,16 +69,34 @@ module.exports = {
         'butter-fill-dark': 'rgba(213,174,85,0.16)',
 
         bg: '#F3F4F1',
-        'bg-dark': '#181B19',
+        // Deep charcoal/navy base — cooler and more neutral than the
+        // previous near-black, which had a slight green undertone. Every
+        // dark-mode surface step below (bg/surface/surface-2/inset) now
+        // leads with blue over red/green, so the brand green pops as a
+        // deliberate accent against it instead of blending into an olive
+        // environment. text-dark/dim/faint are unchanged — contrast is
+        // unaffected, only the undertone moved.
+        'bg-dark': '#14161B',
         surface: '#FFFFFF',
-        'surface-dark': '#242925',
+        'surface-dark': '#1D2027',
         // "Elevated" surface (StatTile fills, unselected chips, table
         // header rows, inner stat panels) — a visible step up from the
         // base surface, not just a slightly-different white/near-black.
         'surface-2': '#E9ECE8',
-        'surface-2-dark': '#2C322E',
+        'surface-2-dark': '#262A33',
+        // Recessed/"inset" surface, one step further in than surface-2 —
+        // for controls meant to read as pressed into the page rather than
+        // sitting on it (text inputs, stat counters, an unselected
+        // segmented-toggle track). Paired with inset-border below for the
+        // groove edge. Dark mode leans on the same darker-fill approach
+        // rather than a shadow — see Card's own elevation comment for why
+        // dark mode generally trades shadow for contrast/borders here.
+        'surface-inset': '#E2E5DF',
+        'surface-inset-dark': '#101216',
         border: 'rgba(24,32,27,0.10)',
         'border-dark': 'rgba(242,243,239,0.12)',
+        'inset-border': 'rgba(24,32,27,0.16)',
+        'inset-border-dark': 'rgba(0,0,0,0.4)',
         text: '#18201B',
         'text-dark': '#F2F3EF',
         'text-dim': '#5D6761',
