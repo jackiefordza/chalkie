@@ -1,6 +1,6 @@
 {
-  "name": "Chalkie",
-  "short_name": "Chalkie",
+  "name": "DartGrid",
+  "short_name": "DartGrid",
   "description": "Darts league management for players, captains, and league admins.",
   "display": "standalone",
   "orientation": "portrait",
