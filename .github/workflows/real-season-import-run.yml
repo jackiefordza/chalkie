@@ -1,0 +1,78 @@
+name: TEMP — Real season import (Bedford & Kempston, production)
+
+# TEMPORARY. Manual-only, explicit user approval already obtained for a
+# production write. Runs the EXISTING, already-reviewed PR #36 importer
+# (scripts/real-season-import) and PR #38 preflight (scripts/production-
+# preflight) unchanged — no replacement/rewritten logic here, this workflow
+# only decides WHICH of those two existing, already-reviewed entrypoints to
+# invoke and with which flag:
+#   mode=check    -> node dist/production-preflight/preflight.js (read-only)
+#   mode=dry-run  -> node dist/import.js            (no writes, prints plan)
+#   mode=confirm  -> node dist/import.js --confirm  (writes exactly the
+#                     132 canonical documents; the importer's own
+#                     allowlist in src/firebaseAdmin.ts rejects any write
+#                     outside them)
+# Removed from main again immediately after use.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'check (read-only) | dry-run (no writes) | confirm (writes)'
+        required: true
+        default: 'check'
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install + build real-season-import
+        working-directory: scripts/real-season-import
+        run: |
+          npm ci
+          npm run build
+
+      - name: Install + build production-preflight
+        if: ${{ inputs.mode == 'check' }}
+        working-directory: scripts/production-preflight
+        run: |
+          npm ci
+          npm run build
+
+      - name: Write Firebase service-account credential
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > "$RUNNER_TEMP/service-account.json"
+
+      - name: Run preflight (read-only)
+        if: ${{ inputs.mode == 'check' }}
+        working-directory: scripts/production-preflight
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/service-account.json
+        run: set -o pipefail; node dist/production-preflight/preflight.js | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Run importer — DRY RUN (no writes)
+        if: ${{ inputs.mode == 'dry-run' }}
+        working-directory: scripts/real-season-import
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/service-account.json
+        run: set -o pipefail; node dist/import.js | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Run importer — CONFIRM (writes)
+        if: ${{ inputs.mode == 'confirm' }}
+        working-directory: scripts/real-season-import
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/service-account.json
+        run: set -o pipefail; node dist/import.js --confirm | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove credential file
+        if: always()
+        run: rm -f "$RUNNER_TEMP/service-account.json"
