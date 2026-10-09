@@ -1,6 +1,6 @@
 import { initializeApp } from 'firebase-admin/app';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
-import { onDocumentWritten, onDocumentUpdated, onDocumentDeleted } from 'firebase-functions/v2/firestore';
+import { onDocumentWritten, onDocumentUpdated, onDocumentDeleted, onDocumentCreated } from 'firebase-functions/v2/firestore';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 
 initializeApp();
@@ -647,24 +647,34 @@ export const adminDeleteSeason = onCall(async (request) => {
 // teams, date/venue and league/season/division references all stay exactly
 // as they were — only the result/submission state is cleared, returning the
 // fixture to the same shape a freshly generated one has (see
-// admin-fixtures.tsx's fixture-creation code for that shape). Deliberately a
-// callable (not a plain client updateDoc admin-fixtures.tsx/results-entry.tsx
-// could make under firestore.rules' existing unrestricted admin update
-// rule) so the derived-stats reversal below can never be skipped: a raw
-// client-side status flip to 'scheduled' would leave divisionTables/
+// admin-fixtures.tsx's fixture-creation code for that shape).
+//
+// This is a Firestore-triggered admin task (onAdminTaskCreated below), not
+// an onCall function: onCall requires the underlying Cloud Run service to be
+// granted public ("allUsers") invoker access, which a project-level policy
+// has started blocking for brand-new functions (confirmed against this same
+// project for a previous onCall function, adminRecomputeSeasonStats — every
+// attempt to grant a NEW function that access failed identically, while
+// long-existing onCall functions that already had the grant kept working).
+// Firestore-triggered functions invoke via Eventarc instead, sidestepping
+// that policy entirely — the same fix already proven for
+// adminRecomputeSeasonStats, applied here.
+//
+// Not a plain client updateDoc (admin-fixtures.tsx/results-entry.tsx could
+// otherwise make one under firestore.rules' existing unrestricted admin
+// update rule) so the derived-stats reversal below can never be skipped: a
+// raw client-side status flip to 'scheduled' would leave divisionTables/
 // playerSeasonStats permanently stale, since onMatchConfirmed only ever
 // fires forward INTO 'confirmed', never back out of it.
-export const adminResetMatchResult = onCall(async (request) => {
-  const { matchId } = (request.data ?? {}) as { matchId?: string };
-  if (!matchId) throw new HttpsError('invalid-argument', 'matchId is required.');
+async function performMatchResultReset(matchId: string, requestedByUid: string | undefined): Promise<void> {
   const matchRef = db.doc(`matches/${matchId}`);
   const matchSnap = await matchRef.get();
-  if (!matchSnap.exists) throw new HttpsError('not-found', 'Match not found.');
+  if (!matchSnap.exists) throw new Error('Match not found.');
   const match = matchSnap.data()!;
-  await assertLeagueAdmin(request.auth?.uid, match.leagueId);
+  await assertLeagueAdmin(requestedByUid, match.leagueId);
 
   if (match.status === 'scheduled') {
-    throw new HttpsError('failed-precondition', 'This fixture has no result to reset.');
+    throw new Error('This fixture has no result to reset.');
   }
 
   const { leagueId, seasonId, divisionId, homeTeamId, awayTeamId, scheduledDate } = match as {
@@ -680,10 +690,7 @@ export const adminResetMatchResult = onCall(async (request) => {
   if (match.status === 'confirmed') {
     const games = (match.games ?? []) as MatchGame[];
     if (games.length > 0 && (!isValidGamesShape(games) || !(await allPlayersLegitimate(games, homeTeamId, awayTeamId)))) {
-      throw new HttpsError(
-        'failed-precondition',
-        'This match\'s confirmed result looks invalid — refusing to reset without a safe reversal.',
-      );
+      throw new Error('This match\'s confirmed result looks invalid — refusing to reset without a safe reversal.');
     }
     await applyMatchResultDelta({
       matchId, leagueId, seasonId, divisionId, homeTeamId, awayTeamId,
@@ -721,4 +728,31 @@ export const adminResetMatchResult = onCall(async (request) => {
     homeLegsWon: null,
     awayLegsWon: null,
   });
+}
+
+// adminTasks is the one Firestore-triggered entry point for admin actions
+// that can't safely be a plain client write (see performMatchResultReset's
+// own comment for why onCall isn't usable here). firestore.rules restricts
+// who may create an adminTasks doc (any signed-in league/global admin,
+// stamping their own uid as requestedBy — see the 'adminTasks' rule) as a
+// first line of defense; this handler is the AUTHORITATIVE check, exactly
+// mirroring assertLeagueAdmin's semantics, re-executed here because a
+// Firestore trigger runs with full Admin SDK privileges and cannot rely on
+// request.auth / firestore.rules the way an onCall function's caller
+// context can. Only one task type exists today (resetMatchResult); adding
+// another means adding another `if (task.type === ...)` branch here, not
+// loosening the rule.
+export const onAdminTaskCreated = onDocumentCreated('adminTasks/{taskId}', async (event) => {
+  const snap = event.data;
+  if (!snap) return;
+  const task = snap.data() as { type?: string; matchId?: string; requestedBy?: string };
+  if (task.type !== 'resetMatchResult') return;
+
+  try {
+    if (!task.matchId) throw new Error('matchId is required.');
+    await performMatchResultReset(task.matchId, task.requestedBy);
+    await snap.ref.update({ status: 'completed', completedAt: FieldValue.serverTimestamp() });
+  } catch (e) {
+    await snap.ref.update({ status: 'failed', error: (e as Error).message, completedAt: FieldValue.serverTimestamp() });
+  }
 });

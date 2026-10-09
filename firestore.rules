@@ -406,6 +406,26 @@ service cloud.firestore {
       allow update, delete: if isAdminFor(resource.data.leagueId);
     }
 
+    // ── adminTasks ────────────────────────────────────────────────────────
+    // A Firestore-triggered entry point for admin actions that can't safely
+    // be a plain client write (see functions/src/index.ts's
+    // performMatchResultReset comment for why). This rule is a first line
+    // of defense only — any signed-in league/global admin may create a task
+    // stamped with their own uid, of a known type; the Cloud Function
+    // (onAdminTaskCreated) re-validates the requester is actually an admin
+    // of the SPECIFIC league the task's target belongs to before doing
+    // anything, exactly like every onCall function above does. Only the
+    // trigger (Admin SDK, bypasses rules) ever writes status/result back —
+    // no client update/delete is ever allowed on a task doc.
+    match /adminTasks/{taskId} {
+      allow read: if isSignedIn() && (resource.data.requestedBy == request.auth.uid || isAdmin() || isGlobalAdmin());
+      allow create: if (isAdmin() || isGlobalAdmin())
+        && request.resource.data.requestedBy == request.auth.uid
+        && request.resource.data.type == 'resetMatchResult'
+        && request.resource.data.matchId is string;
+      allow update, delete: if false;
+    }
+
     // ── fineDefinitions ───────────────────────────────────────────────────
     match /fineDefinitions/{fineDefId} {
       allow read: if isSignedIn() && me().teamId == resource.data.teamId;

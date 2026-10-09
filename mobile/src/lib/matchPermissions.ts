@@ -17,9 +17,10 @@ export function canSignOffMatch(
 
 // Client-side gate for showing the "Reset Result" action — mirrors the same
 // isAdminFor() scoping (global admin any league; league admin only their
-// own), matching the real enforcement in the adminResetMatchResult callable
-// (functions/src/index.ts), which re-checks this server-side via
-// assertLeagueAdmin regardless of what this returns. There's nothing to
+// own), matching the real enforcement in performMatchResultReset
+// (functions/src/index.ts, run from the onAdminTaskCreated trigger), which
+// re-checks this server-side via assertLeagueAdmin regardless of what this
+// returns. There's nothing to
 // reset on a fixture that hasn't been touched yet.
 export function canResetMatch(
   appUser: Pick<AppUser, 'isLeagueAdmin' | 'isGlobalAdmin' | 'leagueId'> | null | undefined,
