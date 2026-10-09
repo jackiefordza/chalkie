@@ -47,9 +47,10 @@ jobs:
       # calls Firestore .get()/.where(...).get() — see the script's own
       # README for how that's verified structurally, not just asserted.
       - name: Run read-only preflight
+        working-directory: scripts/production-preflight
         env:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/service-account.json
-        run: node dist/production-preflight/preflight.js | tee -a "$GITHUB_STEP_SUMMARY"
+        run: set -o pipefail; node dist/production-preflight/preflight.js | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Remove credential file
         if: always()
