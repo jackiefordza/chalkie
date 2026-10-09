@@ -1,0 +1,80 @@
+name: TEMP — Production readiness audit (read-only)
+
+# TEMPORARY. Manual-only, STRICTLY READ-ONLY, against the real chalkie-app
+# (production) Firebase project. Reports Firestore collection counts, Auth
+# user counts/known-test-account existence, deployed Functions, Hosting
+# sites/channels, and currently-deployed Firestore indexes — never writes
+# anything. scripts/production-readiness-audit/ contains zero write-capable
+# code anywhere in its source, verified by prove-read-only.sh as the very
+# first step, before any credential is touched. The firebase-tools commands
+# below (functions:list, hosting:sites:list, hosting:channel:list,
+# firestore:indexes) are plain read-only listing subcommands — this
+# workflow never runs `firebase deploy` in any form. This workflow is
+# removed from main immediately after use (the script stays on the
+# feature branch).
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        working-directory: scripts/production-readiness-audit
+        run: npm ci
+
+      - name: Prove the audit script is read-only (static check, no credentials used)
+        working-directory: scripts/production-readiness-audit
+        run: bash prove-read-only.sh
+
+      - name: Typecheck + build
+        working-directory: scripts/production-readiness-audit
+        run: npm run build
+
+      - name: Write production Firebase service-account credential
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > "$RUNNER_TEMP/service-account.json"
+
+      - name: Run read-only Firestore/Auth audit against chalkie-app
+        working-directory: scripts/production-readiness-audit
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/service-account.json
+        run: node dist/audit.js --confirm-production-readonly-audit | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: List deployed Cloud Functions (read-only)
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/service-account.json
+        run: npx firebase-tools functions:list --project chalkie-app | tee -a "$GITHUB_STEP_SUMMARY"
+        continue-on-error: true
+
+      - name: List Hosting sites (read-only)
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/service-account.json
+        run: npx firebase-tools hosting:sites:list --project chalkie-app | tee -a "$GITHUB_STEP_SUMMARY"
+        continue-on-error: true
+
+      - name: List Hosting channels on the default site (read-only)
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/service-account.json
+        run: npx firebase-tools hosting:channel:list --project chalkie-app | tee -a "$GITHUB_STEP_SUMMARY"
+        continue-on-error: true
+
+      - name: List currently-deployed Firestore indexes (read-only)
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/service-account.json
+        run: npx firebase-tools firestore:indexes --project chalkie-app | tee -a "$GITHUB_STEP_SUMMARY"
+        continue-on-error: true
+
+      - name: Remove credential file
+        if: always()
+        run: rm -f "$RUNNER_TEMP/service-account.json"

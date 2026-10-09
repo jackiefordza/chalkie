@@ -18,7 +18,19 @@
       anywhere earlier in this file, including in comments like this one.
     -->
     <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no, viewport-fit=cover" />
-    <title>%WEB_TITLE%</title>
+    <!-- Hardcoded rather than left as Expo's own build-time title
+         placeholder (which it substitutes from app.json's expo.name) —
+         app.json's native app identity is deliberately left unchanged for
+         now (see src/lib/brand.ts), so the browser tab title is set
+         directly here instead. Deliberately not spelling out that
+         placeholder's own literal token text in this comment: Expo's
+         build step does a first-occurrence string replace of it anywhere
+         in this file, comments included (see the file-level comment
+         above) — writing it out here would make this line, not the title
+         tag, win that replace once the token is removed from the tag
+         itself, which is exactly what happened the first time this
+         comment was drafted. -->
+    <title>DartGrid</title>
 
     <!-- Web app manifest — installability on Chrome/Android and other
          manifest-aware browsers. iOS Safari does not use this for its own
@@ -40,7 +52,7 @@
          Safari's browser chrome. -->
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-title" content="Chalkie" />
+    <meta name="apple-mobile-web-app-title" content="DartGrid" />
     <!--
       black-translucent: the status bar is transparent and Chalkie's own
       Header (which already renders at `insets.top` via useSafeAreaInsets)

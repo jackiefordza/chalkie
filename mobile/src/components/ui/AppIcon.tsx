@@ -22,6 +22,7 @@ const FEATHER_ICONS = {
   monitor: 'monitor',
   users: 'users',
   edit: 'edit-3',
+  'map-pin': 'map-pin',
 } as const;
 
 const IONICONS_ICONS = {

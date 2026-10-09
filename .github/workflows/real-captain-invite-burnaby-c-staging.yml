@@ -1,0 +1,50 @@
+name: TEMP — Real Captain invite, Burnaby Arms C (staging)
+
+# TEMPORARY. Manual-only. Creates exactly ONE real Captain invite for
+# teams/bk-d2-team-1 (Burnaby Arms C, Division 2, Bedford & Kempston
+# District) in chalkie-app-staging, for the real captain Geri Sampson's
+# pilot onboarding. scripts/real-captain-invite-burnaby-c/ runs 7
+# read-only pre-flight checks (team identity, empty captainUserId, no
+# existing pending Captain invite) and refuses to write anything if any
+# one of them fails — see that script's README.md. Never creates an Auth
+# account, a users/{uid} doc, a player record, or writes to the team doc
+# itself. This workflow is removed from main immediately after use (the
+# script stays on the feature branch).
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  invite:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        working-directory: scripts/real-captain-invite-burnaby-c
+        run: npm ci
+
+      - name: Typecheck + build
+        working-directory: scripts/real-captain-invite-burnaby-c
+        run: npm run build
+
+      - name: Write staging Firebase service-account credential
+        env:
+          FIREBASE_SERVICE_ACCOUNT_STAGING: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_STAGING }}
+        run: printf '%s' "$FIREBASE_SERVICE_ACCOUNT_STAGING" > "$RUNNER_TEMP/service-account-staging.json"
+
+      - name: Run pre-flight checks and create the one real Captain invite against chalkie-app-staging
+        working-directory: scripts/real-captain-invite-burnaby-c
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/service-account-staging.json
+        run: node dist/invite.js --confirm-real-captain-invite | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove credential file
+        if: always()
+        run: rm -f "$RUNNER_TEMP/service-account-staging.json"

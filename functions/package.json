@@ -12,13 +12,16 @@
     "serve": "npm run build && firebase emulators:start --only functions,firestore",
     "shell": "npm run build && firebase functions:shell",
     "deploy": "firebase deploy --only functions",
-    "logs": "firebase functions:log"
+    "logs": "firebase functions:log",
+    "test": "tsc -p tsconfig.test.json && node --test \"dist-test/**/*.test.js\""
   },
   "dependencies": {
     "firebase-admin": "^13.10.0",
     "firebase-functions": "^7.2.5"
   },
   "devDependencies": {
-    "typescript": "^5.9.2"
+    "typescript": "^5.9.2",
+    "@firebase/rules-unit-testing": "^5.0.2",
+    "@types/node": "^22.0.0"
   }
 }

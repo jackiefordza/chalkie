@@ -1,0 +1,50 @@
+name: TEMP — Smoke-test invite seed (staging)
+
+# TEMPORARY. Manual-only. Creates exactly ONE throwaway, wholly isolated
+# team (teams/smoke-test-team, under a fake league/season/division that
+# exists nowhere else in chalkie-app-staging) and ONE pending Captain
+# Invite on it, for a one-off manual smoke test of the invite-flow fix
+# (commit 0c0d8ba) already deployed to the staging Hosting Preview
+# channel. scripts/smoke-test-invite-seed/ never creates or modifies any
+# Firebase Auth account and never touches any real league/season/
+# division/team/captain/VC data — see that script's README.md. This
+# workflow and the script it runs are removed from the branch immediately
+# after use.
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  seed:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        working-directory: scripts/smoke-test-invite-seed
+        run: npm ci
+
+      - name: Typecheck + build
+        working-directory: scripts/smoke-test-invite-seed
+        run: npm run build
+
+      - name: Write staging Firebase service-account credential
+        env:
+          FIREBASE_SERVICE_ACCOUNT_STAGING: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_STAGING }}
+        run: printf '%s' "$FIREBASE_SERVICE_ACCOUNT_STAGING" > "$RUNNER_TEMP/service-account-staging.json"
+
+      - name: Create the one throwaway smoke-test invite against chalkie-app-staging
+        working-directory: scripts/smoke-test-invite-seed
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/service-account-staging.json
+        run: node dist/seed.js --confirm-smoke-test-invite | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove credential file
+        if: always()
+        run: rm -f "$RUNNER_TEMP/service-account-staging.json"

@@ -1,0 +1,20 @@
+{
+  "name": "smoke-test-invite-cleanup",
+  "version": "1.0.0",
+  "private": true,
+  "description": "TEMPORARY standalone Admin SDK script. Deletes exactly the three documents/accounts scripts/smoke-test-invite-seed created (teams/smoke-test-team, invites/{id}, and the one throwaway Auth account that accepted the smoke-test invite) from chalkie-app-staging, after verifying the Auth account belongs ONLY to the throwaway team. Never touches any real league/season/division/team/captain/VC account or data. See README.md before running anything.",
+  "engines": {
+    "node": "20"
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "firebase-admin": "^13.10.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2",
+    "@types/node": "^22.0.0"
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "name": "real-team-contacts-seed",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Standalone Admin SDK script that writes the real Division 2/3 captain/vice-captain reference contact info (name + mobile number, supplied by the league) and real venue addresses onto the 16 existing real team documents in chalkie-app-staging. Never imports a venue telephone number. See README.md before running anything.",
+  "engines": {
+    "node": "20"
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "firebase-admin": "^13.10.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2",
+    "@types/node": "^22.0.0"
+  }
+}

@@ -3,7 +3,7 @@
 // (Match Centre, playerSeasonStats, standings) reads. Extracted from
 // results-entry.tsx so it can be unit-tested without any React/Firebase
 // dependency — see matchResultDraft.test.ts.
-import type { GameType, MatchGame, MatchSide } from '@/types';
+import type { GameType, HighCheckout, MatchGame, MatchSide } from '@/types';
 
 export const LEGS_PER_GAME = 3;
 
@@ -108,12 +108,45 @@ export function toMatchGame(g: DraftGame): MatchGame {
   };
 }
 
+// Client-side mirror of functions/src/index.ts's computeTotals — used ONLY
+// for display (the reconciled-but-not-yet-confirmed match sheet shown at
+// pending_confirmation, before onMatchConfirmed has computed and written the
+// official Match.homeGamesWon/awayGamesWon/homeLegsWon/awayLegsWon fields).
+// Never used to write anything — the server's own computeTotals remains the
+// sole source of truth for the confirmed record.
+export interface GamesTotals {
+  homeGamesWon: number;
+  awayGamesWon: number;
+  homeLegsWon: number;
+  awayLegsWon: number;
+}
+
+export function computeGamesTotals(games: MatchGame[]): GamesTotals {
+  let homeGamesWon = 0, awayGamesWon = 0, homeLegsWon = 0, awayLegsWon = 0;
+  for (const game of games) {
+    const gameHomeLegs = game.legs.filter((l) => l.winner === 'home').length;
+    const gameAwayLegs = game.legs.filter((l) => l.winner === 'away').length;
+    homeLegsWon += gameHomeLegs;
+    awayLegsWon += gameAwayLegs;
+    if (gameHomeLegs > gameAwayLegs) homeGamesWon++; else awayGamesWon++;
+  }
+  return { homeGamesWon, awayGamesWon, homeLegsWon, awayLegsWon };
+}
+
 export function slotsFor(type: GameType): number {
   return type === 'singles' ? 1 : 2;
 }
 
-export function isGameComplete(game: DraftGame): boolean {
+// `ownSide`, when passed, means this is a captain's own-team-only submission
+// draft: only THAT side needs its player slots filled (the opponent's side
+// is never touched, by construction — see results-entry.tsx). Omitted (the
+// default) requires both sides filled, for admin correction of the final
+// merged record, where both sides are genuinely being edited.
+export function isGameComplete(game: DraftGame, ownSide?: MatchSide): boolean {
   const need = slotsFor(game.type);
+  if (ownSide) {
+    return (ownSide === 'home' ? game.homePlayerIds : game.awayPlayerIds).length === need && game.score !== null;
+  }
   return (
     game.homePlayerIds.length === need
     && game.awayPlayerIds.length === need
@@ -121,12 +154,101 @@ export function isGameComplete(game: DraftGame): boolean {
   );
 }
 
-export function normalizeGameForCompare(g: DraftGame): string {
-  return JSON.stringify({
-    homePlayerIds: [...g.homePlayerIds].sort(),
-    awayPlayerIds: [...g.awayPlayerIds].sort(),
-    score: g.score,
-    oneEighties: [...g.oneEighties].sort(),
-    highCheckouts: g.highCheckouts.map((hc) => `${hc.playerId}:${hc.value}`).sort(),
+// ── Merging two reconciled submissions' own-team stats ──────────────────
+// Mirrors functions/src/index.ts's buildMergedGame/mergeSubmissionGames
+// exactly (independently implemented, not imported — functions and mobile
+// don't share code, see that file's own header) so admin-dispute.tsx can
+// correctly combine both sides' own-team stats for a game whose pairing/
+// score already agree, instead of discarding one side's stats by naively
+// picking the other side's whole submission. Leg index carries no meaning
+// to any consumer of this data (see toMatchGame above) — which specific
+// slot a stat lands in is cosmetic.
+function distributeOneEightiesByLeg(oneEighties: string[]): string[][] {
+  const byLeg: string[][] = Array.from({ length: LEGS_PER_GAME }, () => []);
+  [...oneEighties].sort().forEach((playerId, i) => {
+    byLeg[i % LEGS_PER_GAME].push(playerId);
   });
+  return byLeg;
+}
+
+function distributeHighCheckouts(highCheckouts: HighCheckout[]): (HighCheckout | null)[] {
+  const sorted = [...highCheckouts].sort((a, b) => (
+    a.playerId === b.playerId ? a.value.localeCompare(b.value) : a.playerId.localeCompare(b.playerId)
+  ));
+  return Array.from({ length: LEGS_PER_GAME }, (_, i) => sorted[i] ?? null);
+}
+
+// Combines one already-score-agreed game from each side — each side's own
+// PAIRING comes from its own submission (homeGame.homePlayerIds,
+// awayGame.awayPlayerIds: the real own-team-only merge, since neither
+// submission ever contains the opponent's pairing at all); each side's
+// own-team 180s/checkouts are likewise pulled from its own submission only,
+// filtered to that side's own players as a defense-in-depth re-check.
+// `legWinnerSource` picks whose leg-winner SEQUENCE (i.e. whose reported
+// score) is authoritative — defaults to homeGame, but admin-dispute.tsx
+// passes awayGame explicitly when the admin is resolving a score
+// disagreement in away's favor; mirrors functions/src/index.ts's
+// buildMergedGame, which has no such choice to make since it only ever runs
+// once pairingsAndScoreAgree has already confirmed both sides match.
+// Score-only agreement check — mirrors functions/src/index.ts's
+// pairingsAndScoreAgree exactly. Own-team-only model: there's no pairing to
+// compare (neither submission ever contains the opponent's players at all),
+// only whether each side's independently-reported leg-winner COUNT for a
+// given game agrees. Used client-side only for display (deciding whether
+// two already-fetched raw submissions can be shown merged) — the server's
+// own check in onSubmissionWrite remains the sole authority over whether a
+// match actually moves to pending_confirmation vs disputed.
+export function scoresAgree(a: MatchGame[], b: MatchGame[]): boolean {
+  if (a.length !== b.length) return false;
+  const bByOrder = new Map(b.map((g) => [g.order, g]));
+  return a.every((ag) => {
+    const bg = bByOrder.get(ag.order);
+    if (!bg) return false;
+    const aHomeLegs = ag.legs.filter((l) => l.winner === 'home').length;
+    const bHomeLegs = bg.legs.filter((l) => l.winner === 'home').length;
+    return aHomeLegs === bHomeLegs;
+  });
+}
+
+// Merges two full own-side submissions (every game) into the complete
+// reconciled record — mirrors functions/src/index.ts's mergeSubmissionGames
+// exactly, built from mergeGame per game. Callers should only use this once
+// scoresAgree(homeGames, awayGames) is true; results-entry.tsx uses it to
+// show the correct merged record — never either side's raw submission —
+// for the rare case both teams have genuinely submitted but the match
+// hasn't (yet) been moved to pending_confirmation server-side.
+export function mergeSubmissionGames(homeGames: MatchGame[], awayGames: MatchGame[]): MatchGame[] {
+  const awayByOrder = new Map(awayGames.map((g) => [g.order, g]));
+  return [...homeGames]
+    .sort((a, b) => a.order - b.order)
+    .map((hg) => mergeGame(hg, awayByOrder.get(hg.order)!));
+}
+
+export function mergeGame(homeGame: MatchGame, awayGame: MatchGame, legWinnerSource: MatchGame = homeGame): MatchGame {
+  const homeOwn = new Set(homeGame.homePlayerIds);
+  const awayOwn = new Set(awayGame.awayPlayerIds);
+
+  const homeOneEighties = homeGame.legs.flatMap((l) => l.oneEighties).filter((id) => homeOwn.has(id));
+  const awayOneEighties = awayGame.legs.flatMap((l) => l.oneEighties).filter((id) => awayOwn.has(id));
+  const mergedOneEightiesByLeg = distributeOneEightiesByLeg([...homeOneEighties, ...awayOneEighties]);
+
+  const homeCheckouts = homeGame.legs
+    .map((l) => l.highCheckout)
+    .filter((hc): hc is HighCheckout => hc !== null && homeOwn.has(hc.playerId));
+  const awayCheckouts = awayGame.legs
+    .map((l) => l.highCheckout)
+    .filter((hc): hc is HighCheckout => hc !== null && awayOwn.has(hc.playerId));
+  const mergedCheckouts = distributeHighCheckouts([...homeCheckouts, ...awayCheckouts]);
+
+  return {
+    order: homeGame.order,
+    type: homeGame.type,
+    homePlayerIds: homeGame.homePlayerIds,
+    awayPlayerIds: awayGame.awayPlayerIds,
+    legs: legWinnerSource.legs.map((leg, i) => ({
+      winner: leg.winner,
+      oneEighties: mergedOneEightiesByLeg[i],
+      highCheckout: mergedCheckouts[i] ? { playerId: mergedCheckouts[i]!.playerId, value: mergedCheckouts[i]!.value } : null,
+    })),
+  };
 }

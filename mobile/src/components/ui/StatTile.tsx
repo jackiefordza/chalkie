@@ -15,8 +15,12 @@ interface StatTileProps {
 }
 
 export function StatTile({ label, value, tone, className = '' }: StatTileProps) {
+  // Inset/recessed rather than the general "elevated" surface-2 tile — a
+  // stat counter reads as a tactile, pressed-in readout, not a raised
+  // card. The hairline border sells the groove edge in light mode; in
+  // dark mode it's a dark seam rather than a light highlight (see theme.ts).
   return (
-    <View className={`rounded-2xl bg-surface-2 dark:bg-surface-2-dark p-4 items-center ${className}`}>
+    <View className={`rounded-2xl bg-surface-inset dark:bg-surface-inset-dark border border-inset-border dark:border-inset-border-dark p-4 items-center ${className}`}>
       <Stat tone={tone}>{value}</Stat>
       <Caption className="mt-1">{label}</Caption>
     </View>

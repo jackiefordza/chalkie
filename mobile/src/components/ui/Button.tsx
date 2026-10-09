@@ -27,7 +27,10 @@ interface Variant {
 // giving each variant its own tone-matched spinner (a bigger change than
 // this pass calls for).
 const VARIANTS: Record<ButtonVariant, Variant> = {
-  primary: { container: 'bg-brand-strong dark:bg-brand-strong-dark shadow-sm', text: 'text-brand-cta-ink dark:text-brand-cta-ink-dark', spinner: RAW.brandCtaInk },
+  // Only primary gets a raised shadow — "not every surface has the same
+  // effect": secondary/good/danger/ghost stay flat, so the one button
+  // that reads as "the action" is also the one with physical lift.
+  primary: { container: 'bg-brand-strong dark:bg-brand-strong-dark', text: 'text-brand-cta-ink dark:text-brand-cta-ink-dark', spinner: RAW.brandCtaInk },
   secondary: { container: 'bg-surface-2 dark:bg-surface-2-dark', text: 'text-text dark:text-text-dark', spinner: RAW.brand },
   good: { container: 'bg-sage-fill dark:bg-sage-fill-dark', text: 'text-sage-ink dark:text-sage-ink-dark', spinner: RAW.brand },
   danger: { container: 'bg-coral-fill dark:bg-coral-fill-dark', text: 'text-coral-ink dark:text-coral-ink-dark', spinner: RAW.brand },
@@ -50,6 +53,7 @@ export function Button({
   loading = false,
   children,
   className = '',
+  style,
   ...rest
 }: ButtonProps) {
   const v = VARIANTS[variant];
@@ -61,13 +65,22 @@ export function Button({
   // both schemes, so their spinner colour (unchanged since before this
   // phase) doesn't need to.
   const { colorScheme } = useColorScheme();
-  const spinnerColor = variant === 'primary' && colorScheme === 'dark' ? RAW.brandCtaInkDark : v.spinner;
+  const isDark = colorScheme === 'dark';
+  const spinnerColor = variant === 'primary' && isDark ? RAW.brandCtaInkDark : v.spinner;
+  // Same "light mode: fuller shadow / dark mode: barely any" split Card
+  // uses — a primary CTA should feel raised, but dark mode still leans on
+  // contrast rather than shadow for that.
+  const primaryElevation = variant === 'primary' ? (isDark
+    ? { shadowColor: '#000000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.25, shadowRadius: 3, elevation: 2 }
+    : { shadowColor: '#000000', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.15, shadowRadius: 6, elevation: 3 }
+  ) : undefined;
 
   return (
     <TouchableOpacity
       activeOpacity={0.8}
       disabled={isDisabled}
       className={`rounded-full items-center justify-center flex-row gap-2 ${padding} ${v.container} ${isDisabled ? 'opacity-40' : ''} ${className}`}
+      style={[primaryElevation, style]}
       {...rest}
     >
       {loading ? (

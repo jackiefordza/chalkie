@@ -6,6 +6,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { TEST_HOME_EMAIL, TEST_AWAY_EMAIL, TEST_PASSWORD } from '@/lib/testData';
 import { FONT_DISPLAY } from '@/styles/typography';
 import { RAW } from '@/lib/theme';
+import { APP_NAME } from '@/lib/brand';
 import { Heading, Body, Caption, Button, Card, Input, Label, AppIcon } from '@/components/ui';
 
 export default function LoginScreen() {
@@ -61,7 +62,7 @@ export default function LoginScreen() {
               className="text-text dark:text-text-dark"
               style={{ fontFamily: FONT_DISPLAY, fontSize: 36, fontWeight: '700', letterSpacing: -0.5 }}
             >
-              Chalkie
+              {APP_NAME}
             </Text>
             <Body className="mt-1">Darts League Management</Body>
           </View>
@@ -112,7 +113,7 @@ export default function LoginScreen() {
           {/* Register link */}
           <View className="items-center mt-6">
             <Body onPress={() => router.push('/(auth)/register')} suppressHighlighting>
-              New to Chalkie? <Body tone="brand" weight="semibold">Create Account</Body>
+              New to {APP_NAME}? <Body tone="brand" weight="semibold">Create Account</Body>
             </Body>
           </View>
 

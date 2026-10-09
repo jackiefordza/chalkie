@@ -8,8 +8,10 @@ import {
 import { db } from '@/config/firebase';
 import { useAuthStore } from '@/stores/authStore';
 import { RAW, toneClasses } from '@/lib/theme';
-import { FONT_MONO, FONT_DISPLAY } from '@/styles/typography';
-import { STATUS_LABEL, STATUS_TONE } from '@/lib/matchStatus';
+import { FONT_MONO, FONT_DISPLAY_EXTRABOLD, FONT_DISPLAY_BLACK } from '@/styles/typography';
+import { STATUS_LABEL, STATUS_TONE, nextMatchCtaLabel } from '@/lib/matchStatus';
+import { competitionTypeLabel, isNotableCompetitionType } from '@/lib/competitionType';
+import { HomeAwayBadge } from '@/components/MatchCentre';
 import { formatTeamRecord } from '@/lib/matchScore';
 import { resolveOpponentInfo } from '@/lib/opponentInfo';
 import { recentForm } from '@/lib/recentForm';
@@ -189,9 +191,19 @@ function NextMatchHero({ match, teamId, opponentName, form, isCaptainOrVC }: Nex
 
   const opponentInfo = match ? resolveOpponentInfo(match, teamId, opponentTableRows, opponentLeagueMatches) : null;
 
+  // The #1 "what's happening now" surface on the whole screen — everything
+  // else that matters now has real elevation (Card, Sheet, the standings
+  // table); this was still perfectly flat. Same soft-shadow values Card.tsx
+  // uses, kept local here since this block intentionally isn't a <Card>
+  // (Phase E's own "not every fixture/section is a rounded card" call,
+  // which still holds — this only adds the depth, not the rounding/shape).
+  const heroElevation = isDark
+    ? { shadowColor: '#000000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 6, elevation: 2 }
+    : { shadowColor: '#000000', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.08, shadowRadius: 14, elevation: 3 };
+
   if (!match || !opponentId) {
     return (
-      <View className="rounded-lg border border-border dark:border-border-dark bg-surface dark:bg-surface-dark px-5 py-5 mb-6">
+      <View style={heroElevation} className="rounded-lg border border-border dark:border-border-dark border-l-4 border-l-brand dark:border-l-brand-dark bg-surface dark:bg-surface-dark px-5 py-5 mb-6">
         <EyebrowCaption>Next Match</EyebrowCaption>
         <Text className={`text-[13px] text-text-dim dark:text-text-dim-dark ${form.length > 0 ? 'mt-2 mb-3' : 'mt-2'}`}>
           No upcoming fixture scheduled
@@ -208,34 +220,60 @@ function NextMatchHero({ match, teamId, opponentName, form, isCaptainOrVC }: Nex
 
   const tone = STATUS_TONE[match.status];
   const tc = tone ? toneClasses(tone) : null;
-  const ctaLabel = match.status === 'scheduled' ? 'Enter Result'
-    : match.status === 'disputed' ? 'Resolve Differences'
-      : match.status === 'awaiting_confirmation' && hasSubmitted === false ? 'Review Their Result'
-        : match.status === 'awaiting_confirmation' && hasSubmitted === true ? 'View Submission'
-          : 'View / Edit Result';
+  const ctaLabel = nextMatchCtaLabel(match.status, hasSubmitted, opponentName);
 
   const content = (
-    <View className="rounded-lg border border-border dark:border-border-dark bg-surface dark:bg-surface-dark px-5 py-5 mb-6">
-      <View className="flex-row items-center justify-between mb-4">
-        <EyebrowCaption>Next Match</EyebrowCaption>
-        {tc && (
-          <View className={`rounded px-2 py-1 ${tc.fill}`}>
-            <Text className={`text-[10px] font-bold uppercase tracking-wide ${tc.ink}`}>
-              {STATUS_LABEL[match.status]}
-            </Text>
-          </View>
-        )}
+    <View
+      style={heroElevation}
+      className="rounded-lg border border-border dark:border-border-dark border-l-4 border-l-brand dark:border-l-brand-dark bg-surface dark:bg-surface-dark px-5 py-5 mb-6"
+    >
+      <View className="flex-row items-center justify-between mb-3">
+        <Text
+          className="text-[11px] text-brand dark:text-brand-dark tracking-wider"
+          style={{ fontFamily: FONT_DISPLAY_EXTRABOLD }}
+        >
+          NEXT MATCH
+        </Text>
+        <View className="flex-row items-center gap-1.5">
+          {isNotableCompetitionType(match.competitionType) && (
+            <View className="rounded px-2 py-1 bg-butter-fill dark:bg-butter-fill-dark">
+              <Text className="text-[10px] font-bold uppercase tracking-wide text-butter-ink dark:text-butter-ink-dark">
+                {competitionTypeLabel(match.competitionType)}
+              </Text>
+            </View>
+          )}
+          {tc && (
+            <View className={`rounded px-2 py-1 ${tc.fill}`}>
+              <Text className={`text-[10px] font-bold uppercase tracking-wide ${tc.ink}`}>
+                {STATUS_LABEL[match.status]}
+              </Text>
+            </View>
+          )}
+        </View>
       </View>
 
-      <View className="flex-row items-baseline gap-1.5">
-        <Text className="text-[19px] font-bold text-text dark:text-text-dark" style={{ fontFamily: FONT_DISPLAY }}>You</Text>
-        <Text className="text-[12px] text-text-faint dark:text-text-faint-dark">({isHome ? 'H' : 'A'})</Text>
-      </View>
-      <Text className="text-[15px] text-text-dim dark:text-text-dim-dark mb-4" numberOfLines={1}>vs {opponentName}</Text>
-
-      <Text className="text-[13px] text-text-dim dark:text-text-dim-dark mb-1" numberOfLines={1}>
-        {formatDate(match.scheduledDate)}{match.venue ? ` · ${match.venue}` : ''}
+      {/* The opponent, not "You", is the real headline here — the single
+          most important fact on the whole dashboard ("who are we playing
+          next") gets the heaviest type weight on the screen, not a filler
+          "You" label. HOME/AWAY (below) already carries the "your side"
+          framing, so it's never said twice. */}
+      <Text
+        className="text-[22px] text-text dark:text-text-dark mb-3"
+        style={{ fontFamily: FONT_DISPLAY_BLACK }}
+        numberOfLines={1}
+      >
+        vs {opponentName}
       </Text>
+
+      {/* HOME/AWAY as an explicit word + icon + its own tint (HomeAwayBadge),
+          replacing the old "(H)/(A)" parenthetical — immediately obvious,
+          never colour-only. */}
+      <View className="flex-row items-center gap-1.5 mb-1">
+        <Text className="text-[13px] text-text-dim dark:text-text-dim-dark" numberOfLines={1}>
+          {formatDate(match.scheduledDate)} ·
+        </Text>
+        <HomeAwayBadge isHome={isHome} />
+      </View>
 
       {/* Opponent snapshot — their league position and recent form, never
           the viewer's own (see NextMatchHeroProps comment / opponentInfo.ts).

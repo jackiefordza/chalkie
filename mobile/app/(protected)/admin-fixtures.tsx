@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { View, TouchableOpacity, ActivityIndicator, Alert, useWindowDimensions } from 'react-native';
+import { View, TouchableOpacity, ActivityIndicator, useWindowDimensions } from 'react-native';
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import {
   collection, doc, onSnapshot, query, where, orderBy,
@@ -10,7 +10,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { generateRoundRobinFixtures } from '@/lib/fixtures';
 import { RAW } from '@/lib/theme';
 import { STATUS_LABEL, STATUS_TONE } from '@/lib/matchStatus';
-import { Screen, Heading, Body, Caption, Badge, Button, Card, ListRow, Input, Label, Sheet, AppBar } from '@/components/ui';
+import { Screen, Heading, Body, Caption, Badge, Button, Card, ListRow, Input, Label, Sheet, AppBar, ConfirmDialog } from '@/components/ui';
 import { AdminShell } from '@/components/admin/AdminShell';
 import type { Match } from '@/types';
 
@@ -181,11 +181,14 @@ function useFixturesController(divisionId: string | undefined, leagueId: string 
   const [isGenerating, setIsGenerating] = useState(false);
   const [genError, setGenError] = useState<string | null>(null);
   const [isRegenerating, setIsRegenerating] = useState(false);
+  const [deleteAllDialogOpen, setDeleteAllDialogOpen] = useState(false);
 
   const [editTarget, setEditTarget] = useState<Match | null>(null);
   const [editDateText, setEditDateText] = useState('');
   const [editVenue, setEditVenue] = useState('');
+  const [editDateError, setEditDateError] = useState<string | null>(null);
   const [isSavingEdit, setIsSavingEdit] = useState(false);
+  const [deleteFixtureDialogOpen, setDeleteFixtureDialogOpen] = useState(false);
 
   useEffect(() => {
     if (!divisionId || !leagueId) return;
@@ -297,46 +300,30 @@ function useFixturesController(divisionId: string | undefined, leagueId: string 
   async function deleteAllFixtures() {
     const nonScheduled = matches.filter((m) => m.status !== 'scheduled');
     if (nonScheduled.length > 0) {
-      Alert.alert(
-        'Can’t regenerate fixtures',
+      throw new Error(
         `${nonScheduled.length} fixture${nonScheduled.length === 1 ? '' : 's'} in ${divisionName} already ${nonScheduled.length === 1 ? 'has' : 'have'} a result recorded (submitted, confirmed, or disputed). Regenerating would destroy that history, so it's blocked while any exist — resolve or correct those results first, or delete individual still-scheduled fixtures one at a time instead.`,
-        [{ text: 'OK' }],
       );
-      return;
     }
 
     const expectedCount = matches.length;
-    Alert.alert(
-      'Delete all fixtures',
-      `Delete all ${expectedCount} fixtures for ${divisionName}? This can't be undone.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete All', style: 'destructive',
-          onPress: async () => {
-            // Defense in depth against a race (e.g. a result gets submitted
-            // in the moment between opening this dialog and confirming it):
-            // scope the actual delete query to status=='scheduled' so this
-            // is structurally incapable of deleting a fixture with any
-            // result recorded, regardless of what the check above saw.
-            const snap = await getDocs(query(
-              collection(db, 'matches'),
-              where('leagueId', '==', leagueId),
-              where('divisionId', '==', divisionId),
-              where('status', '==', 'scheduled'),
-            ));
-            if (snap.size !== expectedCount) {
-              Alert.alert('Fixtures changed', 'Something changed since you opened this screen — please review the fixtures and try again.');
-              return;
-            }
-            const batch = writeBatch(db);
-            snap.docs.forEach((d) => batch.delete(d.ref));
-            await batch.commit();
-            setIsRegenerating(true);
-          },
-        },
-      ],
-    );
+    // Defense in depth against a race (e.g. a result gets submitted in the
+    // moment between opening this dialog and confirming it): scope the
+    // actual delete query to status=='scheduled' so this is structurally
+    // incapable of deleting a fixture with any result recorded, regardless
+    // of what the check above saw.
+    const snap = await getDocs(query(
+      collection(db, 'matches'),
+      where('leagueId', '==', leagueId),
+      where('divisionId', '==', divisionId),
+      where('status', '==', 'scheduled'),
+    ));
+    if (snap.size !== expectedCount) {
+      throw new Error('Something changed since you opened this screen — please review the fixtures and try again.');
+    }
+    const batch = writeBatch(db);
+    snap.docs.forEach((d) => batch.delete(d.ref));
+    await batch.commit();
+    setIsRegenerating(true);
   }
 
   function openEdit(match: Match) {
@@ -351,12 +338,14 @@ function useFixturesController(divisionId: string | undefined, leagueId: string 
     const d = match.scheduledDate;
     setEditDateText(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`);
     setEditVenue(match.venue ?? '');
+    setEditDateError(null);
   }
 
   async function saveEdit() {
     if (!editTarget) return;
     const parsed = parseDateInput(editDateText);
-    if (!parsed) { Alert.alert('Invalid date', 'Enter the date as YYYY-MM-DD'); return; }
+    if (!parsed) { setEditDateError('Enter the date as YYYY-MM-DD'); return; }
+    setEditDateError(null);
     setIsSavingEdit(true);
     try {
       await updateDoc(doc(db, 'matches', editTarget.id), {
@@ -372,11 +361,9 @@ function useFixturesController(divisionId: string | undefined, leagueId: string 
   async function deleteFixture() {
     if (!editTarget) return;
     if (editTarget.status !== 'scheduled') {
-      Alert.alert('Can’t delete', 'This fixture already has results submitted against it.');
-      return;
+      throw new Error('This fixture already has results submitted against it.');
     }
     await deleteDoc(doc(db, 'matches', editTarget.id));
-    setEditTarget(null);
   }
 
   const showGenerator = !isLoading && (matches.length === 0 || isRegenerating);
@@ -384,7 +371,9 @@ function useFixturesController(divisionId: string | undefined, leagueId: string 
   return {
     divisionName, teams, matches, isLoading, loadError,
     startDateText, setStartDateText, intervalDays, setIntervalDays, isGenerating, genError, isRegenerating, setIsRegenerating,
-    editTarget, setEditTarget, editDateText, setEditDateText, editVenue, setEditVenue, isSavingEdit,
+    deleteAllDialogOpen, setDeleteAllDialogOpen,
+    editTarget, setEditTarget, editDateText, setEditDateText, editVenue, setEditVenue, editDateError, isSavingEdit,
+    deleteFixtureDialogOpen, setDeleteFixtureDialogOpen,
     teamName, rounds, generateFixtures, deleteAllFixtures, openEdit, saveEdit, deleteFixture, showGenerator,
   };
 }
@@ -453,10 +442,10 @@ function FixturesBody({ c, isDesktop, statusFilter }: { c: FixturesController; i
           )}
         </Card>
       ) : isDesktop ? (
-        <DesktopFixtureTable matches={displayMatches} teamName={c.teamName} onEdit={c.openEdit} onDeleteAll={c.deleteAllFixtures} />
+        <DesktopFixtureTable matches={displayMatches} teamName={c.teamName} onEdit={c.openEdit} onDeleteAll={() => c.setDeleteAllDialogOpen(true)} />
       ) : (
         <>
-          <Button variant="danger" size="sm" className="self-end mb-3" onPress={c.deleteAllFixtures}>
+          <Button variant="danger" size="sm" className="self-end mb-3" onPress={() => c.setDeleteAllDialogOpen(true)}>
             Delete all & regenerate
           </Button>
 
@@ -478,7 +467,10 @@ function FixturesBody({ c, isDesktop, statusFilter }: { c: FixturesController; i
         </>
       )}
 
-      <Sheet visible={!!c.editTarget} onClose={() => c.setEditTarget(null)}>
+      <Sheet
+        visible={!!c.editTarget && !c.deleteFixtureDialogOpen}
+        onClose={() => { c.setEditTarget(null); }}
+      >
         <Heading size="lg" className="mb-1">Edit Fixture</Heading>
         <Body size="sm" className="mb-5">
           {c.editTarget ? `${c.teamName(c.editTarget.homeTeamId)} vs ${c.teamName(c.editTarget.awayTeamId)}` : ''}
@@ -490,15 +482,43 @@ function FixturesBody({ c, isDesktop, statusFilter }: { c: FixturesController; i
         <Label>Venue</Label>
         <Input value={c.editVenue} onChangeText={c.setEditVenue} placeholder="e.g. The Red Lion, 12 High St" autoCapitalize="words" className="mb-6" />
 
+        {c.editDateError && (
+          <Card tone="coral" className="mb-4">
+            <Body size="sm" tone="coral">{c.editDateError}</Body>
+          </Card>
+        )}
+
         <View className="flex-row gap-2.5 mb-3">
           <Button variant="ghost" className="flex-1" onPress={() => c.setEditTarget(null)}>Cancel</Button>
           <Button className="flex-1" disabled={c.isSavingEdit} loading={c.isSavingEdit} onPress={c.saveEdit}>Save</Button>
         </View>
 
         {c.editTarget?.status === 'scheduled' && (
-          <Button variant="danger" onPress={c.deleteFixture}>Delete this fixture</Button>
+          <Button variant="danger" onPress={() => c.setDeleteFixtureDialogOpen(true)}>Delete this fixture</Button>
         )}
       </Sheet>
+
+      <ConfirmDialog
+        visible={c.deleteFixtureDialogOpen}
+        title="Delete this fixture"
+        message={c.editTarget ? `Delete the ${c.teamName(c.editTarget.homeTeamId)} vs ${c.teamName(c.editTarget.awayTeamId)} fixture? This can't be undone.` : ''}
+        confirmLabel="Yes, Delete Fixture"
+        confirmVariant="danger"
+        onConfirm={c.deleteFixture}
+        onCancel={() => c.setDeleteFixtureDialogOpen(false)}
+        onSuccess={() => { c.setDeleteFixtureDialogOpen(false); c.setEditTarget(null); }}
+      />
+
+      <ConfirmDialog
+        visible={c.deleteAllDialogOpen}
+        title="Delete all fixtures"
+        message={`Delete all ${c.matches.length} fixtures for ${c.divisionName}? This can't be undone.`}
+        confirmLabel="Yes, Delete All"
+        confirmVariant="danger"
+        onConfirm={c.deleteAllFixtures}
+        onCancel={() => c.setDeleteAllDialogOpen(false)}
+        onSuccess={() => c.setDeleteAllDialogOpen(false)}
+      />
     </>
   );
 }

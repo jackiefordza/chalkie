@@ -1,15 +1,17 @@
 import { useState, useEffect } from 'react';
-import { View, TouchableOpacity, ActivityIndicator, Alert, useWindowDimensions } from 'react-native';
+import { View, TouchableOpacity, ActivityIndicator, useWindowDimensions } from 'react-native';
 import { Stack, useLocalSearchParams } from 'expo-router';
 import {
-  collection, doc, onSnapshot, query, where, updateDoc, getDoc, addDoc, writeBatch,
+  collection, doc, onSnapshot, query, where, updateDoc, getDoc, writeBatch, runTransaction,
 } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { db, functions } from '@/config/firebase';
 import { useAuthStore } from '@/stores/authStore';
 import { goBack } from '@/lib/navigation';
 import { RAW } from '@/lib/theme';
-import { Screen, Heading, Body, Caption, Button, Card, Avatar, ListRow, Input, Label, Badge, Sheet } from '@/components/ui';
+import { APP_NAME } from '@/lib/brand';
+import { DuplicatePlayerNameError, playerDocId } from '@/lib/players';
+import { Screen, Heading, Body, Caption, Button, Card, Avatar, ListRow, Input, Label, Badge, Sheet, ConfirmDialog } from '@/components/ui';
 import { AdminShell } from '@/components/admin/AdminShell';
 
 const DESKTOP_BREAKPOINT = 768;
@@ -48,8 +50,25 @@ export default function AdminTeamScreen() {
   const [vcUserId, setVcUserId] = useState<string | null>(null);
   const [captainName, setCaptainName] = useState<string | null>(null);
   const [vcName, setVcName] = useState<string | null>(null);
+
+  // Reference-only contact info for the REAL person this team's captain/VC
+  // slot belongs to (from scripts/real-team-contacts-seed) — distinct from
+  // captainName/vcName above, which reflect whoever is CURRENTLY linked via
+  // teams.captainUserId/viceCaptainUserId (nobody, until an invite is
+  // accepted).
+  const [refCaptainName, setRefCaptainName] = useState<string | null>(null);
+  const [refCaptainPhone, setRefCaptainPhone] = useState<string | null>(null);
+  const [refVcName, setRefVcName] = useState<string | null>(null);
+  const [refVcPhone, setRefVcPhone] = useState<string | null>(null);
+
+  const [inviteSheetRole, setInviteSheetRole] = useState<'captain' | 'viceCaptain' | null>(null);
+  const [isCreatingInvite, setIsCreatingInvite] = useState(false);
+  const [createdInvite, setCreatedInvite] = useState<{ inviteId: string; token: string } | null>(null);
+  const [inviteError, setInviteError] = useState<string | null>(null);
+  const [isRevokingInvite, setIsRevokingInvite] = useState(false);
   const [roleSheetPlayer, setRoleSheetPlayer] = useState<Player | null>(null);
   const [isChangingRole, setIsChangingRole] = useState(false);
+  const [changeRoleError, setChangeRoleError] = useState<string | null>(null);
   const [players, setPlayers] = useState<Player[]>([]);
   const [otherTeams, setOtherTeams] = useState<OtherTeam[]>([]);
 
@@ -61,9 +80,11 @@ export default function AdminTeamScreen() {
   const [showAddPlayer, setShowAddPlayer] = useState(false);
   const [newPlayerName, setNewPlayerName] = useState('');
   const [isAddingPlayer, setIsAddingPlayer] = useState(false);
+  const [addPlayerError, setAddPlayerError] = useState<string | null>(null);
 
   const [moveTarget, setMoveTarget] = useState<Player | null>(null);
   const [isMoving, setIsMoving] = useState(false);
+  const [moveError, setMoveError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!teamId) return;
@@ -77,6 +98,10 @@ export default function AdminTeamScreen() {
 
       setCaptainUserId(data.captainUserId ?? null);
       setVcUserId(data.viceCaptainUserId ?? null);
+      setRefCaptainName(data.captainName ?? null);
+      setRefCaptainPhone(data.captainPhone ?? null);
+      setRefVcName(data.viceCaptainName ?? null);
+      setRefVcPhone(data.viceCaptainPhone ?? null);
 
       setSeasonId(data.seasonId ?? null);
       setDivisionId(data.divisionId ?? null);
@@ -153,6 +178,7 @@ export default function AdminTeamScreen() {
     if (!teamId || !player.claimedByUserId) return;
     const targetUid = player.claimedByUserId;
     setIsChangingRole(true);
+    setChangeRoleError(null);
     try {
       const teamSnap = await getDoc(doc(db, 'teams', teamId));
       if (!teamSnap.exists()) return;
@@ -188,70 +214,65 @@ export default function AdminTeamScreen() {
       await batch.commit();
       setRoleSheetPlayer(null);
     } catch (e: unknown) {
-      Alert.alert('Error', (e as Error).message ?? 'Something went wrong');
+      setChangeRoleError((e as Error).message ?? 'Something went wrong');
     } finally {
       setIsChangingRole(false);
     }
   }
 
   async function addPlayer() {
-    if (!newPlayerName.trim() || !teamId || !appUser?.leagueId) return;
+    const trimmedName = newPlayerName.trim();
+    if (!trimmedName || !teamId || !appUser?.leagueId) return;
     setIsAddingPlayer(true);
+    setAddPlayerError(null);
     try {
-      await addDoc(collection(db, 'players'), {
-        leagueId: appUser.leagueId,
-        teamId,
-        name: newPlayerName.trim(),
-        claimedByUserId: null,
+      const ref = doc(db, 'players', playerDocId(teamId, trimmedName));
+      // Transaction (not a plain create) so the same-name check and the
+      // write are atomic — see players.ts: two concurrent adds for the same
+      // normalized name resolve to the identical document, so Firestore
+      // itself rejects whichever transaction loses the race, rather than a
+      // separate query-then-write that both could pass.
+      await runTransaction(db, async (tx) => {
+        const existing = await tx.get(ref);
+        if (existing.exists()) throw new DuplicatePlayerNameError(trimmedName);
+        tx.set(ref, {
+          leagueId: appUser.leagueId,
+          teamId,
+          name: trimmedName,
+          claimedByUserId: null,
+        });
       });
       setNewPlayerName('');
       setShowAddPlayer(false);
     } catch (e: unknown) {
-      Alert.alert('Error', (e as Error).message ?? 'Something went wrong');
+      setAddPlayerError(e instanceof DuplicatePlayerNameError ? e.message : (e as Error).message ?? 'Something went wrong');
     } finally {
       setIsAddingPlayer(false);
     }
   }
 
-  function confirmDeletePlayer(player: Player) {
-    const claimed = !!player.claimedByUserId;
-    Alert.alert(
-      'Delete player',
-      claimed
-        ? `${player.name} has a linked account. Deleting removes them from this team and sends their account back to "find a team" — this can't be undone.`
-        : `Delete ${player.name}? This can't be undone.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Delete', style: 'destructive', onPress: () => deletePlayer(player) },
-      ],
-    );
-  }
-
   async function deletePlayer(player: Player) {
     if (!teamId) return;
-    try {
-      const batch = writeBatch(db);
-      batch.delete(doc(db, 'players', player.id));
-      if (player.claimedByUserId) {
-        batch.update(doc(db, 'users', player.claimedByUserId), {
-          teamId: null, playerId: null, divisionId: null, role: 'pending',
+    const batch = writeBatch(db);
+    batch.delete(doc(db, 'players', player.id));
+    if (player.claimedByUserId) {
+      batch.update(doc(db, 'users', player.claimedByUserId), {
+        teamId: null, playerId: null, divisionId: null, role: 'pending',
+      });
+      if (player.claimedByUserId === captainUserId || player.claimedByUserId === vcUserId) {
+        batch.update(doc(db, 'teams', teamId), {
+          captainUserId: player.claimedByUserId === captainUserId ? null : captainUserId,
+          viceCaptainUserId: player.claimedByUserId === vcUserId ? null : vcUserId,
         });
-        if (player.claimedByUserId === captainUserId || player.claimedByUserId === vcUserId) {
-          batch.update(doc(db, 'teams', teamId), {
-            captainUserId: player.claimedByUserId === captainUserId ? null : captainUserId,
-            viceCaptainUserId: player.claimedByUserId === vcUserId ? null : vcUserId,
-          });
-        }
       }
-      await batch.commit();
-    } catch (e: unknown) {
-      Alert.alert('Error', (e as Error).message ?? 'Something went wrong');
     }
+    await batch.commit();
   }
 
   async function movePlayerTo(player: Player, targetTeamId: string) {
     if (!teamId) return;
     setIsMoving(true);
+    setMoveError(null);
     try {
       const batch = writeBatch(db);
       batch.update(doc(db, 'players', player.id), { teamId: targetTeamId });
@@ -267,53 +288,96 @@ export default function AdminTeamScreen() {
       await batch.commit();
       setMoveTarget(null);
     } catch (e: unknown) {
-      Alert.alert('Error', (e as Error).message ?? 'Something went wrong');
+      setMoveError((e as Error).message ?? 'Something went wrong');
     } finally {
       setIsMoving(false);
     }
   }
 
-  const [isDeletingTeam, setIsDeletingTeam] = useState(false);
-
-  function confirmDeleteTeam() {
-    Alert.alert(
-      'Delete team',
-      `Delete ${teamName}? This removes all its players and any unplayed fixtures. Blocked if this team has any confirmed match results.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Delete', style: 'destructive', onPress: deleteTeam },
-      ],
-    );
-  }
+  const [deleteTeamDialogOpen, setDeleteTeamDialogOpen] = useState(false);
+  const [deletePlayerTarget, setDeletePlayerTarget] = useState<Player | null>(null);
 
   async function deleteTeam() {
     if (!teamId) return;
-    setIsDeletingTeam(true);
+    await httpsCallable(functions, 'adminDeleteTeam')({ teamId });
+  }
+
+  function openInviteSheet(role: 'captain' | 'viceCaptain') {
+    setInviteSheetRole(role);
+    setCreatedInvite(null);
+    setInviteError(null);
+  }
+
+  async function generateInvite() {
+    if (!teamId || !inviteSheetRole) return;
+    setIsCreatingInvite(true);
+    setInviteError(null);
     try {
-      await httpsCallable(functions, 'adminDeleteTeam')({ teamId });
-      goBack();
+      const result = await httpsCallable(functions, 'createTeamInvite')({ teamId, role: inviteSheetRole });
+      const data = result.data as { inviteId: string; token: string };
+      setCreatedInvite(data);
     } catch (e: unknown) {
-      Alert.alert("Can't delete team", (e as Error).message ?? 'Something went wrong');
+      setInviteError((e as Error).message ?? 'Something went wrong');
     } finally {
-      setIsDeletingTeam(false);
+      setIsCreatingInvite(false);
     }
   }
 
+  // Only revokes the invite still held in this sheet's own state — this
+  // screen doesn't keep a list of past-created pending invites, so once
+  // this sheet closes the only way to supersede an invite is to generate a
+  // new one for the same role (the old one just goes unused).
+  async function revokeCreatedInvite() {
+    if (!createdInvite) return;
+    setIsRevokingInvite(true);
+    try {
+      await updateDoc(doc(db, 'invites', createdInvite.inviteId), { status: 'revoked' });
+      setCreatedInvite(null);
+      setInviteSheetRole(null);
+    } catch (e: unknown) {
+      setInviteError((e as Error).message ?? 'Something went wrong');
+    } finally {
+      setIsRevokingInvite(false);
+    }
+  }
+
+  const inviteLink = createdInvite && typeof window !== 'undefined'
+    ? `${window.location.origin}/invite/${createdInvite.inviteId}?t=${encodeURIComponent(createdInvite.token)}`
+    : null;
+
   const captainCard = (
     <Card className="mb-4">
-      <View className={vcName ? 'mb-3' : ''}>
+      <View className="mb-3">
         <Caption className="mb-1">Captain</Caption>
         <Body tone={captainName ? 'strong' : 'dim'} weight="semibold">{captainName ?? 'Not yet assigned'}</Body>
+        {!captainName && (refCaptainName || refCaptainPhone) && (
+          <Body size="xs" className="mt-0.5">
+            On file: {refCaptainName ?? 'unnamed'}{refCaptainPhone ? ` · ${refCaptainPhone}` : ''}
+          </Body>
+        )}
+        {!captainName && (
+          <Button size="sm" variant="secondary" className="mt-2 self-start" onPress={() => openInviteSheet('captain')}>
+            Invite Captain
+          </Button>
+        )}
       </View>
-      {vcName && (
-        <View>
-          <Caption className="mb-1">Vice Captain</Caption>
-          <Body tone="strong" weight="semibold">{vcName}</Body>
-        </View>
-      )}
+      <View>
+        <Caption className="mb-1">Vice Captain</Caption>
+        <Body tone={vcName ? 'strong' : 'dim'} weight="semibold">{vcName ?? 'Not yet assigned'}</Body>
+        {!vcName && (refVcName || refVcPhone) && (
+          <Body size="xs" className="mt-0.5">
+            On file: {refVcName ?? 'unnamed'}{refVcPhone ? ` · ${refVcPhone}` : ''}
+          </Body>
+        )}
+        {!vcName && (
+          <Button size="sm" variant="secondary" className="mt-2 self-start" onPress={() => openInviteSheet('viceCaptain')}>
+            Invite Vice Captain
+          </Button>
+        )}
+      </View>
       {!captainName && (
         <Body size="xs" className="mt-2">
-          Waiting for someone to request this role — see the league Inbox.
+          A captain can also still request this role themselves — see the league Inbox.
         </Body>
       )}
     </Card>
@@ -401,7 +465,7 @@ export default function AdminTeamScreen() {
                       <TouchableOpacity onPress={() => setMoveTarget(player)}>
                         <Body size="xs" tone="brand" weight="semibold">Move</Body>
                       </TouchableOpacity>
-                      <TouchableOpacity onPress={() => confirmDeletePlayer(player)}>
+                      <TouchableOpacity onPress={() => setDeletePlayerTarget(player)}>
                         <Body size="xs" tone="coral" weight="semibold">Delete</Body>
                       </TouchableOpacity>
                     </View>
@@ -413,7 +477,7 @@ export default function AdminTeamScreen() {
         </View>
       )}
 
-      <Button variant="danger" className="mt-6" disabled={isDeletingTeam} loading={isDeletingTeam} onPress={confirmDeleteTeam}>
+      <Button variant="danger" className="mt-6" onPress={() => setDeleteTeamDialogOpen(true)}>
         Delete Team
       </Button>
     </>
@@ -421,7 +485,7 @@ export default function AdminTeamScreen() {
 
   const modals = (
     <>
-      <Sheet visible={!!roleSheetPlayer} onClose={() => setRoleSheetPlayer(null)}>
+      <Sheet visible={!!roleSheetPlayer} onClose={() => { setRoleSheetPlayer(null); setChangeRoleError(null); }}>
         {roleSheetPlayer && (
           <>
             <Heading size="sm" className="mb-1">Change Role</Heading>
@@ -447,26 +511,95 @@ export default function AdminTeamScreen() {
               })}
             </View>
             {isChangingRole && <ActivityIndicator color={RAW.brand} style={{ marginTop: 16 }} />}
-            <Button variant="ghost" className="mt-4" disabled={isChangingRole} onPress={() => setRoleSheetPlayer(null)}>
+            {changeRoleError && (
+              <Card tone="coral" className="mt-3">
+                <Body size="sm" tone="coral">{changeRoleError}</Body>
+              </Card>
+            )}
+            <Button variant="ghost" className="mt-4" disabled={isChangingRole} onPress={() => { setRoleSheetPlayer(null); setChangeRoleError(null); }}>
               Cancel
             </Button>
           </>
         )}
       </Sheet>
 
-      <Sheet visible={showAddPlayer} onClose={() => setShowAddPlayer(false)}>
+      <Sheet
+        visible={!!inviteSheetRole}
+        onClose={() => { setInviteSheetRole(null); setCreatedInvite(null); setInviteError(null); }}
+      >
+        <Heading size="lg" className="mb-1">
+          Invite {inviteSheetRole === 'viceCaptain' ? 'Vice Captain' : 'Captain'}
+        </Heading>
+        <Body size="sm" className="mb-4">
+          Generates a one-time link for {teamName || 'this team'}. Send it via WhatsApp/SMS — whoever opens it
+          signs in or creates a {APP_NAME} account, then is linked to this team automatically.
+        </Body>
+
+        {!createdInvite ? (
+          <>
+            <Button disabled={isCreatingInvite} loading={isCreatingInvite} onPress={generateInvite}>
+              Generate Link
+            </Button>
+          </>
+        ) : (
+          <>
+            <Card tone="brand" className="mb-3">
+              <Caption className="mb-1">Copy this link now — it's shown only once</Caption>
+              <Body size="sm" selectable style={{ fontFamily: 'monospace' }}>
+                {inviteLink ?? `(invite ${createdInvite.inviteId} created — open this screen on web to see the full link)`}
+              </Body>
+            </Card>
+            <Button
+              variant="ghost"
+              disabled={isRevokingInvite}
+              loading={isRevokingInvite}
+              onPress={revokeCreatedInvite}
+            >
+              Revoke This Invite
+            </Button>
+          </>
+        )}
+
+        {inviteError && (
+          <Card tone="coral" className="mt-3">
+            <Body size="sm" tone="coral">{inviteError}</Body>
+          </Card>
+        )}
+
+        <Button
+          variant="ghost"
+          className="mt-4"
+          onPress={() => { setInviteSheetRole(null); setCreatedInvite(null); setInviteError(null); }}
+        >
+          Close
+        </Button>
+      </Sheet>
+
+      <Sheet visible={showAddPlayer} onClose={() => { setShowAddPlayer(false); setAddPlayerError(null); }}>
         <Heading size="lg" className="mb-4">Add Player</Heading>
         <Label>Name</Label>
-        <Input value={newPlayerName} onChangeText={setNewPlayerName} placeholder="e.g. Alex Turner" autoCapitalize="words" autoFocus className="mb-6" />
+        <Input
+          value={newPlayerName}
+          onChangeText={(text) => { setNewPlayerName(text); setAddPlayerError(null); }}
+          placeholder="e.g. Alex Turner"
+          autoCapitalize="words"
+          autoFocus
+          className="mb-3"
+        />
+        {addPlayerError && (
+          <Card tone="coral" className="mb-3">
+            <Body size="sm" tone="coral">{addPlayerError}</Body>
+          </Card>
+        )}
         <View className="flex-row gap-2.5">
-          <Button variant="ghost" className="flex-1" onPress={() => setShowAddPlayer(false)}>Cancel</Button>
+          <Button variant="ghost" className="flex-1" onPress={() => { setShowAddPlayer(false); setAddPlayerError(null); }}>Cancel</Button>
           <Button className="flex-1" disabled={isAddingPlayer || !newPlayerName.trim()} loading={isAddingPlayer} onPress={addPlayer}>
             Add
           </Button>
         </View>
       </Sheet>
 
-      <Sheet visible={!!moveTarget} onClose={() => setMoveTarget(null)}>
+      <Sheet visible={!!moveTarget} onClose={() => { setMoveTarget(null); setMoveError(null); }}>
         <Heading size="lg" className="mb-1">Move Player</Heading>
         <Body size="sm" className="mb-4">{moveTarget?.name} — pick the team to move them to</Body>
         {otherTeams.length === 0 ? (
@@ -479,8 +612,39 @@ export default function AdminTeamScreen() {
           </View>
         )}
         {isMoving && <ActivityIndicator color={RAW.brand} style={{ marginTop: 12 }} />}
-        <Button variant="ghost" className="mt-4" disabled={isMoving} onPress={() => setMoveTarget(null)}>Cancel</Button>
+        {moveError && (
+          <Card tone="coral" className="mt-2">
+            <Body size="sm" tone="coral">{moveError}</Body>
+          </Card>
+        )}
+        <Button variant="ghost" className="mt-4" disabled={isMoving} onPress={() => { setMoveTarget(null); setMoveError(null); }}>Cancel</Button>
       </Sheet>
+
+      <ConfirmDialog
+        visible={!!deletePlayerTarget}
+        title="Delete this player"
+        message={
+          deletePlayerTarget?.claimedByUserId
+            ? `${deletePlayerTarget.name} has a linked account. Deleting removes them from this team and sends their account back to "find a team" — this can't be undone.`
+            : `Delete ${deletePlayerTarget?.name}? This can't be undone.`
+        }
+        confirmLabel="Yes, Delete Player"
+        confirmVariant="danger"
+        onConfirm={() => { if (deletePlayerTarget) return deletePlayer(deletePlayerTarget); }}
+        onCancel={() => setDeletePlayerTarget(null)}
+        onSuccess={() => setDeletePlayerTarget(null)}
+      />
+
+      <ConfirmDialog
+        visible={deleteTeamDialogOpen}
+        title="Delete this team"
+        message={`Delete ${teamName}? This removes all its players and any unplayed fixtures. Blocked if this team has any confirmed match results.`}
+        confirmLabel="Yes, Delete Team"
+        confirmVariant="danger"
+        onConfirm={deleteTeam}
+        onCancel={() => setDeleteTeamDialogOpen(false)}
+        onSuccess={() => { setDeleteTeamDialogOpen(false); goBack(); }}
+      />
     </>
   );
 

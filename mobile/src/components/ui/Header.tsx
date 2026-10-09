@@ -1,7 +1,6 @@
 import { View, Text } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { FONT_DISPLAY_EXTRABOLD } from '@/styles/typography';
-import { HeaderAvatar } from './AppHeader';
+import { HeaderAvatar, Wordmark } from './AppHeader';
 
 interface HeaderProps {
   contextLine?: string | null;
@@ -19,8 +18,18 @@ interface HeaderProps {
 export function Header({ contextLine }: HeaderProps) {
   const insets = useSafeAreaInsets();
 
+  // A quiet frosted tint + hairline, rather than Phase E's original plain
+  // "sits directly on the background" treatment — same position (this is
+  // not a floating/sticky header), just enough surface separation to read
+  // as a considered shell instead of bare background. No BlurView here
+  // (unlike TabBar/AccountMenu's floating glass): this header never sits
+  // over scrolling content, so a translucent tint alone already reads as
+  // frosted without the added native-blur cost.
   return (
-    <View style={{ paddingTop: insets.top + 12, paddingBottom: 12, paddingHorizontal: 20 }} className="flex-row items-center justify-between">
+    <View
+      style={{ paddingTop: insets.top + 12, paddingBottom: 12, paddingHorizontal: 20 }}
+      className="flex-row items-center justify-between bg-surface/70 dark:bg-surface-dark/70 border-b border-border dark:border-border-dark"
+    >
       {/* Avatar on the left, matching every other screen's native header
           (headerLeft in (tabs)/_layout.tsx) — Home previously put it on
           the right, the one place in the app where it wasn't. Same
@@ -29,14 +38,9 @@ export function Header({ contextLine }: HeaderProps) {
           the exact same Header). */}
       <HeaderAvatar />
       <View className="flex-1 ml-3">
-        <Text
-          className="text-[15px] text-text dark:text-text-dark tracking-wide"
-          style={{ fontFamily: FONT_DISPLAY_EXTRABOLD }}
-        >
-          CHALKIE
-        </Text>
+        <Wordmark size="md" />
         {contextLine ? (
-          <Text className="text-[12px] text-text-dim dark:text-text-dim-dark mt-0.5" numberOfLines={1}>
+          <Text className="text-[12px] font-semibold text-text-dim dark:text-text-dim-dark mt-1" numberOfLines={1}>
             {contextLine}
           </Text>
         ) : null}

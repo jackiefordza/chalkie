@@ -25,10 +25,23 @@ export interface AppUser {
   createdAt: Date;
 }
 
+// Optional, additive — absent on every league/division doc that predates
+// this field (every real/staging/showcase doc today). Name-only sponsor
+// display is fully supported with no logoUrl; a logo is only ever shown
+// once a real asset URL is actually set on the doc — nothing here
+// fabricates or guesses a logo. Set by an admin (Firestore write path TBD,
+// out of scope for this pass — this is the read-side type + UI only).
+export interface LeagueSponsor {
+  name: string;
+  logoUrl?: string | null;
+  websiteUrl?: string | null;
+}
+
 export interface League {
   id: string;
   name: string;
   adminUserId: string;
+  sponsor?: LeagueSponsor | null;
   createdAt: Date;
 }
 
@@ -48,6 +61,7 @@ export interface Division {
   seasonId: string;
   name: string;
   order: number;
+  sponsor?: LeagueSponsor | null;
   createdAt: Date;
 }
 
@@ -62,6 +76,15 @@ export interface Team {
   address: string | null;
   venuePhone: string | null;
   createdAt: Date;
+  // Reference contact info for the real captain/VC a Captain/VC invite will
+  // be sent to — populated by an admin-run seed script, not by any in-app
+  // write path. Never a venue/club phone number (explicitly excluded — see
+  // scripts/real-team-contacts-seed). Optional: absent on older/showcase
+  // teams that predate this field.
+  captainName?: string | null;
+  captainPhone?: string | null;
+  viceCaptainName?: string | null;
+  viceCaptainPhone?: string | null;
 }
 
 export interface Player {
@@ -102,10 +125,44 @@ export interface JoinRequest {
   createdAt: Date;
 }
 
+export type InviteRole = 'captain' | 'viceCaptain';
+export type InviteStatus = 'pending' | 'accepted' | 'revoked';
+
+// A single-use, team-specific Captain/VC invitation — the onboarding path
+// for a real captain/VC who has no Chalkie account and no email on file,
+// only a phone number to receive the link on. Created and accepted
+// EXCLUSIVELY via Cloud Functions (createTeamInvite/acceptTeamInvite in
+// functions/src/index.ts) — see firestore.rules' invites/{inviteId}, whose
+// `allow create` is unconditionally false. The raw token is never part of
+// this type: it exists only in the URL/AsyncStorage on the invitee's
+// device and in createTeamInvite's one-time response, never in Firestore
+// (only its hash does, which the client never reads).
+export interface Invite {
+  id: string;
+  leagueId: string;
+  seasonId: string;
+  divisionId: string;
+  teamId: string;
+  role: InviteRole;
+  status: InviteStatus;
+  createdByUserId: string;
+  createdAt: Date;
+  expiresAt: Date | null;
+  acceptedAt: Date | null;
+  acceptedByUserId: string | null;
+}
+
 // A league match: 7 games (5 singles then 2 pairs), all 501, 3 legs per game,
 // all 3 legs always played. Match winner = team that wins more games (odd
 // count, so no draws are possible at match level).
-export type MatchStatus = 'scheduled' | 'awaiting_confirmation' | 'disputed' | 'confirmed';
+//
+// 'awaiting_confirmation' means exactly one team has submitted and the other
+// hasn't yet — distinct from 'pending_confirmation', which means BOTH teams
+// submitted and their pairings/scores reconciled, and it's now waiting on
+// one or both teams' explicit Confirm (see MatchConfirmation below). Only a
+// Cloud Function (onConfirmationWrite) ever moves a match into 'confirmed' —
+// no client write can set that status directly (see firestore.rules).
+export type MatchStatus = 'scheduled' | 'awaiting_confirmation' | 'pending_confirmation' | 'disputed' | 'confirmed';
 export type GameType = 'singles' | 'pairs';
 export type MatchSide = 'home' | 'away';
 
@@ -131,13 +188,25 @@ export interface Match {
   venue: string | null;
   status: MatchStatus;
   competitionType: CompetitionType;
-  // Set once confirmed (by the onSubmissionWrite/dispute-resolution Cloud Function path)
+  // Set once confirmed (by onConfirmationWrite, admin sign-off, or dispute resolution)
   homeGamesWon: number | null;
   awayGamesWon: number | null;
   homeLegsWon: number | null;
   awayLegsWon: number | null;
-  // The agreed-upon (or admin-resolved) game-by-game detail — only set once confirmed
+  // The reconciled game-by-game detail. Set as soon as the match reaches
+  // 'pending_confirmation' (onSubmissionWrite merges both teams' own-reported
+  // stats into it at that point) — NOT only once confirmed. It never changes
+  // again between 'pending_confirmation' and 'confirmed' (onConfirmationWrite
+  // only flips status), so it's safe to display as "the match sheet" the
+  // moment pending_confirmation is reached, before either captain confirms.
   games: MatchGame[] | null;
+  // Who most recently produced the 'confirmed' status — 'captains' when both
+  // teams' MatchConfirmation docs did it (onConfirmationWrite), 'adminOverride'
+  // when a league admin confirmed unilaterally (one-sided sign-off, dispute
+  // resolution, or a direct correction of an already-confirmed result).
+  // Undefined on any match confirmed before this field existed, and on a
+  // match that isn't confirmed at all — never backfilled.
+  confirmedVia?: 'captains' | 'adminOverride';
   createdAt: Date;
 }
 
@@ -162,14 +231,34 @@ export interface MatchGame {
   legs: MatchLeg[]; // always length 3
 }
 
-// One captain/VC's version of a match result. Auto-confirmed when both
-// teams' submissions agree; otherwise the match is flagged disputed for
-// the admin to resolve.
+// One captain/VC's version of a match result — their OWN team's pairings,
+// all 7 game/leg scores as they observed them, and their OWN players' 180s/
+// checkouts only (never the opponent's — enforced server-side, see
+// functions/src/index.ts). When both teams' submissions agree on pairings
+// and scores, the match moves to 'pending_confirmation' with a merged
+// Match.games combining each side's own-reported stats; a genuine pairing/
+// score disagreement flags the match 'disputed' for a captain to fix or an
+// admin to resolve. Blocked from further writes once the match leaves
+// 'scheduled'/'awaiting_confirmation'/'disputed' — see firestore.rules.
 export interface MatchSubmission {
   id: string; // = submittedByTeamId, one submission doc per team per match
   submittedByTeamId: string;
   submittedByUserId: string;
   games: MatchGame[];
+  createdAt: Date;
+}
+
+// One team's explicit confirmation of the reconciled match sheet shown at
+// Match.games once status is 'pending_confirmation'. A match only becomes
+// 'confirmed' once BOTH teams' confirmation docs exist — enforced by
+// onConfirmationWrite (functions/src/index.ts), never by a client write
+// (see firestore.rules — status can never be set to 'confirmed' directly).
+// Immutable once created (no un-confirming) — a team that changes its mind
+// must use the dispute path (disputeMatch callable) instead.
+export interface MatchConfirmation {
+  id: string; // = confirmedByTeamId, one confirmation doc per team per match
+  confirmedByTeamId: string;
+  confirmedByUserId: string;
   createdAt: Date;
 }
 

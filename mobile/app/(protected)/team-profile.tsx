@@ -11,7 +11,7 @@ import { STATUS_LABEL, STATUS_TONE } from '@/lib/matchStatus';
 import {
   Screen, AppBar, Heading, Body, Caption, Stat, Badge, Card, Avatar, AppIcon, FormBadge,
 } from '@/components/ui';
-import { formatMatchDate } from '@/components/MatchCentre';
+import { formatMatchDate, HomeAwayBadge, VenueCard } from '@/components/MatchCentre';
 import { recentForm, ordinal } from '@/components/HomeDashboard';
 import { teamMatchScore, formatTeamRecord } from '@/lib/matchScore';
 import type { Team, DivisionTable, Match, MatchGame, Player } from '@/types';
@@ -270,6 +270,13 @@ export default function TeamProfileScreen() {
             {contextLine ? <Body size="sm" className="mt-1 text-center">{contextLine}</Body> : null}
           </View>
 
+          {/* VENUE — the team's own home ground. Previously this screen never
+              displayed team.address/venuePhone at all, regardless of whether
+              a team actually had one on file (the reported "opening The
+              Grafton doesn't show their home ground" issue) — the data
+              itself was already there; the screen just never rendered it. */}
+          <VenueCard teamName={team.name} address={team.address} />
+
           {/* TEAM PERFORMANCE — from the existing league-table (divisionTables) row */}
           {!team.divisionId || !team.seasonId ? (
             <Card className="mb-4">
@@ -342,15 +349,16 @@ export default function TeamProfileScreen() {
                   >
                     <View className="flex-row items-center justify-between mb-1">
                       <Body tone="strong" weight="semibold" className="flex-1" numberOfLines={1}>
-                        {isHome ? 'vs' : '@'} {teamNamesById[opponentId] ?? '…'}
+                        vs {teamNamesById[opponentId] ?? '…'}
                       </Body>
                       <Badge tone={STATUS_TONE[m.status] ?? 'brand'}>
                         {STATUS_LABEL[m.status]}
                       </Badge>
                     </View>
-                    <Body size="sm">
-                      {formatMatchDate(m.scheduledDate)} · {isHome ? (m.venue ?? 'Home') : 'Away'}
-                    </Body>
+                    <View className="flex-row items-center gap-1.5">
+                      <Body size="sm">{formatMatchDate(m.scheduledDate)} ·</Body>
+                      <HomeAwayBadge isHome={isHome} />
+                    </View>
                   </TouchableOpacity>
                 );
               })}

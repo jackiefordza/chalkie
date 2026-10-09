@@ -3,11 +3,13 @@ import { View, ScrollView, TouchableOpacity, ActivityIndicator } from 'react-nat
 import { BottomTabBarHeightContext } from '@react-navigation/bottom-tabs';
 import { router } from 'expo-router';
 import { useColorScheme } from 'nativewind';
-import { collection, onSnapshot, query, where, orderBy, and, or } from 'firebase/firestore';
+import { collection, doc, getDoc, onSnapshot, query, where, orderBy, and, or } from 'firebase/firestore';
 import { db } from '@/config/firebase';
 import { useAuthStore } from '@/stores/authStore';
 import { RAW } from '@/lib/theme';
-import { STATUS_LABEL, STATUS_TONE } from '@/lib/matchStatus';
+import { STATUS_LABEL, STATUS_TONE, nextMatchCtaLabel } from '@/lib/matchStatus';
+import { competitionTypeLabel, isNotableCompetitionType } from '@/lib/competitionType';
+import { HomeAwayBadge } from '@/components/MatchCentre';
 import { Heading, Body, Badge, Card, Chip, Button, AppIcon } from '@/components/ui';
 import type { Match } from '@/types';
 
@@ -84,6 +86,21 @@ export default function FixturesScreen() {
     const tappable = true;
     const tone = STATUS_TONE[match.status];
 
+    // Whether OUR team has a saved submission for this match yet — same
+    // own-team-only existence check (and same CTA derivation,
+    // nextMatchCtaLabel) HomeDashboard's NextMatchHero uses, so the two
+    // surfaces never again disagree on what a captain should do next.
+    const [hasSubmitted, setHasSubmitted] = useState<boolean | null>(null);
+    useEffect(() => {
+      if (!canSubmit || !teamId || match.status !== 'awaiting_confirmation') {
+        setHasSubmitted(null);
+        return;
+      }
+      getDoc(doc(db, 'matches', match.id, 'submissions', teamId))
+        .then((s) => setHasSubmitted(s.exists()))
+        .catch(() => setHasSubmitted(null));
+    }, [canSubmit, teamId, match.id, match.status]);
+
     // A restrained bordered block (Home's row language), not a rounded/
     // shadowed Card — a fixture list is many of these in a row, and "every
     // fixture is a large rounded card" is exactly what the design system
@@ -91,18 +108,28 @@ export default function FixturesScreen() {
     const content = (
       <View className="rounded-lg border border-border dark:border-border-dark bg-surface dark:bg-surface-dark p-5 mb-2">
         <View className="flex-row items-center mb-1">
-          <Body tone="strong" weight="semibold" className="flex-1">
-            {isHome ? 'vs' : '@'} {teamNames[opponentId] ?? '…'}
+          <Body tone="strong" weight="semibold" className="flex-1" numberOfLines={1}>
+            vs {teamNames[opponentId] ?? '…'}
           </Body>
-          {tone ? (
-            <Badge tone={tone}>{STATUS_LABEL[match.status]}</Badge>
-          ) : (
-            <Body size="sm">{STATUS_LABEL[match.status]}</Body>
-          )}
+          <View className="flex-row items-center gap-1.5 ml-2">
+            {isNotableCompetitionType(match.competitionType) && (
+              <Badge tone="butter">{competitionTypeLabel(match.competitionType)}</Badge>
+            )}
+            {tone ? (
+              <Badge tone={tone}>{STATUS_LABEL[match.status]}</Badge>
+            ) : (
+              <Body size="sm">{STATUS_LABEL[match.status]}</Body>
+            )}
+          </View>
         </View>
-        <Body size="sm">
-          {formatDate(match.scheduledDate)} · {isHome ? (match.venue ?? 'Home') : 'Away'}
-        </Body>
+        {/* HOME/AWAY as an explicit word + icon (HomeAwayBadge), not just the
+            old "vs"/"@" prefix or venue-string heuristic — "immediately
+            obvious on mobile" and never colour-only, per the matchday-
+            experience brief. */}
+        <View className="flex-row items-center gap-1.5">
+          <Body size="sm">{formatDate(match.scheduledDate)} ·</Body>
+          <HomeAwayBadge isHome={isHome} />
+        </View>
         {match.status === 'confirmed' && (() => {
           // The match is won/lost on games, not legs — a team can win fewer
           // legs overall but still win more games (and therefore the match).
@@ -123,7 +150,7 @@ export default function FixturesScreen() {
             className="mt-3"
             onPress={() => router.push(`/(protected)/results-entry?matchId=${match.id}`)}
           >
-            {match.status === 'scheduled' ? 'Enter Result' : match.status === 'disputed' ? 'Resolve Differences' : 'View / Edit Result'}
+            {nextMatchCtaLabel(match.status, hasSubmitted, teamNames[opponentId] ?? '…')}
           </Button>
         )}
       </View>

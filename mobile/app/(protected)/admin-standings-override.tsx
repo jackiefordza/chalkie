@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { View, TouchableOpacity, ActivityIndicator, Alert, useWindowDimensions } from 'react-native';
+import { View, TouchableOpacity, ActivityIndicator, useWindowDimensions } from 'react-native';
 import { Stack, useLocalSearchParams } from 'expo-router';
 import {
   collection, doc, onSnapshot, query, where, setDoc, writeBatch,
@@ -39,10 +39,12 @@ function useStandingsOverrideController(seasonId: string | undefined, divisionId
   const [editTeamRow, setEditTeamRow] = useState<TeamRow | null>(null);
   const [teamDraft, setTeamDraft] = useState({ played: '', won: '', lost: '', points: '', legsFor: '', legsAgainst: '' });
   const [isSavingTeam, setIsSavingTeam] = useState(false);
+  const [saveTeamError, setSaveTeamError] = useState<string | null>(null);
 
   const [editPlayerRow, setEditPlayerRow] = useState<PlayerRow | null>(null);
   const [playerDraft, setPlayerDraft] = useState({ played: '', won: '', lost: '', oneEighties: '' });
   const [isSavingPlayer, setIsSavingPlayer] = useState(false);
+  const [savePlayerError, setSavePlayerError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!divisionId || !leagueId) return;
@@ -142,6 +144,7 @@ function useStandingsOverrideController(seasonId: string | undefined, divisionId
 
   function openEditTeam(row: TeamRow) {
     setEditTeamRow(row);
+    setSaveTeamError(null);
     setTeamDraft({
       played: String(row.played), won: String(row.won), lost: String(row.lost),
       points: String(row.points), legsFor: String(row.legsFor), legsAgainst: String(row.legsAgainst),
@@ -151,6 +154,7 @@ function useStandingsOverrideController(seasonId: string | undefined, divisionId
   async function saveTeamRow() {
     if (!editTeamRow || !leagueId || !seasonId || !divisionId) return;
     setIsSavingTeam(true);
+    setSaveTeamError(null);
     try {
       const updated: TeamRow = {
         ...editTeamRow,
@@ -172,7 +176,7 @@ function useStandingsOverrideController(seasonId: string | undefined, divisionId
 
       setEditTeamRow(null);
     } catch (e: unknown) {
-      Alert.alert('Error', (e as Error).message ?? 'Something went wrong');
+      setSaveTeamError((e as Error).message ?? 'Something went wrong');
     } finally {
       setIsSavingTeam(false);
     }
@@ -180,19 +184,21 @@ function useStandingsOverrideController(seasonId: string | undefined, divisionId
 
   function openEditPlayer(row: PlayerRow) {
     setEditPlayerRow(row);
+    setSavePlayerError(null);
     setPlayerDraft({ played: String(row.played), won: String(row.won), lost: String(row.lost), oneEighties: String(row.oneEighties) });
   }
 
   async function savePlayerRow() {
     if (!editPlayerRow || !leagueId || !seasonId) return;
     setIsSavingPlayer(true);
+    setSavePlayerError(null);
     try {
       await setDoc(doc(db, 'playerSeasonStats', editPlayerRow.id), {
         played: n(playerDraft.played), won: n(playerDraft.won), lost: n(playerDraft.lost), oneEighties: n(playerDraft.oneEighties),
       }, { merge: true });
       setEditPlayerRow(null);
     } catch (e: unknown) {
-      Alert.alert('Error', (e as Error).message ?? 'Something went wrong');
+      setSavePlayerError((e as Error).message ?? 'Something went wrong');
     } finally {
       setIsSavingPlayer(false);
     }
@@ -200,8 +206,8 @@ function useStandingsOverrideController(seasonId: string | undefined, divisionId
 
   return {
     tab, setTab, teamRows, sortedTeamRows, playerRows, sortedPlayerRows, isLoading,
-    editTeamRow, setEditTeamRow, teamDraft, setTeamDraft, isSavingTeam, openEditTeam, saveTeamRow,
-    editPlayerRow, setEditPlayerRow, playerDraft, setPlayerDraft, isSavingPlayer, openEditPlayer, savePlayerRow,
+    editTeamRow, setEditTeamRow, teamDraft, setTeamDraft, isSavingTeam, saveTeamError, openEditTeam, saveTeamRow,
+    editPlayerRow, setEditPlayerRow, playerDraft, setPlayerDraft, isSavingPlayer, savePlayerError, openEditPlayer, savePlayerRow,
   };
 }
 
@@ -286,6 +292,11 @@ function StandingsBody({ c }: { c: StandingsController }) {
             <Input value={c.teamDraft.legsAgainst} onChangeText={(v) => c.setTeamDraft((d) => ({ ...d, legsAgainst: v }))} keyboardType="number-pad" />
           </View>
         </View>
+        {c.saveTeamError && (
+          <Card tone="coral" className="mb-4">
+            <Body size="sm" tone="coral">{c.saveTeamError}</Body>
+          </Card>
+        )}
         <View className="flex-row gap-2.5">
           <Button variant="ghost" className="flex-1" onPress={() => c.setEditTeamRow(null)}>Cancel</Button>
           <Button className="flex-1" disabled={c.isSavingTeam} loading={c.isSavingTeam} onPress={c.saveTeamRow}>Save</Button>
@@ -315,6 +326,11 @@ function StandingsBody({ c }: { c: StandingsController }) {
             <Input value={c.playerDraft.oneEighties} onChangeText={(v) => c.setPlayerDraft((d) => ({ ...d, oneEighties: v }))} keyboardType="number-pad" />
           </View>
         </View>
+        {c.savePlayerError && (
+          <Card tone="coral" className="mb-4">
+            <Body size="sm" tone="coral">{c.savePlayerError}</Body>
+          </Card>
+        )}
         <View className="flex-row gap-2.5">
           <Button variant="ghost" className="flex-1" onPress={() => c.setEditPlayerRow(null)}>Cancel</Button>
           <Button className="flex-1" disabled={c.isSavingPlayer} loading={c.isSavingPlayer} onPress={c.savePlayerRow}>Save</Button>

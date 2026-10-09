@@ -6,10 +6,10 @@ import { collection, doc, getDoc, onSnapshot, query, where, orderBy } from 'fire
 import { db } from '@/config/firebase';
 import { useAuthStore } from '@/stores/authStore';
 import { RAW } from '@/lib/theme';
-import { Screen, Heading, Body, Caption, Stat, Chip, Card, AppIcon } from '@/components/ui';
-import type { DivisionTable, Season } from '@/types';
+import { Screen, Heading, Body, Caption, Stat, Chip, Card, AppIcon, SponsorStrip } from '@/components/ui';
+import type { DivisionTable, Season, LeagueSponsor } from '@/types';
 
-interface Division { id: string; name: string; order: number; seasonId: string }
+interface Division { id: string; name: string; order: number; seasonId: string; sponsor?: LeagueSponsor | null }
 interface TeamInfo { id: string; name: string; divisionId: string }
 
 // Prefer the viewer's own current season (matches how every other screen in
@@ -30,6 +30,7 @@ export default function StandingsScreen() {
   const isDark = colorScheme === 'dark';
 
   const [leagueName, setLeagueName] = useState<string | null>(null);
+  const [leagueSponsor, setLeagueSponsor] = useState<LeagueSponsor | null>(null);
   const [seasons, setSeasons] = useState<Season[]>([]);
   const [selectedSeasonId, setSelectedSeasonId] = useState<string | null>(null);
   const [divisions, setDivisions] = useState<Division[]>([]);
@@ -44,7 +45,10 @@ export default function StandingsScreen() {
   // Profile (this data essentially never changes).
   useEffect(() => {
     if (!appUser?.leagueId) return;
-    getDoc(doc(db, 'leagues', appUser.leagueId)).then((s) => setLeagueName(s.exists() ? s.data().name : null));
+    getDoc(doc(db, 'leagues', appUser.leagueId)).then((s) => {
+      setLeagueName(s.exists() ? s.data().name : null);
+      setLeagueSponsor(s.exists() ? (s.data().sponsor ?? null) : null);
+    });
   }, [appUser?.leagueId]);
 
   // League-wide team names (+ divisionId, for the "teams in this division"
@@ -153,6 +157,11 @@ export default function StandingsScreen() {
       <View className="mb-4">
         <Heading size="lg">{leagueName ?? '…'}</Heading>
         {contextLine ? <Body size="sm" className="mt-1">{contextLine}</Body> : null}
+        <SponsorStrip
+          sponsor={selectedDivision?.sponsor ?? leagueSponsor}
+          context={selectedDivision?.name ?? leagueName ?? undefined}
+          className="mt-2.5"
+        />
       </View>
 
       {divisions.length > 1 && (
@@ -215,7 +224,12 @@ export default function StandingsScreen() {
           </Body>
         </Card>
       ) : (
-        <View className="rounded-2xl overflow-hidden shadow-sm bg-surface dark:bg-surface-dark">
+        <View
+          className="rounded-2xl overflow-hidden bg-surface dark:bg-surface-dark"
+          style={isDark
+            ? { shadowColor: '#000000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 6, elevation: 2 }
+            : { shadowColor: '#000000', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.08, shadowRadius: 14, elevation: 3 }}
+        >
           {/* Header row */}
           <View className="flex-row py-2.5 px-3 bg-surface-2 dark:bg-surface-2-dark">
             <Caption className="w-6">#</Caption>
@@ -236,7 +250,10 @@ export default function StandingsScreen() {
                   isMine ? 'bg-brand-fill dark:bg-brand-fill-dark' : i % 2 === 0 ? 'bg-surface-2/40 dark:bg-surface-2-dark/40' : '',
                 ].join(' ')}
               >
-                <Body size="sm" className="w-6">{row.position}</Body>
+                {/* Position is the most important column in this table — it
+                    should read as a number, not plain text, same tabular-
+                    mono treatment every other stat column already gets. */}
+                <Stat size="sm" tone={isMine ? 'brand' : undefined} className="w-6">{row.position}</Stat>
                 <Body size="sm" tone={isMine ? 'strong' : 'dim'} weight={isMine ? 'bold' : 'normal'} className="flex-1" numberOfLines={1}>
                   {teamNames[row.teamId] ?? '…'}
                 </Body>

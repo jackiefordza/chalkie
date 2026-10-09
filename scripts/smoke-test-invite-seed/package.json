@@ -1,0 +1,20 @@
+{
+  "name": "smoke-test-invite-seed",
+  "version": "1.0.0",
+  "private": true,
+  "description": "TEMPORARY standalone Admin SDK script. Creates exactly ONE throwaway, wholly-isolated staging team (smoke-test-team, under a fake league/season/division that exists nowhere else in chalkie-app-staging) and ONE pending Captain Invite on it, using the exact same field shape as functions/src/index.ts's performCreateTeamInvite. Never touches any real league/season/division/team/captain/VC data, never creates or modifies any Auth account, never deploys anything. See README.md before running anything.",
+  "engines": {
+    "node": "20"
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "firebase-admin": "^13.10.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2",
+    "@types/node": "^22.0.0"
+  }
+}

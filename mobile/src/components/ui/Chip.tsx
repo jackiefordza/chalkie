@@ -17,7 +17,10 @@ export function Chip({ selected = false, label, tone = 'brand', children, classN
       activeOpacity={0.7}
       className={[
         'rounded-full px-4 py-2.5 min-h-[44px] items-center justify-center flex-row',
-        selected ? fill : 'bg-surface-2 dark:bg-surface-2-dark',
+        // Unselected reads as a recessed track (inset surface + hairline)
+        // rather than just a flatter fill — the selected pill then pops
+        // out of that groove instead of merely swapping colour.
+        selected ? fill : 'bg-surface-inset dark:bg-surface-inset-dark border border-inset-border dark:border-inset-border-dark',
         className,
       ].join(' ')}
       {...rest}

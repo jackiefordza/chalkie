@@ -7,6 +7,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { useAdminContextStore } from '@/stores/adminContextStore';
 import { AppIcon, Heading, Body, Caption, Badge, Sheet, type AppIconName } from '@/components/ui';
 import { RAW } from '@/lib/theme';
+import { APP_NAME } from '@/lib/brand';
 import { FONT_DISPLAY, FONT_BODY } from '@/styles/typography';
 
 // Desktop-only admin console shell — deliberately a different visual world
@@ -143,7 +144,7 @@ export function AdminShell({ leagueName, title, breadcrumb, actions, children }:
             numberOfLines={1}
             style={{ fontFamily: FONT_DISPLAY, color: RAW.textDark, fontSize: 16, marginTop: 2 }}
           >
-            {leagueName || 'Chalkie Admin'}
+            {leagueName || `${APP_NAME} Admin`}
           </Text>
           <Badge tone="brand" className="self-start mt-2">Admin</Badge>
         </View>

@@ -1,0 +1,57 @@
+name: TEMP — Staging Hosting diagnostic (read-only)
+
+# TEMPORARY. Manual-only, read-only against chalkie-app-staging. Checks
+# whether the pr39-matchday-model Hosting preview channel still exists,
+# which site it belongs to, and whether its reported URL actually returns
+# the app (not a Firebase "Site Not Found" page) — diagnosing the user's
+# report that the previously-reported preview URL is returning that error
+# on iPhone Safari. Runs ONLY firebase-tools `hosting:sites:list` and
+# `hosting:channel:list` (both plain listing commands) plus a curl against
+# the live URL — never `firebase deploy` in any form. This workflow is
+# removed from main immediately after use (stays on the feature branch).
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Write staging Firebase service-account credential
+        env:
+          FIREBASE_SERVICE_ACCOUNT_STAGING: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_STAGING }}
+        run: printf '%s' "$FIREBASE_SERVICE_ACCOUNT_STAGING" > "$RUNNER_TEMP/service-account-staging.json"
+
+      - name: Confirm target project resolves to chalkie-app-staging
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/service-account-staging.json
+        run: |
+          echo "Service account project_id in credential file:"
+          node -e "console.log(JSON.parse(require('fs').readFileSync(process.env.GOOGLE_APPLICATION_CREDENTIALS,'utf8')).project_id)"
+
+      - name: List Hosting sites (read-only)
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/service-account-staging.json
+        run: npx firebase-tools hosting:sites:list --project chalkie-app-staging --json | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: List Hosting channels (read-only)
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/service-account-staging.json
+        run: npx firebase-tools hosting:channel:list --project chalkie-app-staging --json | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Curl the previously-reported preview URL
+        run: |
+          URL="https://chalkie-app-staging--pr39-matchday-model-alkh20oi.web.app"
+          echo "Fetching: $URL"
+          code=$(curl -sS -o "$RUNNER_TEMP/body.html" -w "%{http_code}" "$URL" || echo "CURL_FAILED")
+          echo "HTTP status: $code"
+          echo "--- first 40 lines of body ---"
+          head -40 "$RUNNER_TEMP/body.html" || true
+
+      - name: Remove credential file
+        if: always()
+        run: rm -f "$RUNNER_TEMP/service-account-staging.json"
