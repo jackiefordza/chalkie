@@ -7,6 +7,7 @@ import type { MatchStatus } from '@/types';
 export const STATUS_LABEL: Record<MatchStatus, string> = {
   scheduled: 'Scheduled',
   awaiting_confirmation: 'Awaiting Confirmation',
+  pending_confirmation: 'Pending Confirmation',
   disputed: 'Disputed',
   confirmed: 'Confirmed',
 };
@@ -14,6 +15,7 @@ export const STATUS_LABEL: Record<MatchStatus, string> = {
 export const STATUS_TONE: Record<MatchStatus, SemanticTone | null> = {
   scheduled: null,
   awaiting_confirmation: 'butter',
+  pending_confirmation: 'butter',
   disputed: 'coral',
   confirmed: 'sage',
 };

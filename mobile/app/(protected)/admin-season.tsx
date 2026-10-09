@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { View, TouchableOpacity, ActivityIndicator, Alert, useWindowDimensions } from 'react-native';
+import { View, TouchableOpacity, ActivityIndicator, useWindowDimensions } from 'react-native';
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import {
   collection, doc, onSnapshot, query, where, updateDoc, addDoc, serverTimestamp,
@@ -10,7 +10,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { useAdminContextStore } from '@/stores/adminContextStore';
 import { goBack } from '@/lib/navigation';
 import { RAW, type SemanticTone } from '@/lib/theme';
-import { Screen, Heading, Body, Caption, Button, Card, Chip, ListRow, Input, Label, Sheet } from '@/components/ui';
+import { Screen, Heading, Body, Caption, Button, Card, Chip, ListRow, Input, Label, Sheet, ConfirmDialog } from '@/components/ui';
 import { AdminShell } from '@/components/admin/AdminShell';
 import { FixturesTab, ResultsTab } from './admin-fixtures';
 import { StandingsTab } from './admin-standings-override';
@@ -67,6 +67,8 @@ export default function AdminSeasonScreen() {
   const [showAddDivision, setShowAddDivision] = useState(false);
   const [newDivisionName, setNewDivisionName] = useState('');
   const [isAddingDivision, setIsAddingDivision] = useState(false);
+  const [addDivisionError, setAddDivisionError] = useState<string | null>(null);
+  const [addTeamError, setAddTeamError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!seasonId) return;
@@ -121,6 +123,7 @@ export default function AdminSeasonScreen() {
   async function addDivision() {
     if (!newDivisionName.trim() || !seasonId || !appUser?.leagueId) return;
     setIsAddingDivision(true);
+    setAddDivisionError(null);
     try {
       await addDoc(collection(db, 'divisions'), {
         leagueId: appUser.leagueId,
@@ -131,7 +134,7 @@ export default function AdminSeasonScreen() {
       setNewDivisionName('');
       setShowAddDivision(false);
     } catch (e: unknown) {
-      Alert.alert('Error', (e as Error).message ?? 'Something went wrong');
+      setAddDivisionError((e as Error).message ?? 'Something went wrong');
     } finally {
       setIsAddingDivision(false);
     }
@@ -140,6 +143,7 @@ export default function AdminSeasonScreen() {
   async function addTeam() {
     if (!newTeamName.trim() || !addTeamTarget || !appUser?.leagueId) return;
     setIsAddingTeam(true);
+    setAddTeamError(null);
     try {
       await addDoc(collection(db, 'teams'), {
         leagueId: appUser.leagueId,
@@ -155,7 +159,7 @@ export default function AdminSeasonScreen() {
       setNewTeamName('');
       setNewTeamAddress('');
     } catch (e: unknown) {
-      Alert.alert('Error', (e as Error).message ?? 'Something went wrong');
+      setAddTeamError((e as Error).message ?? 'Something went wrong');
     } finally {
       setIsAddingTeam(false);
     }
@@ -165,57 +169,20 @@ export default function AdminSeasonScreen() {
   const unassignedTeams = teams.filter((t) => !divisions.find((d) => d.id === t.divisionId));
   const currentDivision = divisions.find((d) => d.id === divisionId) ?? null;
 
-  const [deletingDivisionId, setDeletingDivisionId] = useState<string | null>(null);
-  const [isDeletingSeason, setIsDeletingSeason] = useState(false);
-
-  function confirmDeleteDivision(division: Division) {
-    Alert.alert(
-      'Delete division',
-      `Delete ${division.name}? This removes all its teams, players and any unplayed fixtures. Blocked if any team here has confirmed match results.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Delete', style: 'destructive', onPress: () => deleteDivision(division.id) },
-      ],
-    );
-  }
+  const [deleteDivisionTarget, setDeleteDivisionTarget] = useState<Division | null>(null);
+  const [deleteSeasonDialogOpen, setDeleteSeasonDialogOpen] = useState(false);
 
   async function deleteDivision(targetDivisionId: string) {
-    setDeletingDivisionId(targetDivisionId);
-    try {
-      await httpsCallable(functions, 'adminDeleteDivision')({ divisionId: targetDivisionId });
-    } catch (e: unknown) {
-      Alert.alert("Can't delete division", (e as Error).message ?? 'Something went wrong');
-    } finally {
-      setDeletingDivisionId(null);
-    }
-  }
-
-  function confirmDeleteSeason() {
-    Alert.alert(
-      'Delete season',
-      `Delete ${seasonName}? This removes every division, team, player and unplayed fixture in it. Blocked if any team here has confirmed match results.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Delete', style: 'destructive', onPress: deleteSeason },
-      ],
-    );
+    await httpsCallable(functions, 'adminDeleteDivision')({ divisionId: targetDivisionId });
   }
 
   async function deleteSeason() {
     if (!seasonId) return;
-    setIsDeletingSeason(true);
-    try {
-      await httpsCallable(functions, 'adminDeleteSeason')({ seasonId });
-      goBack();
-    } catch (e: unknown) {
-      Alert.alert("Can't delete season", (e as Error).message ?? 'Something went wrong');
-    } finally {
-      setIsDeletingSeason(false);
-    }
+    await httpsCallable(functions, 'adminDeleteSeason')({ seasonId });
   }
 
   const addTeamSheet = (
-    <Sheet visible={!!addTeamTarget} onClose={() => setAddTeamTarget(null)}>
+    <Sheet visible={!!addTeamTarget} onClose={() => { setAddTeamTarget(null); setAddTeamError(null); }}>
       <Heading size="lg" className="mb-1">Add Team</Heading>
       <Body size="sm" className="mb-5">{addTeamTarget?.name}</Body>
 
@@ -225,8 +192,14 @@ export default function AdminSeasonScreen() {
       <Label>Home venue / address (optional)</Label>
       <Input value={newTeamAddress} onChangeText={setNewTeamAddress} placeholder="e.g. The Red Lion, 12 High St" autoCapitalize="words" className="mb-6" />
 
+      {addTeamError && (
+        <Card tone="coral" className="mb-4">
+          <Body size="sm" tone="coral">{addTeamError}</Body>
+        </Card>
+      )}
+
       <View className="flex-row gap-2.5">
-        <Button variant="ghost" className="flex-1" onPress={() => setAddTeamTarget(null)}>Cancel</Button>
+        <Button variant="ghost" className="flex-1" onPress={() => { setAddTeamTarget(null); setAddTeamError(null); }}>Cancel</Button>
         <Button className="flex-1" disabled={isAddingTeam || !newTeamName.trim()} loading={isAddingTeam} onPress={addTeam}>
           Add Team
         </Button>
@@ -235,17 +208,48 @@ export default function AdminSeasonScreen() {
   );
 
   const addDivisionSheet = (
-    <Sheet visible={showAddDivision} onClose={() => setShowAddDivision(false)}>
+    <Sheet visible={showAddDivision} onClose={() => { setShowAddDivision(false); setAddDivisionError(null); }}>
       <Heading size="lg" className="mb-4">Add Division</Heading>
       <Label>Division name</Label>
       <Input value={newDivisionName} onChangeText={setNewDivisionName} placeholder="e.g. Division 2" autoCapitalize="words" autoFocus className="mb-6" />
+      {addDivisionError && (
+        <Card tone="coral" className="mb-4">
+          <Body size="sm" tone="coral">{addDivisionError}</Body>
+        </Card>
+      )}
       <View className="flex-row gap-2.5">
-        <Button variant="ghost" className="flex-1" onPress={() => setShowAddDivision(false)}>Cancel</Button>
+        <Button variant="ghost" className="flex-1" onPress={() => { setShowAddDivision(false); setAddDivisionError(null); }}>Cancel</Button>
         <Button className="flex-1" disabled={isAddingDivision || !newDivisionName.trim()} loading={isAddingDivision} onPress={addDivision}>
           Add
         </Button>
       </View>
     </Sheet>
+  );
+
+  const deleteDivisionDialog = (
+    <ConfirmDialog
+      visible={!!deleteDivisionTarget}
+      title="Delete this division"
+      message={`Delete ${deleteDivisionTarget?.name}? This removes all its teams, players and any unplayed fixtures. Blocked if any team here has confirmed match results.`}
+      confirmLabel="Yes, Delete Division"
+      confirmVariant="danger"
+      onConfirm={() => { if (deleteDivisionTarget) return deleteDivision(deleteDivisionTarget.id); }}
+      onCancel={() => setDeleteDivisionTarget(null)}
+      onSuccess={() => setDeleteDivisionTarget(null)}
+    />
+  );
+
+  const deleteSeasonDialog = (
+    <ConfirmDialog
+      visible={deleteSeasonDialogOpen}
+      title="Delete this season"
+      message={`Delete ${seasonName}? This removes every division, team, player and unplayed fixture in it. Blocked if any team here has confirmed match results.`}
+      confirmLabel="Yes, Delete Season"
+      confirmVariant="danger"
+      onConfirm={deleteSeason}
+      onCancel={() => setDeleteSeasonDialogOpen(false)}
+      onSuccess={() => { setDeleteSeasonDialogOpen(false); goBack(); }}
+    />
   );
 
   // ── Mobile: unchanged drill-down UX (own screens for Table/Fixtures/Adjust) ──
@@ -261,7 +265,7 @@ export default function AdminSeasonScreen() {
               <Chip key={opt.value} label={opt.label} tone={opt.tone} selected={seasonStatus === opt.value} onPress={() => setStatus(opt.value)} className="flex-1" />
             ))}
           </View>
-          <Button variant="danger" size="sm" disabled={isDeletingSeason} loading={isDeletingSeason} onPress={confirmDeleteSeason}>
+          <Button variant="danger" size="sm" onPress={() => setDeleteSeasonDialogOpen(true)}>
             Delete Season
           </Button>
         </Card>
@@ -293,10 +297,8 @@ export default function AdminSeasonScreen() {
                       + Add Team
                     </Button>
                   </View>
-                  <TouchableOpacity onPress={() => confirmDeleteDivision(division)} disabled={deletingDivisionId === division.id} className="self-end mb-2">
-                    <Body size="xs" tone="coral" weight="semibold">
-                      {deletingDivisionId === division.id ? 'Deleting…' : 'Delete Division'}
-                    </Body>
+                  <TouchableOpacity onPress={() => setDeleteDivisionTarget(division)} className="self-end mb-2">
+                    <Body size="xs" tone="coral" weight="semibold">Delete Division</Body>
                   </TouchableOpacity>
                   {divTeams.length === 0 ? (
                     <Body size="sm" className="pl-1">No teams yet</Body>
@@ -336,6 +338,8 @@ export default function AdminSeasonScreen() {
         )}
 
         {addTeamSheet}
+        {deleteDivisionDialog}
+        {deleteSeasonDialog}
       </Screen>
     );
   }
@@ -428,7 +432,7 @@ export default function AdminSeasonScreen() {
           <View className="flex-row items-center mb-4">
             <Heading size="sm" className="flex-1">Divisions</Heading>
             <Button variant="secondary" size="sm" className="mr-2" onPress={() => setShowAddDivision(true)}>+ Add Division</Button>
-            <Button variant="danger" size="sm" disabled={isDeletingSeason} loading={isDeletingSeason} onPress={confirmDeleteSeason}>
+            <Button variant="danger" size="sm" onPress={() => setDeleteSeasonDialogOpen(true)}>
               Delete Season
             </Button>
           </View>
@@ -446,13 +450,10 @@ export default function AdminSeasonScreen() {
                     <Caption className="mt-0.5">{teamsForDivision(division.id).length} teams</Caption>
                   </View>
                   <TouchableOpacity
-                    onPress={() => confirmDeleteDivision(division)}
-                    disabled={deletingDivisionId === division.id}
+                    onPress={() => setDeleteDivisionTarget(division)}
                     className="mr-4"
                   >
-                    <Body size="xs" tone="coral" weight="semibold">
-                      {deletingDivisionId === division.id ? 'Deleting…' : 'Delete'}
-                    </Body>
+                    <Body size="xs" tone="coral" weight="semibold">Delete</Body>
                   </TouchableOpacity>
                   <Button size="sm" onPress={() => router.setParams({ divisionId: division.id, tab: 'teams' })}>
                     Open
@@ -476,6 +477,8 @@ export default function AdminSeasonScreen() {
       </AdminShell>
       {addTeamSheet}
       {addDivisionSheet}
+      {deleteDivisionDialog}
+      {deleteSeasonDialog}
     </>
   );
 }

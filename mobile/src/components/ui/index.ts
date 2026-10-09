@@ -14,6 +14,7 @@ export { Avatar } from './Avatar';
 export { FormBadge } from './FormBadge';
 export { Input, Label } from './Input';
 export { Sheet } from './Sheet';
+export { ConfirmDialog } from './ConfirmDialog';
 export { TabBar } from './TabBar';
 export { HeaderAvatar, HeaderWordmark } from './AppHeader';
 export { AppIcon, type AppIconName } from './AppIcon';

@@ -1,5 +1,6 @@
 {
   "projects": {
-    "default": "chalkie-app"
+    "default": "chalkie-app",
+    "staging": "chalkie-app-staging"
   }
 }
