@@ -1,0 +1,18 @@
+{
+  "name": "admin-ownership-link",
+  "version": "1.0.0",
+  "private": true,
+  "description": "One-time, tightly-scoped Admin SDK script that updates exactly two existing fields (leagues/bedford-kempston-district.adminUserId and users/{uid}.leagueId) to link the user's existing production admin account to the Bedford & Kempston league. Never creates a document, never creates an Auth account, never touches any other field. Never run against any other project.",
+  "engines": { "node": "20" },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "firebase-admin": "^13.10.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2",
+    "@types/node": "^22.0.0"
+  }
+}
