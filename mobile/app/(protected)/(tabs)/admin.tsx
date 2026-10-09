@@ -4,13 +4,14 @@ import { router } from 'expo-router';
 import { useColorScheme } from 'nativewind';
 import {
   collection, doc, onSnapshot, query, where,
-  getDoc, writeBatch, addDoc, serverTimestamp,
+  getDoc, updateDoc, writeBatch, addDoc, serverTimestamp,
 } from 'firebase/firestore';
 import { db } from '@/config/firebase';
 import { useAuthStore } from '@/stores/authStore';
 import { RAW, type SemanticTone } from '@/lib/theme';
-import { Screen, Heading, Body, Caption, Button, Card, Badge, ListRow, Input, Label, Sheet, AppIcon, StatTile, type AppIconName } from '@/components/ui';
+import { Screen, Heading, Body, Caption, Button, Card, Badge, ListRow, Input, Label, Chip, Sheet, AppIcon, StatTile, type AppIconName } from '@/components/ui';
 import { AdminShell } from '@/components/admin/AdminShell';
+import type { LeagueSponsor } from '@/types';
 
 const DESKTOP_BREAKPOINT = 768;
 
@@ -58,6 +59,15 @@ export default function AdminHomeScreen() {
   const [newSeasonName, setNewSeasonName] = useState('');
   const [isCreatingSeason, setIsCreatingSeason] = useState(false);
 
+  // League sponsor (Phase 10) — one primary sponsor, stored on the league doc
+  const [sponsor, setSponsor] = useState<LeagueSponsor | null>(null);
+  const [showSponsorSheet, setShowSponsorSheet] = useState(false);
+  const [sponsorNameDraft, setSponsorNameDraft] = useState('');
+  const [sponsorLogoDraft, setSponsorLogoDraft] = useState('');
+  const [sponsorWebsiteDraft, setSponsorWebsiteDraft] = useState('');
+  const [sponsorActiveDraft, setSponsorActiveDraft] = useState(true);
+  const [isSavingSponsor, setIsSavingSponsor] = useState(false);
+
   const [setupLeagueName, setSetupLeagueName] = useState('');
   const [isCreatingLeague, setIsCreatingLeague] = useState(false);
   const [setupError, setSetupError] = useState<string | null>(null);
@@ -96,6 +106,7 @@ export default function AdminHomeScreen() {
       if (snap.exists()) {
         setLeagueExists(true);
         setLeagueName(snap.data().name);
+        setSponsor(snap.data().sponsor ?? null);
       } else {
         setLeagueExists(false);
       }
@@ -148,6 +159,31 @@ export default function AdminHomeScreen() {
     setNewSeasonName('');
     setShowSeasonModal(false);
     setIsCreatingSeason(false);
+  }
+
+  function openSponsorSheet() {
+    setSponsorNameDraft(sponsor?.name ?? '');
+    setSponsorLogoDraft(sponsor?.logoUrl ?? '');
+    setSponsorWebsiteDraft(sponsor?.websiteUrl ?? '');
+    setSponsorActiveDraft(sponsor?.active ?? true);
+    setShowSponsorSheet(true);
+  }
+
+  async function saveSponsor() {
+    if (!leagueId || !sponsorNameDraft.trim()) return;
+    setIsSavingSponsor(true);
+    try {
+      const next: LeagueSponsor = {
+        name: sponsorNameDraft.trim(),
+        logoUrl: sponsorLogoDraft.trim() || null,
+        websiteUrl: sponsorWebsiteDraft.trim() || null,
+        active: sponsorActiveDraft,
+      };
+      await updateDoc(doc(db, 'leagues', leagueId), { sponsor: next });
+      setShowSponsorSheet(false);
+    } finally {
+      setIsSavingSponsor(false);
+    }
   }
 
   // Auth still loading, or leagueId is set but we haven't confirmed the doc exists yet
@@ -234,6 +270,51 @@ export default function AdminHomeScreen() {
     </Sheet>
   );
 
+  const sponsorSheet = (
+    <Sheet visible={showSponsorSheet} onClose={() => setShowSponsorSheet(false)}>
+      <Heading size="lg" className="mb-1">League Sponsor</Heading>
+      <Body size="sm" className="mb-5">One primary sponsor, shown on Home and Standings.</Body>
+
+      <Label>Sponsor name</Label>
+      <Input value={sponsorNameDraft} onChangeText={setSponsorNameDraft} placeholder="e.g. The Red Lion" autoCapitalize="words" className="mb-4" />
+
+      <Label>Logo URL (optional)</Label>
+      <Input
+        value={sponsorLogoDraft}
+        onChangeText={setSponsorLogoDraft}
+        placeholder="https://…/logo.png"
+        autoCapitalize="none"
+        autoCorrect={false}
+        keyboardType="url"
+        className="mb-4"
+      />
+
+      <Label>Website URL (optional)</Label>
+      <Input
+        value={sponsorWebsiteDraft}
+        onChangeText={setSponsorWebsiteDraft}
+        placeholder="https://…"
+        autoCapitalize="none"
+        autoCorrect={false}
+        keyboardType="url"
+        className="mb-4"
+      />
+
+      <Label>Status</Label>
+      <View className="flex-row gap-2 mb-6">
+        <Chip label="Active" selected={sponsorActiveDraft} onPress={() => setSponsorActiveDraft(true)} />
+        <Chip label="Inactive" selected={!sponsorActiveDraft} onPress={() => setSponsorActiveDraft(false)} />
+      </View>
+
+      <View className="flex-row gap-2.5">
+        <Button variant="ghost" className="flex-1" onPress={() => setShowSponsorSheet(false)}>Cancel</Button>
+        <Button className="flex-1" disabled={isSavingSponsor || !sponsorNameDraft.trim()} loading={isSavingSponsor} onPress={saveSponsor}>
+          Save
+        </Button>
+      </View>
+    </Sheet>
+  );
+
   if (isDesktop) {
     const activeSeason = seasons.find((s) => s.status === 'active') ?? seasons[0] ?? null;
     const managePath = activeSeason ? `/(protected)/admin-season?seasonId=${activeSeason.id}` : null;
@@ -276,12 +357,17 @@ export default function AdminHomeScreen() {
                 icon="zap" label="Resolve Inbox" description={`${inboxCount} item${inboxCount === 1 ? '' : 's'} waiting`}
                 onPress={() => router.push('/(protected)/admin-inbox')} isDark={isDark}
               />
+              <ActionCard
+                icon="medal" label="League Sponsor" description={sponsor?.active ? sponsor.name : 'Add your league’s sponsor'}
+                onPress={openSponsorSheet} isDark={isDark}
+              />
             </View>
 
             {seasonsSection}
           </View>
         </AdminShell>
         {newSeasonSheet}
+        {sponsorSheet}
       </>
     );
   }
@@ -319,6 +405,12 @@ export default function AdminHomeScreen() {
           trailing={<Body tone="dim">›</Body>}
           onPress={() => router.push('/(protected)/admin-tools')}
         />
+        <ListRow
+          title="League Sponsor"
+          subtitle={sponsor?.active ? sponsor.name : 'Not set up yet'}
+          trailing={<Body tone="dim">›</Body>}
+          onPress={openSponsorSheet}
+        />
       </View>
 
       {seasonsSection}
@@ -327,6 +419,7 @@ export default function AdminHomeScreen() {
       <Button variant="ghost" className="mt-6" onPress={logOut}>Sign Out</Button>
 
       {newSeasonSheet}
+      {sponsorSheet}
     </Screen>
   );
 }
