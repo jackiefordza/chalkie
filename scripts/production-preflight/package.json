@@ -1,0 +1,21 @@
+{
+  "name": "production-preflight",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Read-only inspection of production Firestore (chalkie-app) for the exact deterministic League/Season/Division2/Division3/team/fixture IDs the real-season importer (scripts/real-season-import) would create. Contains no write, update, delete, or batch-commit call anywhere — see README.md for how that is verified, not just asserted. Never run against any other project — see README.md before running anything.",
+  "engines": {
+    "node": "20"
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "prove-read-only": "./prove-read-only.sh"
+  },
+  "dependencies": {
+    "firebase-admin": "^13.10.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2",
+    "@types/node": "^22.0.0"
+  }
+}
