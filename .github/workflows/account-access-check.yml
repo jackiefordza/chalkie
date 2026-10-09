@@ -1,0 +1,147 @@
+name: TEMP — Account access check (read-only)
+
+# TEMPORARY. Manual-only. Checks whether a single email address has an
+# existing Firebase Auth account and Firestore users/{uid} profile in
+# PRODUCTION (chalkie-app) and STAGING (chalkie-app-staging), and whether
+# leagues/bedford-kempston-district exists in each project and is linked
+# to that account via adminUserId.
+#
+# Strictly read-only: the embedded script (written inline below, nothing
+# committed under scripts/) only calls admin.auth().getUserByEmail() and
+# Firestore .doc(...).get() — no create/update/delete/set of any kind, in
+# either Firebase Auth or Firestore, in either project. It never prints
+# passwordHash, passwordSalt, customClaims, or any token/credential.
+# Removed from main again immediately after use.
+on:
+  workflow_dispatch:
+    inputs:
+      email:
+        description: 'Email address to look up (read-only)'
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install firebase-admin (scratch dir, nothing committed)
+        run: |
+          mkdir -p "$RUNNER_TEMP/account-check"
+          cd "$RUNNER_TEMP/account-check"
+          npm init -y >/dev/null
+          npm install firebase-admin@^13 --no-save
+
+      - name: Write the read-only check script
+        run: |
+          cat > "$RUNNER_TEMP/account-check/check.js" <<'SCRIPT_EOF'
+          const admin = require('firebase-admin');
+
+          const projectId = process.env.TARGET_PROJECT_ID;
+          const email = process.env.TARGET_EMAIL;
+          const label = process.env.TARGET_LABEL;
+
+          admin.initializeApp({ credential: admin.credential.applicationDefault(), projectId });
+
+          async function main() {
+            console.log(`\n=== ${label} (${projectId}) ===`);
+
+            let userRecord = null;
+            try {
+              userRecord = await admin.auth().getUserByEmail(email);
+            } catch (e) {
+              if (e.code === 'auth/user-not-found') {
+                console.log(`Auth: NOT FOUND for ${email}`);
+              } else {
+                console.log(`Auth lookup ERROR: ${e.code || e.message}`);
+                return;
+              }
+            }
+
+            if (userRecord) {
+              console.log('Auth: FOUND');
+              console.log(`  uid: ${userRecord.uid}`);
+              console.log(`  email: ${userRecord.email}`);
+              console.log(`  emailVerified: ${userRecord.emailVerified}`);
+              console.log(`  disabled: ${userRecord.disabled}`);
+              console.log(`  creationTime: ${userRecord.metadata.creationTime}`);
+              console.log(`  lastSignInTime: ${userRecord.metadata.lastSignInTime}`);
+              console.log(`  providers: ${userRecord.providerData.map((p) => p.providerId).join(', ') || '(none)'}`);
+            }
+
+            const db = admin.firestore();
+
+            if (userRecord) {
+              const userDoc = await db.doc(`users/${userRecord.uid}`).get();
+              if (!userDoc.exists) {
+                console.log(`Firestore users/${userRecord.uid}: MISSING`);
+              } else {
+                const d = userDoc.data();
+                console.log(`Firestore users/${userRecord.uid}: EXISTS`);
+                console.log(`  role: ${d.role ?? '(none)'}`);
+                console.log(`  leagueId: ${d.leagueId ?? '(none)'}`);
+                console.log(`  teamId: ${d.teamId ?? '(none)'}`);
+                console.log(`  divisionId: ${d.divisionId ?? '(none)'}`);
+                console.log(`  seasonId: ${d.seasonId ?? '(none)'}`);
+                console.log(`  isLeagueAdmin: ${d.isLeagueAdmin ?? false}`);
+                console.log(`  isGlobalAdmin: ${d.isGlobalAdmin ?? false}`);
+                console.log(`  pendingRequestType: ${d.pendingRequestType ?? '(none)'}`);
+              }
+            }
+
+            const leagueDoc = await db.doc('leagues/bedford-kempston-district').get();
+            console.log(`Firestore leagues/bedford-kempston-district: ${leagueDoc.exists ? 'EXISTS' : 'MISSING'}`);
+            if (leagueDoc.exists) {
+              const ld = leagueDoc.data();
+              console.log(`  name: ${ld.name ?? '(none)'}`);
+              console.log(`  adminUserId: ${ld.adminUserId ?? '(none)'}`);
+              if (userRecord) {
+                console.log(`  adminUserId matches this account: ${ld.adminUserId === userRecord.uid}`);
+              }
+            }
+          }
+
+          main()
+            .then(() => process.exit(0))
+            .catch((e) => {
+              console.error('ERROR:', e.message);
+              process.exit(1);
+            });
+          SCRIPT_EOF
+
+      - name: Check PRODUCTION (chalkie-app)
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          TARGET_EMAIL: ${{ inputs.email }}
+        run: |
+          set -o pipefail
+          printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > "$RUNNER_TEMP/sa-prod.json"
+          GOOGLE_APPLICATION_CREDENTIALS="$RUNNER_TEMP/sa-prod.json" \
+          TARGET_PROJECT_ID=chalkie-app \
+          TARGET_LABEL=PRODUCTION \
+          node "$RUNNER_TEMP/account-check/check.js" | tee -a "$GITHUB_STEP_SUMMARY"
+          rm -f "$RUNNER_TEMP/sa-prod.json"
+
+      - name: Check STAGING (chalkie-app-staging)
+        env:
+          FIREBASE_SERVICE_ACCOUNT_STAGING: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_STAGING }}
+          TARGET_EMAIL: ${{ inputs.email }}
+        run: |
+          set -o pipefail
+          printf '%s' "$FIREBASE_SERVICE_ACCOUNT_STAGING" > "$RUNNER_TEMP/sa-staging.json"
+          GOOGLE_APPLICATION_CREDENTIALS="$RUNNER_TEMP/sa-staging.json" \
+          TARGET_PROJECT_ID=chalkie-app-staging \
+          TARGET_LABEL=STAGING \
+          node "$RUNNER_TEMP/account-check/check.js" | tee -a "$GITHUB_STEP_SUMMARY"
+          rm -f "$RUNNER_TEMP/sa-staging.json"
+
+      - name: Remove credential files
+        if: always()
+        run: rm -f "$RUNNER_TEMP/sa-prod.json" "$RUNNER_TEMP/sa-staging.json"
